@@ -59,8 +59,8 @@ function file(fileId: string, size = 10, mtimeMs = 1000): SignableInput {
 }
 
 /** The enumeration of `paths`: no source is unreachable unless the test says so. */
-function found(paths: Iterable<string>, unreachable = 0, warnings: readonly string[] = []): InputEnumeration {
-    return { paths: new Set(paths), warnings, unreachable };
+function found(paths: Iterable<string>, unreachable = 0, warnings: readonly string[] = [], unreadable = 0): InputEnumeration {
+    return { paths: new Set(paths), warnings, unreachable, unreadable };
 }
 
 /** The enumeration a fresh enumerate would return for `files` — the ladder's "are there inputs" gate. */
@@ -211,6 +211,33 @@ describe("a source that is not reachable now", () => {
             warnings: ["/Volumes/lab is not reachable now; its staged files stay"],
         });
         expect(clearCalled).toBe(false);
+    });
+
+    test("an input set that is empty only because each source is unreadable keeps its profile", async () => {
+        let clearCalled = false;
+        const { seams } = trackingSeams({
+            enumerate: () => okAsync(found([], 0, ["could not read /data/locked.csv; staging skipped it"], 1)),
+            loadStatus: () => okAsync(completedWith()),
+            clear: () => {
+                clearCalled = true;
+                return okAsync(true);
+            },
+        });
+        expect((await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).kind).toBe("no_inputs");
+        expect(clearCalled).toBe(false);
+    });
+
+    test("a staging pass that gives an empty manifest seeds nothing and triggers nothing", async () => {
+        const { seams, ran } = trackingSeams({
+            loadStatus: () => okAsync(completedWith()),
+            stage: () => Promise.resolve(ok({ staged: [], warnings: ["could not read /data/a.csv; staging skipped it"] })),
+        });
+        expect(await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).toEqual({
+            kind: "no_inputs",
+            materialized: false,
+            warnings: ["could not read /data/a.csv; staging skipped it"],
+        });
+        expect(ran).toMatchObject({ seed: false, trigger: false });
     });
 
     test("the warnings of staging ride on the outcome of the drive", async () => {

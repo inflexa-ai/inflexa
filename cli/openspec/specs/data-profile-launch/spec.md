@@ -205,8 +205,10 @@ difference it might have observed.
 Both SHALL share the rest of the ladder: the orphaned-`running` reconcile, the emptied-set clear (an
 emptied input set is an input mutation too), and the live-run defer, which suppresses materialization
 because staging reconcile-deletes a tree that run's sandbox is reading. An input set that is empty only
-because a source is not reachable now is not emptied: the drive SHALL NOT clear the profile, and it
-SHALL yield `no_inputs` with the source in `warnings` (see the input-staging spec).
+because a source is not reachable now, or cannot be read, is not emptied: the drive SHALL NOT clear the
+profile, and it SHALL yield `no_inputs` with the source in `warnings` (see the input-staging spec). A
+staging pass that gives an empty manifest SHALL NOT seed or trigger, and the drive SHALL yield `no_inputs`,
+because a trigger over an empty set completes an empty profile and drops the result.
 
 The comparison is removed rather than narrowed because it was an inference standing in for a fact. A
 `(fileId, size, mtimeMs)` difference is produced by `git checkout`, `cp -r`, `rsync` without `-a`,

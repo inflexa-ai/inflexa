@@ -24,6 +24,7 @@ import { listAnalysisInputs } from "../../db/primary_query.ts";
 import { resolveAnchor, resolvedPathOrCached } from "../anchor/anchor.ts";
 import { findAnalysis } from "../analysis/analysis.ts";
 import { resolveInputPath } from "../analysis/input.ts";
+import { quarantineReason } from "@inflexa-ai/harness/input-scan/quarantine.js";
 import { STAGING_WALK_FILTER, walkFiles } from "../staging/staging.ts";
 import { statResultAsync } from "../../lib/fs.ts";
 
@@ -111,15 +112,17 @@ export function createLaunchDirTool(): Tool<Record<string, never>, LaunchDirResu
             const index = await registrationIndex(analysisId);
             const queue = new PQueue({ concurrency: SIZE_STAT_WIDTH });
             const entries: LaunchDirEntry[] = await Promise.all(
-                walked.files.map((rel) =>
-                    queue.add(async (): Promise<LaunchDirEntry> => {
-                        const abs = join(folder, rel);
-                        const size = await statResultAsync(abs, "list_launch_dir:size")
-                            .map((s) => s.size)
-                            .unwrapOr(0);
-                        return { path: rel, size, registered: isRegistered(abs, index) };
-                    }),
-                ),
+                walked.files
+                    .filter((rel) => quarantineReason(rel) === undefined)
+                    .map((rel) =>
+                        queue.add(async (): Promise<LaunchDirEntry> => {
+                            const abs = join(folder, rel);
+                            const size = await statResultAsync(abs, "list_launch_dir:size")
+                                .map((s) => s.size)
+                                .unwrapOr(0);
+                            return { path: rel, size, registered: isRegistered(abs, index) };
+                        }),
+                    ),
             );
             entries.sort((a, b) => a.path.localeCompare(b.path));
 

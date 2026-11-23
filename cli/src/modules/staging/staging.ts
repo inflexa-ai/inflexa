@@ -71,8 +71,8 @@ type Placement = "placed" | "kept" | "unreadable";
  * Link a file into the staging tree. Hardlinks are preferred (fast, zero-copy, safe because the harness mounts the
  * workspace tree read-only into sandboxes); the copy fallback covers cross-filesystem boundaries.
  *
- * A destination that is already a hardlink of the source (the same `dev` and `ino`), or a copy with the same size and
- * mtime, stays as it is: a staging pass over an unchanged set then writes nothing. The link names the real path of
+ * A destination that is already a hardlink of the source (the same `dev` and `ino`), or a copy (on a different volume,
+ * or with one link) with the same size and mtime, stays as it is: a staging pass over an unchanged set then writes nothing. The link names the real path of
  * the source, because `link(2)` on Linux does not follow a symlink, and a staged symlink names a path the sandbox
  * cannot resolve.
  *
@@ -88,7 +88,10 @@ async function stageFile(src: string, dest: string, srcStats: Stats): Promise<Re
     );
     if (existing !== null) {
         if (existing.dev === srcStats.dev && existing.ino === srcStats.ino) return ok("kept");
-        if (existing.isFile() && existing.size === srcStats.size && mtimesMatch(existing.mtimeMs, srcStats.mtimeMs)) return ok("kept");
+        // Size and mtime identify a copy only. A destination with another link on the volume of the source is a
+        // hardlink of a different file (a second input with the same destination), and its bytes are not the source.
+        const isCopy = existing.dev !== srcStats.dev || existing.nlink === 1;
+        if (existing.isFile() && isCopy && existing.size === srcStats.size && mtimesMatch(existing.mtimeMs, srcStats.mtimeMs)) return ok("kept");
     }
     // The source is read before the destination goes: a source that cannot be read keeps the staged copy of an
     // earlier pass, which the caller then carries.
@@ -115,7 +118,9 @@ async function stageFile(src: string, dest: string, srcStats: Stats): Promise<Re
         await link(real, dest);
     } catch {
         try {
-            await copyFile(real, dest);
+            // The destination was removed above. A file there now is a second writer, and EXCL refuses to write
+            // through it.
+            await copyFile(real, dest, fsConstants.COPYFILE_EXCL);
         } catch (cause) {
             return err({ type: "io_failed", op: "stageFile:copy", cause });
         }
@@ -172,27 +177,26 @@ export const IGNORED_WALK_DIRS: ReadonlySet<string> = new Set([
     "__MACOSX",
 ]);
 
-/** Which entries a walk leaves out. */
+/** Which directories a walk does not descend into. */
 export type WalkFilter = {
     /** Directory names the walk does not descend into. */
     readonly ignoredDirs: ReadonlySet<string>;
-    /** Leave out each name that the harness quarantines (`quarantineReason`): AppleDouble files, partial downloads, and others. */
-    readonly quarantine: boolean;
 };
 
 /**
- * The filter of each walk over the source of an input, and over the files staging keeps for it. Staging, the
- * enumeration, and the materialized check share it through {@link walkInputFiles}, thus they agree on the set.
+ * The filter of each walk over the source of an input, and over the files staging keeps for it. The quarantine rule
+ * of the harness is not here: {@link walkInputFiles} applies it to the `relativePath` of each file, the same path
+ * that `computeInputSignature` reads, thus the manifest and the signature count the same files.
  */
-export const STAGING_WALK_FILTER: WalkFilter = { ignoredDirs: IGNORED_WALK_DIRS, quarantine: true };
+export const STAGING_WALK_FILTER: WalkFilter = { ignoredDirs: IGNORED_WALK_DIRS };
 
-const WALK_EVERYTHING: WalkFilter = { ignoredDirs: new Set(), quarantine: false };
+const WALK_EVERYTHING: WalkFilter = { ignoredDirs: new Set() };
 
 /** The single flat mount every CLI-staged file lands under (`StagedInput.mountName`). */
 const LOCAL_MOUNT_NAME = "local";
 
 /**
- * The staged tree's root relative to the data dir: `inputs/{LOCAL_MOUNT_NAME}`. Three places derive
+ * The staged tree's root relative to the data dir: `inputs/{LOCAL_MOUNT_NAME}`. These places derive
  * from this ONE value and compare the results against each other — the manifest's `relativePath`
  * ({@link walkInputFiles}), the reconcile walk's root ({@link reconcileStagedTree}), and the
  * already-materialized predicate ({@link isInputSetMaterialized}). A divergence between them is not a
@@ -225,89 +229,132 @@ export type WalkResult = {
     readonly skipped: string[];
 };
 
+/** One entry that a walk found, in the depth-first `readdir` order. */
+type WalkNode =
+    | { readonly kind: "file"; readonly rel: string }
+    | { readonly kind: "skipped"; readonly rel: string }
+    | { readonly kind: "dir"; readonly identity: string; readonly rank: readonly number[]; readonly children: readonly WalkNode[] };
+
+/** `-1`, `0`, or `1`: the order of two positions in a depth-first walk, each the `readdir` index at each level. */
+function compareRank(a: readonly number[], b: readonly number[]): number {
+    for (let i = 0; i < Math.min(a.length, b.length); i++) {
+        const delta = (a[i] ?? 0) - (b[i] ?? 0);
+        if (delta !== 0) return Math.sign(delta);
+    }
+    return Math.sign(a.length - b.length);
+}
+
 /**
  * Recursively enumerate all files under `dir`, returning paths relative to `dir`.
  * Directories are traversed, not yielded; the `filter` leaves out ignored directories
- * and, when it asks for it, the names the harness quarantines (staging passes
- * {@link STAGING_WALK_FILTER}; the reconcile pass passes no filter — it must see files
- * staged under names that are ignored NOW but were not when they were staged). Dirent
- * kind checks answer false for symlinks on both `isFile()` and `isDirectory()`, so
- * symlink entries are stat-resolved explicitly: a link to a file is yielded, a link to
- * a directory is traversed, and a dangling link is skipped — an unreadable target is a
- * property of the user's source tree, not a staging failure.
+ * (staging passes {@link STAGING_WALK_FILTER}; the reconcile pass passes no filter — it
+ * must see files staged under names that are ignored NOW but were not when they were
+ * staged). An entry that `readdir` does not report as a regular file — a symlink, a
+ * directory, or a kind the file system does not report (`DT_UNKNOWN` on some NFS and
+ * FUSE mounts) — is resolved with `stat`: a file is yielded, a directory is traversed,
+ * and a dangling link is skipped — an unreadable target is a property of the user's
+ * source tree, not a staging failure.
  *
- * A directory is entered once for each `(dev, ino)`, thus a symlink that points back up the tree ends the descent
- * instead of looping. An entry that cannot be read (`EACCES`, `EIO`, and others) is skipped and named in
- * `skipped`; a path that vanished during the walk (`ENOENT`) is skipped silently.
+ * A directory gives its files under one path only, for each `(dev, ino)`: the path that comes first in a depth-first
+ * walk of the `readdir` order. Thus a symlink that points back up the tree ends the descent, and two aliases of one
+ * directory give the same paths, and the same file ids, on each run, whatever order the reads complete in. An entry
+ * that cannot be read (`EACCES`, `EIO`, and others) is skipped and named in `skipped`; a path that vanished during
+ * the walk (`ENOENT`) is skipped silently.
  *
  * The reads run off the event loop, with at most {@link METADATA_WIDTH} in flight. The paths come back in
  * the order a depth-first walk of the `readdir` order gives, whatever order the reads complete in.
  */
 export async function walkFiles(dir: string, filter: WalkFilter): Promise<WalkResult> {
     const queue = new PQueue({ concurrency: METADATA_WIDTH });
-    const visited = new Set<string>();
-    const skipped: string[] = [];
-    function skip(rel: string, cause: unknown): void {
-        if (errnoCode(cause) !== "ENOENT") skipped.push(rel);
+    // The position of the alias of each directory that comes first in the depth-first order, of the ones met so far.
+    // An alias that comes later stops at once; an alias that comes earlier takes the directory over, and the tree of
+    // the alias it replaced is dropped below. Thus the outcome does not depend on the order the reads complete in.
+    const winners = new Map<string, readonly number[]>();
+    function claim(identity: string, rank: readonly number[]): boolean {
+        const current = winners.get(identity);
+        if (current !== undefined && compareRank(current, rank) <= 0) return false;
+        winners.set(identity, rank);
+        return true;
+    }
+    function failed(rel: string, cause: unknown): Extract<WalkNode, { kind: "skipped" }>[] {
+        return errnoCode(cause) === "ENOENT" ? [] : [{ kind: "skipped", rel }];
     }
     // The priority is the depth, so deeper work runs first and the walk drains one subtree before it
     // opens the next. The queue then holds about one listing for each level, as a recursive walk does,
     // and not the whole frontier of the tree.
-    async function walk(path: string, rel: string, depth: number, self: Stats): Promise<string[]> {
+    async function walk(path: string, rel: string, rank: readonly number[], self: Stats): Promise<WalkNode> {
         const identity = `${self.dev}:${self.ino}`;
-        if (visited.has(identity)) return [];
-        visited.add(identity);
+        if (!claim(identity, rank)) return { kind: "dir", identity, rank, children: [] };
+        const depth = rank.length;
         let entries: Dirent[];
         try {
             entries = await queue.add(() => readdir(path, { withFileTypes: true }), { priority: depth });
         } catch (cause) {
-            skip(rel, cause);
-            return [];
+            return { kind: "dir", identity, rank, children: failed(rel, cause) };
         }
-        const nested = await Promise.all(
-            entries.map(async (entry): Promise<string[]> => {
+        const children = await Promise.all(
+            entries.map(async (entry, index): Promise<WalkNode[]> => {
                 const full = join(path, entry.name);
                 const entryRel = join(rel, entry.name);
-                const isLink = entry.isSymbolicLink();
-                if (!isLink && !entry.isDirectory()) {
-                    if (!entry.isFile()) return [];
-                    return filter.quarantine && quarantineReason(entry.name) !== undefined ? [] : [entry.name];
-                }
+                if (entry.isFile()) return [{ kind: "file", rel: entryRel }];
                 let target: Stats;
                 try {
                     target = await queue.add(() => stat(full), { priority: depth + 1 });
                 } catch (cause) {
-                    skip(entryRel, cause);
-                    return [];
+                    return failed(entryRel, cause);
                 }
                 if (target.isDirectory()) {
                     if (filter.ignoredDirs.has(entry.name)) return [];
-                    if (filter.quarantine && quarantineReason(entry.name) !== undefined) return [];
-                    return (await walk(full, entryRel, depth + 1, target)).map((sub) => join(entry.name, sub));
+                    return [await walk(full, entryRel, [...rank, index], target)];
                 }
-                if (!target.isFile()) return [];
-                return filter.quarantine && quarantineReason(entry.name) !== undefined ? [] : [entry.name];
+                return target.isFile() ? [{ kind: "file", rel: entryRel }] : [];
             }),
         );
-        return nested.flat();
+        return { kind: "dir", identity, rank, children: children.flat() };
     }
     let root: Stats;
     try {
         root = await stat(dir);
     } catch (cause) {
-        skip("", cause);
-        return { files: [], skipped };
+        return { files: [], skipped: failed("", cause).map((node) => node.rel) };
     }
-    const files = await walk(dir, "", 0, root);
+    const tree = await walk(dir, "", [], root);
+    const files: string[] = [];
+    const skipped: string[] = [];
+    function collect(node: WalkNode): void {
+        switch (node.kind) {
+            case "file":
+                files.push(node.rel);
+                return;
+            case "skipped":
+                skipped.push(node.rel);
+                return;
+            case "dir": {
+                const winner = winners.get(node.identity);
+                if (winner === undefined || compareRank(winner, node.rank) !== 0) return;
+                for (const child of node.children) collect(child);
+                return;
+            }
+            default: {
+                const _exhaustive: never = node;
+                throw new Error(`unhandled walk node: ${JSON.stringify(_exhaustive)}`);
+            }
+        }
+    }
+    collect(tree);
     return { files, skipped };
 }
 
 /**
  * The write half of staging: take one walked {@link InputFile}, link/copy it into the target tree, and return its
- * `StagedInput` manifest row. {@link walkInputFiles} has already decided WHICH files exist and their identity
- * (`fileId`/`key`/`relativePath`); this only pays the placement. `unreadable` is a source that this pass cannot read.
+ * `StagedInput` manifest row, with the `dev:ino` of the source. {@link walkInputFiles} has already decided WHICH files
+ * exist and their identity (`fileId`/`key`/`relativePath`); this only pays the placement. `unreadable` is a source
+ * that this pass cannot read.
  */
-async function materializeStagedFile(file: InputFile, targetDir: string): Promise<Result<StagedInput | "unreadable", FsError>> {
+async function materializeStagedFile(
+    file: InputFile,
+    targetDir: string,
+): Promise<Result<{ readonly staged: StagedInput; readonly source: string } | "unreadable", FsError>> {
     // One stat yields both size and mtime, so the manifest agrees with what
     // {@link isInputSetMaterialized} later reads back off the same file. Taken BEFORE
     // placement so the copy fallback's timestamp stamp and the manifest record the same reading —
@@ -320,7 +367,7 @@ async function materializeStagedFile(file: InputFile, targetDir: string): Promis
     const stageResult = await stageFile(file.absPath, dest, statsResult.value);
     if (stageResult.isErr()) return err(stageResult.error);
     if (stageResult.value === "unreadable") return ok("unreadable");
-    return ok(stagedInputOf(file, statsResult.value));
+    return ok({ staged: stagedInputOf(file, statsResult.value), source: `${statsResult.value.dev}:${statsResult.value.ino}` });
 }
 
 function stagedInputOf(file: InputFile, stats: Stats): StagedInput {
@@ -424,7 +471,19 @@ type InputFile = {
  * directory input that the walk skipped. `subpath` is the part within a directory input (`""` for the whole input),
  * and `null` for a file input.
  */
-type KeptPart = { readonly input: AnalysisInput; readonly keyRoot: string; readonly subpath: string | null };
+type KeptPart = {
+    readonly input: AnalysisInput;
+    readonly keyRoot: string;
+    readonly subpath: string | null;
+    /** The file id of a part that is one file of a directory input, which the key alone does not give. */
+    readonly fileId?: string;
+};
+
+/** `fn` over each item, in order, with at most {@link METADATA_WIDTH} calls in flight. */
+function mapWithWidth<T, R>(items: readonly T[], fn: (item: T) => Promise<R>): Promise<R[]> {
+    const queue = new PQueue({ concurrency: METADATA_WIDTH });
+    return Promise.all(items.map((item) => queue.add(() => fn(item))));
+}
 
 /** The files of the current input set, and the warnings about the sources that the walk could not read or reach. */
 type WalkedInputs = {
@@ -432,20 +491,30 @@ type WalkedInputs = {
     readonly warnings: string[];
     /** The count of inputs whose source is not reachable now. */
     readonly unreachable: number;
+    /** The count of source files and directories that the walk could not read. */
+    readonly unreadable: number;
 };
+
+/** Whether the harness keeps the file at `relativePath`: the rule of `computeInputSignature`, on the same path. */
+function notQuarantined(file: InputFile): boolean {
+    return quarantineReason(file.relativePath) === undefined;
+}
 
 /**
  * The shared read-only walk under staging, the enumeration, and the materialized check: list the analysis's inputs,
  * resolve each to an absolute path, then expand every input into the files it yields — a directory input walks its
- * subtree via {@link walkFiles} under {@link STAGING_WALK_FILTER}; a file input yields itself unless the harness
- * quarantines its name. Cost is bounded by stat/readdir: no content reads, no tree writes. This is the SINGLE source
+ * subtree via {@link walkFiles} under {@link STAGING_WALK_FILTER}; a file input yields itself. A file whose
+ * `relativePath` the harness quarantines is left out, and a source file that this process cannot read is left out and
+ * named, thus staging, the enumeration, and the materialized check agree about both. Cost is bounded by
+ * stat/readdir/access: no content reads, no tree writes. This is the SINGLE source
  * of "which files an input yields", so the identity spaces of its callers are structurally unable to diverge.
  *
- * Two cases look alike on disk and are not the same. An input row that the user removed is not listed, and its staged
- * files go at the next staging pass. An input whose source is not reachable now — an unmounted volume, an anchor
- * folder that cannot be located, a source that cannot be read — still names its files: the walk carries the copies
- * that an earlier pass staged under `dataDir`, and it names the source in `warnings`. Thus an unmounted drive neither
- * deletes the staged tree nor empties the input set and clears the profile. With `dataDir` `null`, nothing is carried.
+ * A missing source is one of two cases. A source whose anchor root cannot be located, or whose volume is not mounted
+ * (see {@link missingSourceKind}), is not reachable now: the walk carries the copies that an earlier pass staged
+ * under `dataDir`, and it names the source in `warnings`. Thus an unmounted drive neither deletes the staged tree nor
+ * empties the input set and clears the profile. A source missing from a present volume was deleted: it yields
+ * nothing, and its staged files go at the next pass, as the files of a removed input row do. A source that cannot be
+ * read is carried the same way as an unreachable one. With `dataDir` `null`, nothing is carried.
  */
 function walkInputFiles(analysisId: string, dataDir: string | null): ResultAsync<WalkedInputs, DbError> {
     return new ResultAsync(walkInputFilesAsync(analysisId, dataDir));
@@ -469,10 +538,11 @@ async function walkInputFilesAsync(analysisId: string, dataDir: string | null): 
         resolvedInputs.map(({ absPath }) => absPath ?? ""),
         METADATA_WIDTH,
     );
-    const files: InputFile[] = [];
+    const found: InputFile[] = [];
     const kept: KeptPart[] = [];
     const warnings: string[] = [];
     let unreachable = 0;
+    let unreadable = 0;
     // One directory walk at a time: each walk keeps its own fixed-width queue, so parallel walks would multiply
     // the bound by the count of directory inputs.
     for (const [index, { input, absPath }] of resolvedInputs.entries()) {
@@ -484,6 +554,10 @@ async function walkInputFilesAsync(analysisId: string, dataDir: string | null): 
         // fileId-prefixed basename instead (collision-free across same-named
         // files from different locations, deterministic across runs).
         const keyRoot = input.anchorId === null ? join(deriveFileId(input), basename(input.path)) : input.path;
+        if (absPath !== null && !present[index] && (await missingSourceKind(absPath)) === "deleted") {
+            getLogger("staging").info({ absPath, path: input.path }, "input source deleted from a present folder — its staged files go");
+            continue;
+        }
         if (absPath === null || !present[index]) {
             getLogger("staging").warn({ absPath, path: input.path }, "input source not reachable — keeping its staged files");
             warnings.push(`${absPath ?? input.path} is not reachable now; its staged files stay`);
@@ -495,20 +569,66 @@ async function walkInputFilesAsync(analysisId: string, dataDir: string | null): 
             const walked = await walkFiles(absPath, STAGING_WALK_FILTER);
             for (const subpath of walked.files) {
                 const key = join(keyRoot, subpath);
-                files.push({ input, absPath: join(absPath, subpath), key, fileId: deriveFileId(input, subpath), relativePath: join(LOCAL_MOUNT_SUBDIR, key) });
+                found.push({ input, absPath: join(absPath, subpath), key, fileId: deriveFileId(input, subpath), relativePath: join(LOCAL_MOUNT_SUBDIR, key) });
             }
             for (const subpath of walked.skipped) {
                 warnings.push(`could not read ${join(absPath, subpath)}; staging skipped it`);
+                unreadable++;
                 kept.push({ input, keyRoot, subpath });
             }
-        } else if (quarantineReason(basename(absPath)) === undefined) {
-            files.push({ input, absPath, key: keyRoot, fileId: deriveFileId(input), relativePath: join(LOCAL_MOUNT_SUBDIR, keyRoot) });
+        } else {
+            found.push({ input, absPath, key: keyRoot, fileId: deriveFileId(input), relativePath: join(LOCAL_MOUNT_SUBDIR, keyRoot) });
         }
+    }
+    const candidates = found.filter(notQuarantined);
+    const readable = await mapWithWidth(candidates, (file) =>
+        access(file.absPath, fsConstants.R_OK).then(
+            () => true,
+            (cause: unknown) => errnoCode(cause) === "ENOENT",
+        ),
+    );
+    const files: InputFile[] = [];
+    for (const [index, file] of candidates.entries()) {
+        if (readable[index] === true) {
+            files.push(file);
+            continue;
+        }
+        warnings.push(`could not read ${file.absPath}; staging skipped it`);
+        unreadable++;
+        kept.push({ input: file.input, keyRoot: file.key, subpath: null, fileId: file.fileId });
     }
     // The kept copies go first: when a source file and a kept copy name one destination, the dedup of each caller
     // keeps the last entry, which is the source.
-    const carried = dataDir === null ? [] : await keptStagedFiles(dataDir, kept);
-    return ok({ files: [...carried, ...files], warnings, unreachable });
+    const carried = dataDir === null ? [] : (await keptStagedFiles(dataDir, kept)).filter(notQuarantined);
+    return ok({ files: [...carried, ...files], warnings, unreachable, unreadable });
+}
+
+/**
+ * The roots under which a system mounts a volume: a volume whose mount point is gone leaves the nearest present
+ * ancestor of a source at one of these, or at a folder right under `/media` or `/run/media` (a folder for each user).
+ */
+const MOUNT_ROOTS: readonly string[] = ["/Volumes", "/media", "/run/media", "/mnt"];
+
+/**
+ * Why a source path that is not on disk is missing. `deleted`: the volume is present, thus the user deleted the source
+ * (or a folder above it), and its staged copy goes, as for a removed input row. `unreachable`: the nearest present
+ * ancestor is a mount root, thus the volume of the source is not mounted now, and its staged copy stays.
+ */
+export async function missingSourceKind(source: string, mountRoots: readonly string[] = MOUNT_ROOTS): Promise<"deleted" | "unreachable"> {
+    let current = dirname(source);
+    for (;;) {
+        const present = await stat(current).then(
+            (s) => s.isDirectory(),
+            () => false,
+        );
+        if (present) {
+            const isMountRoot = mountRoots.includes(current) || mountRoots.some((root) => ["/media", "/run/media"].includes(root) && dirname(current) === root);
+            return current !== dirname(source) && isMountRoot ? "unreachable" : "deleted";
+        }
+        const parent = dirname(current);
+        if (parent === current) return "unreachable";
+        current = parent;
+    }
 }
 
 /** The staged files under each kept part, as {@link InputFile}s whose `absPath` is the staged copy itself. */
@@ -523,7 +643,7 @@ async function keptStagedFiles(dataDir: string, parts: readonly KeptPart[]): Pro
         );
         if (stats === null) continue;
         if (stats.isFile()) {
-            const fileId = part.subpath === null ? deriveFileId(part.input) : deriveFileId(part.input, part.subpath);
+            const fileId = part.fileId ?? (part.subpath === null ? deriveFileId(part.input) : deriveFileId(part.input, part.subpath));
             files.push({ input: part.input, absPath: stagedPath, key: partKey, fileId, relativePath: join(LOCAL_MOUNT_SUBDIR, partKey) });
             continue;
         }
@@ -532,7 +652,13 @@ async function keptStagedFiles(dataDir: string, parts: readonly KeptPart[]): Pro
         for (const rel of walked.files) {
             const subpath = join(part.subpath ?? "", rel);
             const key = join(part.keyRoot, subpath);
-            files.push({ input: part.input, absPath: join(stagedPath, rel), key, fileId: deriveFileId(part.input, subpath), relativePath: join(LOCAL_MOUNT_SUBDIR, key) });
+            files.push({
+                input: part.input,
+                absPath: join(stagedPath, rel),
+                key,
+                fileId: deriveFileId(part.input, subpath),
+                relativePath: join(LOCAL_MOUNT_SUBDIR, key),
+            });
         }
     }
     return files;
@@ -578,7 +704,7 @@ export async function stageInputs(analysisId: string, targetDir: string): Promis
     //
     // In order, the last writer's bytes stay on disk, and the manifest keeps the LAST
     // entry of each dest, so it matches what is actually on disk. Warn only when the
-    // dropped entry has a DIFFERENT size or mtime (a genuine input clash, not the benign
+    // dropped entry is a DIFFERENT file, by `dev:ino` (a genuine input clash, not the benign
     // dir-holds-file overlap where both resolve to the same source).
     const byDest = new Map<string, [InputFile, ...InputFile[]]>();
     for (const file of files) {
@@ -597,6 +723,7 @@ export async function stageInputs(analysisId: string, targetDir: string): Promis
         async function stageDest(group: readonly [InputFile, ...InputFile[]]): Promise<Result<StagedInput | null, FsError> | null> {
             if (hasFailed()) return null;
             let kept: StagedInput | null = null;
+            let keptSource: string | null = null;
             for (const file of group) {
                 if (hasFailed()) break;
                 const next = await materializeStagedFile(file, targetDir);
@@ -608,13 +735,14 @@ export async function stageInputs(analysisId: string, targetDir: string): Promis
                     warnings.push(`could not read ${file.absPath}; staging skipped it`);
                     continue;
                 }
-                if (kept !== null && (kept.size !== next.value.size || !mtimesMatch(kept.mtimeMs, next.value.mtimeMs))) {
+                if (kept !== null && keptSource !== next.value.source) {
                     getLogger("staging").warn(
-                        { relativePath: next.value.relativePath, droppedKey: kept.key, keptKey: next.value.key },
-                        "two inputs stage to the same path with different content — keeping the last-staged file",
+                        { relativePath: next.value.staged.relativePath, droppedKey: kept.key, keptKey: next.value.staged.key },
+                        "two inputs stage to the same path from different files — keeping the last-staged file",
                     );
                 }
-                kept = next.value;
+                kept = next.value.staged;
+                keptSource = next.value.source;
             }
             // A source this pass cannot read keeps the copy that an earlier pass staged, so reconcile leaves it.
             if (kept === null) kept = await keptCopyOf(group.at(-1) ?? group[0], targetDir);
@@ -655,6 +783,8 @@ export type InputEnumeration = {
     readonly warnings: readonly string[];
     /** The count of inputs whose source is not reachable now. Such an input keeps its profile. */
     readonly unreachable: number;
+    /** The count of source files and directories that the walk could not read. They keep the profile too. */
+    readonly unreadable: number;
 };
 
 /**
@@ -679,7 +809,7 @@ export type InputEnumeration = {
  * @returns The enumeration, or a `DbError` (input listing / anchor resolution).
  */
 export function enumerateInputPaths(analysisId: string, dataDir: string | null): ResultAsync<InputEnumeration, DbError> {
-    return walkInputFiles(analysisId, dataDir).map(async ({ files, warnings, unreachable }) => {
+    return walkInputFiles(analysisId, dataDir).map(async ({ files, warnings, unreachable, unreadable }) => {
         const exists = await pathsExistAsync(
             files.map((file) => file.absPath),
             METADATA_WIDTH,
@@ -694,7 +824,7 @@ export function enumerateInputPaths(analysisId: string, dataDir: string | null):
             }
             paths.add(file.relativePath);
         }
-        return { paths, warnings, unreachable };
+        return { paths, warnings, unreachable, unreadable };
     });
 }
 
@@ -720,7 +850,8 @@ async function firstFileOf(path: string): Promise<string | null> {
         );
         for (const entry of entries) {
             if (entry.isFile() && quarantineReason(entry.name) === undefined) return join(dir, entry.name);
-            if ((entry.isDirectory() || entry.isSymbolicLink()) && !IGNORED_WALK_DIRS.has(entry.name)) queue.push(join(dir, entry.name));
+            // A symlink, a directory, and a kind that `readdir` does not report go to `stat` at their turn.
+            if (!entry.isFile() && !IGNORED_WALK_DIRS.has(entry.name)) queue.push(join(dir, entry.name));
         }
     }
     return null;
@@ -754,7 +885,13 @@ export async function probeHardlinks(sources: readonly string[], targetDir: stri
     const probedDevices = new Map<number, boolean>();
     const copied: string[] = [];
     for (const source of sources) {
-        const file = await firstFileOf(source);
+        const found = await firstFileOf(source);
+        if (found === null) continue;
+        // `link(2)` on Linux links a symlink itself, which proves nothing about the volume of the file behind it.
+        const file = await realpath(found).then(
+            (path) => path,
+            () => null,
+        );
         if (file === null) continue;
         const stats = await stat(file).then(
             (s) => s,
@@ -783,7 +920,7 @@ export async function probeHardlinks(sources: readonly string[], targetDir: stri
 /**
  * The largest gap between two `mtimeMs` readings still treated as the same modification instant.
  *
- * The copy fallback stamps the source's mtime onto the destination with `utimesSync` ({@link stageFile}),
+ * The copy fallback stamps the source's mtime onto the destination with `utimes` ({@link stageFile}),
  * which takes an f64 seconds value: the sub-millisecond tail a nanosecond-granularity filesystem reports
  * (`…704.7327`) does not survive the ms → seconds → `timespec` → ms round-trip and reads back a few
  * float-ULPs short (`…704.732`). An exact `===` therefore reported ~90% of copy-staged files as drifted

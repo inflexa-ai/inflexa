@@ -184,7 +184,12 @@ function resolveDataDir(analysis: Analysis, seams: ProfileParitySeams): ResultAs
  * manifest — {@link enumerateInputPaths} is the gate and staging shares its walk. Returns the
  * manifest (the seed's and the trigger's input), or a one-line failure reason.
  */
-async function materializeInputs(analysis: Analysis, dataDir: string, seams: ProfileParitySeams, warnings: Set<string>): Promise<Result<StagedInput[], string>> {
+async function materializeInputs(
+    analysis: Analysis,
+    dataDir: string,
+    seams: ProfileParitySeams,
+    warnings: Set<string>,
+): Promise<Result<StagedInput[], string>> {
     // TODO(robustness): exclude restaging against a live `executeAnalysis` run on this analysis. `stage`
     // (`stageInputs`) rm/relinks the shared `data/inputs` tree and reconciles it against its own manifest
     // (`reconcileStagedTree`'s `rmSync`), so an input edit (parity edge 2) that restages while a sandbox
@@ -305,6 +310,9 @@ async function dispatchProfileWorkflow(
 ): Promise<ProfileParityOutcome> {
     const stagedResult = await materializeInputs(analysis, dataDir, seams, warnings);
     if (stagedResult.isErr()) return { kind: "failed", reason: stagedResult.error, materialized: false };
+    // The enumeration gated an empty set, but a source can become unreadable between the two walks. A seed and a
+    // trigger over an empty manifest complete an empty profile, which drops the result the profile holds.
+    if (stagedResult.value.length === 0) return { kind: "no_inputs", materialized: false };
 
     const paramsResult = await seedFromManifest(runtime, analysis, stagedResult.value, seams);
     if (paramsResult.isErr()) return { kind: "failed", reason: paramsResult.error, materialized: true };
@@ -446,9 +454,10 @@ async function profileLadder(
         // describes files that are gone, so clear it.
         if (status === null) return { kind: "no_inputs", materialized: false };
         if (status.status === "running") return { kind: "already_running", materialized: false };
-        // A source that is not reachable now is not a removal: the profile describes files that come back
-        // when the volume does, thus it stays. The warnings name the source.
-        if (enumeration.value.unreachable > 0) return { kind: "no_inputs", materialized: false };
+        // A source that is not reachable now, or that this process cannot read, is not a removal: the profile
+        // describes files that come back when the volume or the permission does, thus it stays. The warnings
+        // name the source.
+        if (enumeration.value.unreachable > 0 || enumeration.value.unreadable > 0) return { kind: "no_inputs", materialized: false };
         const clearResult = await seams.clear(runtime.pool, analysis.id);
         if (clearResult.isErr()) return { kind: "failed", reason: `could not clear the stale profile (${clearResult.error.type})`, materialized: false };
         // `clearDataProfile` skips (`ok(false)`) ONLY on a live `running` row — and we returned above

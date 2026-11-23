@@ -1,5 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, renameSync, symlinkSync, utimesSync, chmodSync, statSync, lstatSync, readdirSync } from "node:fs";
+import {
+    mkdirSync,
+    writeFileSync,
+    readFileSync,
+    existsSync,
+    rmSync,
+    renameSync,
+    symlinkSync,
+    utimesSync,
+    chmodSync,
+    statSync,
+    lstatSync,
+    readdirSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUIDv7 } from "bun";
@@ -8,8 +21,9 @@ import { freshDb } from "../../../test_support/db.ts";
 import { insertAnchor, insertAnalysis, insertAnalysisInput, deleteAnalysisInput } from "../../../db/primary_mutation.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import type { Analysis, AnalysisInput } from "../../../types/analysis.ts";
-import { stageInputs, enumerateInputPaths, isInputSetMaterialized, mtimesMatch, probeHardlinks, stagingProgress } from "../staging.ts";
+import { stageInputs, enumerateInputPaths, isInputSetMaterialized, missingSourceKind, mtimesMatch, probeHardlinks, stagingProgress } from "../staging.ts";
 import { present } from "../../../lib/present.ts";
+import { computeInputSignature } from "@inflexa-ai/harness";
 
 let testDir: string;
 let anchorDir: string;
@@ -271,29 +285,51 @@ describe("stageInputs", () => {
         expect(existsSync(join(targetDir, "inputs", "local", "old"))).toBe(false);
     });
 
-    test("a source that is not reachable keeps its staged copy, and the outcome names it", async () => {
-        // An input row that the user did not remove, whose source is gone now: an unmounted volume, or a
-        // file deleted under the row. It is not a removal. Staging keeps the copy of the earlier pass, and
-        // the enumeration still counts it, thus the profile is not cleared.
+    test("a source deleted from a folder that is still present loses its staged copy, as a removed row does", async () => {
         writeFileSync(join(anchorDir, "keep.csv"), "keep");
         writeFileSync(join(anchorDir, "gone.csv"), "gone");
         insertAnalysisInput({ path: "keep.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
         insertAnalysisInput({ path: "gone.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
-
-        const first = (await stageInputs(analysisId, targetDir))._unsafeUnwrap().staged;
-        expect(first).toHaveLength(2);
+        (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
 
         rmSync(join(anchorDir, "gone.csv"), { force: true });
 
         const enumeration = (await enumerateInputPaths(analysisId, targetDir))._unsafeUnwrap();
-        expect(enumeration.paths.size).toBe(2);
-        expect(enumeration.unreachable).toBe(1);
-
+        expect(enumeration.unreachable).toBe(0);
         const second = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
-        expect(second.staged.map((s) => s.key).sort()).toEqual(["gone.csv", "keep.csv"]);
-        expect(readFileSync(join(targetDir, "inputs", "local", "gone.csv"), "utf-8")).toBe("gone");
-        expect(second.warnings).toEqual([`${join(anchorDir, "gone.csv")} is not reachable now; its staged files stay`]);
-        expect([...enumeration.paths].sort()).toEqual([...second.staged.map((st) => st.relativePath)].sort());
+        expect(second.staged.map((s) => s.key)).toEqual(["keep.csv"]);
+        expect(existsSync(join(targetDir, "inputs", "local", "gone.csv"))).toBe(false);
+        expect([...enumeration.paths]).toEqual(second.staged.map((st) => st.relativePath));
+    });
+
+    test("a source whose anchor root is missing keeps its staged copy, and the outcome names it", async () => {
+        const otherAnchorId = "anchor-stage-unmounted";
+        const otherDir = join(testDir, "unmounted-root");
+        mkdirSync(join(otherDir, ".inflexa"), { recursive: true });
+        writeFileSync(join(otherDir, ".inflexa", "id"), JSON.stringify({ schemaVersion: 1, anchorId: otherAnchorId }, null, 2) + "\n");
+        insertAnchor({ id: otherAnchorId, createdAt: 1, updatedAt: 1, cachedPath: otherDir, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        writeFileSync(join(otherDir, "far.csv"), "far");
+        writeFileSync(join(anchorDir, "keep.csv"), "keep");
+        insertAnalysisInput({ path: "keep.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        insertAnalysisInput({ path: "far.csv", isDir: false, analysisId, anchorId: otherAnchorId })._unsafeUnwrap();
+        (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+
+        rmSync(otherDir, { recursive: true, force: true });
+
+        const enumeration = (await enumerateInputPaths(analysisId, targetDir))._unsafeUnwrap();
+        expect(enumeration.unreachable).toBe(1);
+        const second = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        expect(second.staged.map((s) => s.key).sort()).toEqual(["far.csv", "keep.csv"]);
+        expect(readFileSync(join(targetDir, "inputs", "local", "far.csv"), "utf-8")).toBe("far");
+        expect(second.warnings).toEqual(["far.csv is not reachable now; its staged files stay"]);
+    });
+
+    test("a missing source is unreachable when its volume is gone, and deleted when its folder is present", async () => {
+        const mountRoot = join(testDir, "mounts");
+        mkdirSync(join(mountRoot, "present"), { recursive: true });
+        expect(await missingSourceKind(join(mountRoot, "lab", "data", "x.csv"), [mountRoot])).toBe("unreachable");
+        expect(await missingSourceKind(join(mountRoot, "present", "x.csv"), [mountRoot])).toBe("deleted");
+        expect(await missingSourceKind(join(anchorDir, "gone", "x.csv"), [mountRoot])).toBe("deleted");
     });
 
     test("an input row that the user removed takes its staged files with it", async () => {
@@ -635,15 +671,17 @@ describe("enumerateInputPaths", () => {
         expect((await isInputSetMaterialized(analysisId, targetDir))._unsafeUnwrap()).toBe(true);
     });
 
-    test("enumeration reads no file content", async () => {
-        // The hash-free contract: enumeration must never open an input. A file whose bytes are
-        // unreadable (mode 000) still yields a signature, because stat does not need read permission.
+    test("enumeration names a file it cannot read, as staging does, without opening it", async () => {
+        // Enumeration asks `access` and never opens an input. A file whose bytes are unreadable (mode 000) is out of
+        // the set and counted, the same as staging skips it.
         const p = join(anchorDir, "unreadable.csv");
         writeFileSync(p, "secret");
         chmodSync(p, 0o000);
         insertAnalysisInput({ path: "unreadable.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
         try {
-            expect((await enumerateInputPaths(analysisId, targetDir))._unsafeUnwrap().paths.size).toBe(1);
+            const enumeration = (await enumerateInputPaths(analysisId, targetDir))._unsafeUnwrap();
+            expect(enumeration.paths.size).toBe(0);
+            expect(enumeration.unreadable).toBe(1);
         } finally {
             chmodSync(p, 0o644);
         }
@@ -773,6 +811,86 @@ describe("probeHardlinks", () => {
         // A root-owned system binary refuses a link on both platforms (see the copy fallback test above).
         const warning = await probeHardlinks(["/bin/ls"], join(targetDir, "data"));
         expect(warning).toContain("Staging will copy /bin/ls");
+        expect(warning).toContain("put the analysis folder on the same volume as the data");
+        expect(readdirSync(targetDir)).toEqual([]);
+    });
+});
+
+describe("review of PR 920", () => {
+    test("an unreadable file that was never staged leaves the rest of the set materialized, and the enumeration agrees", async () => {
+        writeFileSync(join(anchorDir, "ok.csv"), "ok");
+        writeFileSync(join(anchorDir, "secret.csv"), "s");
+        insertAnalysisInput({ path: "ok.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        insertAnalysisInput({ path: "secret.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        chmodSync(join(anchorDir, "secret.csv"), 0o000);
+        try {
+            const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap().staged;
+            const enumeration = (await enumerateInputPaths(analysisId, targetDir))._unsafeUnwrap();
+            expect([...enumeration.paths]).toEqual(staged.map((s) => s.relativePath));
+            expect(enumeration.unreadable).toBe(1);
+            expect((await isInputSetMaterialized(analysisId, targetDir))._unsafeUnwrap()).toBe(true);
+        } finally {
+            chmodSync(join(anchorDir, "secret.csv"), 0o644);
+        }
+    });
+
+    test("two different sources with one destination, size, and mtime stage the bytes of the last", async () => {
+        const otherAnchorId = "anchor-stage-other";
+        const otherDir = join(testDir, "other-root");
+        mkdirSync(join(otherDir, ".inflexa"), { recursive: true });
+        writeFileSync(join(otherDir, ".inflexa", "id"), JSON.stringify({ schemaVersion: 1, anchorId: otherAnchorId }, null, 2) + "\n");
+        insertAnchor({ id: otherAnchorId, createdAt: 1, updatedAt: 1, cachedPath: otherDir, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        writeFileSync(join(anchorDir, "x.csv"), "aaaa");
+        writeFileSync(join(otherDir, "x.csv"), "bbbb");
+        utimesSync(join(anchorDir, "x.csv"), 1000, 1000);
+        utimesSync(join(otherDir, "x.csv"), 1000, 1000);
+        insertAnalysisInput({ path: "x.csv", isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        insertAnalysisInput({ path: "x.csv", isDir: false, analysisId, anchorId: otherAnchorId })._unsafeUnwrap();
+
+        const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap().staged;
+
+        expect(staged).toHaveLength(1);
+        const dest = join(targetDir, present(staged[0]).relativePath);
+        expect(readFileSync(dest, "utf-8")).toBe("bbbb");
+        expect(statSync(dest).ino).toBe(statSync(join(otherDir, "x.csv")).ino);
+    });
+
+    test("two aliases of one directory give the files under the alias that comes first depth first in readdir order, on each run", async () => {
+        const outside = join(testDir, "outside");
+        mkdirSync(outside, { recursive: true });
+        writeFileSync(join(outside, "f.csv"), "f");
+        const dirPath = join(anchorDir, "aliases");
+        mkdirSync(join(dirPath, "a", "deep"), { recursive: true });
+        symlinkSync(outside, join(dirPath, "a", "deep", "link"));
+        symlinkSync(outside, join(dirPath, "b"));
+        insertAnalysisInput({ path: "aliases", isDir: true, analysisId, anchorId })._unsafeUnwrap();
+
+        const order = readdirSync(dirPath);
+        const expected = order.indexOf("a") < order.indexOf("b") ? join("aliases", "a", "deep", "link", "f.csv") : join("aliases", "b", "f.csv");
+        for (let run = 0; run < 5; run++) {
+            const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap().staged;
+            expect(staged.map((s) => s.key)).toEqual([expected]);
+        }
+    });
+
+    test("staging and the input signature apply one quarantine rule to one path", async () => {
+        mkdirSync(join(anchorDir, "dl", "__MACOSX"), { recursive: true });
+        writeFileSync(join(anchorDir, "dl", "__MACOSX", "x.csv"), "x");
+        mkdirSync(join(anchorDir, "data.tmp"), { recursive: true });
+        writeFileSync(join(anchorDir, "data.tmp", "a.csv"), "a");
+        insertAnalysisInput({ path: join("dl", "__MACOSX", "x.csv"), isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        insertAnalysisInput({ path: "data.tmp", isDir: true, analysisId, anchorId })._unsafeUnwrap();
+
+        const staged = (await stageInputs(analysisId, targetDir))._unsafeUnwrap().staged;
+
+        expect(staged.map((s) => s.key)).toEqual([join("data.tmp", "a.csv")]);
+        expect(computeInputSignature(staged).count).toBe(staged.length);
+    });
+
+    test("the link probe links the real file behind a symlink", async () => {
+        // A root-owned system binary refuses a hardlink; a symlink to it in a folder of the test must not hide that.
+        symlinkSync("/bin/ls", join(anchorDir, "ls-alias"));
+        const warning = await probeHardlinks([join(anchorDir, "ls-alias")], join(targetDir, "data"));
         expect(warning).toContain("put the analysis folder on the same volume as the data");
         expect(readdirSync(targetDir)).toEqual([]);
     });
