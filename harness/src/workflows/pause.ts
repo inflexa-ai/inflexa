@@ -27,7 +27,7 @@ import { modelFailureOf } from "../providers/errors.js";
 import type { Querier } from "../state/db.js";
 import { clearPause, recordPause } from "../state/paused-work.js";
 
-/** The delays of the timer of an outage: 1, 5, 15, and 30 minutes. After the last one, the work waits in `paused`. */
+/** The delays of the timer of an outage: 1, 5, 15, and 30 minutes. After that, the timer keeps the last delay with no end. */
 export const DEFAULT_PAUSE_RETRY_DELAYS_MS: readonly number[] = [60_000, 300_000, 900_000, 1_800_000];
 
 /**
@@ -83,7 +83,7 @@ export type PauseScope = {
     readonly userId: string | null;
     /** Writes the part of the pause to the stream of the work. */
     readonly emit: (part: PausePart) => Promise<void>;
-    /** The delays of the timer of an outage. Absent: {@link DEFAULT_PAUSE_RETRY_DELAYS_MS}. */
+    /** The delays of the timer of an outage. The last delay repeats with no end. Absent: {@link DEFAULT_PAUSE_RETRY_DELAYS_MS}. */
     readonly retryDelaysMs?: readonly number[];
     /**
      * The run credential of a run or a profile. A wait for a person suspends it, and the row keeps the run session
@@ -139,7 +139,8 @@ export function workPause(scope: PauseScope): WorkPause {
         const workflowId = DBOS.workflowID;
         if (!DBOS.isInWorkflow() || DBOS.isInStep() || workflowId === undefined) return undefined;
         if (signal?.aborted === true) return "abort";
-        const delayMs = cause.kind === "outage" ? delays[attempt] : undefined;
+        // An outage ends without a person, thus its timer never stops. An empty schedule sends it to `paused` at once.
+        const delayMs = cause.kind === "outage" ? (delays[attempt] ?? delays.at(-1)) : undefined;
         const state = delayMs === undefined ? "paused" : "retrying";
         const pauseId = await DBOS.randomUUID();
         const pausedAtMs = await DBOS.now();

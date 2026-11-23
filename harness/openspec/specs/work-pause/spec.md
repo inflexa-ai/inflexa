@@ -84,19 +84,19 @@ A gate that runs before the work starts MUST NOT pause. Its refusal stays a refu
 - **THEN** the lease workflow pauses under the run before the first spawn makes a machine, and the `acquire` of the step waits
 - **AND** the second spawn makes the sandbox, and the `acquire` of the step returns
 
-### Requirement: An outage retries on a timer, and then it pauses
+### Requirement: An outage retries on a timer with no end
 
 A pause MUST be in one of two states. In `retrying`, the system sends the request again at a deadline. In `paused`, only a resume ends the wait.
 
-A pause with the cause `outage` MUST start in `retrying`. The deadline MUST come from `DBOS.now()`, thus a recovery keeps it. The delays of the default schedule are 1, 5, 15, and 30 minutes. After the last delay, the pause MUST go to `paused`. A host MUST be able to give its own schedule. An empty schedule sends an outage to `paused` at once.
+A pause with the cause `outage` MUST start in `retrying`. The deadline MUST come from `DBOS.now()`, thus a recovery keeps it. The delays of the default schedule are 1, 5, 15, and 30 minutes. After the last delay, the pause MUST stay in `retrying` and use the last delay again, with no end. A person can hold the pause. A host MUST be able to give its own schedule. An empty schedule sends an outage to `paused` at once.
 
 A pause with the cause `host` or `credential` MUST start in `paused`. The server MUST NOT end a wait in `paused` by itself.
 
-#### Scenario: An outage goes to paused at the cap
+#### Scenario: An outage keeps the last delay after the schedule
 
 - **GIVEN** a schedule of two delays, and a provider that fails each request with a `503`
 - **WHEN** a turn makes a model request
-- **THEN** the turn waits in `retrying` with the attempt 1, then with the attempt 2, and then it waits in `paused`
+- **THEN** the turn waits in `retrying` with the attempt 1, then with the attempt 2, and then in `retrying` with the second delay again
 
 #### Scenario: A recovery keeps the deadline
 
