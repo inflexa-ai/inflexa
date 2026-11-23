@@ -1,5 +1,5 @@
 /**
- * Record the workflow that waits for each ask, the reach of the grant that an `always` answer records, and the grants
+ * Record the workflow that waits for each ask, the run and the step of an ask that a sandbox step raises, the reach of the grant that an `always` answer records, and the grants
  * of a user that apply in each analysis. A row with no workflow resolves to the active turn of its thread at the
  * answer (`selectAskWorkflow`).
  */
@@ -11,6 +11,8 @@ export const recordTheWaiterAndTheUserGrants: Migration = {
     async up(db) {
         await sql`ALTER TABLE cortex_asks ADD COLUMN IF NOT EXISTS workflow_id TEXT`.execute(db);
         await sql`ALTER TABLE cortex_asks ADD COLUMN IF NOT EXISTS grant_scope TEXT`.execute(db);
+        await sql`ALTER TABLE cortex_asks ADD COLUMN IF NOT EXISTS run_id TEXT`.execute(db);
+        await sql`ALTER TABLE cortex_asks ADD COLUMN IF NOT EXISTS step_id TEXT`.execute(db);
         await sql`CREATE TABLE IF NOT EXISTS cortex_user_grants (
             user_id TEXT NOT NULL,
             grant_key TEXT NOT NULL,

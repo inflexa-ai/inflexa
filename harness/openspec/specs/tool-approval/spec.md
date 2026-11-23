@@ -309,3 +309,18 @@ The ask gateway MUST give `scopeOf(askId)`. The read MUST give `{ analysisId, us
 
 - **WHEN** a host calls `scopeOf` with an id that no row carries
 - **THEN** it gives `null`
+
+### Requirement: The ask of a step names its run and its step
+
+An ask that a sandbox step raises MUST record the id of its run and the id of its step. `pending()` and `pendingByAnalyses` MUST give `runId` and `stepId` for each ask, and `null` for an ask of a chat turn. Thus a surface can show the ask with its run.
+
+#### Scenario: The ask of a step
+
+- **GIVEN** a step `T1S1` of the run `run-1` whose call waits for an approval
+- **WHEN** a host reads the pending asks of the analysis
+- **THEN** the ask has `runId` `run-1`, `stepId` `T1S1`, and `threadId` `null`
+
+#### Scenario: The ask of a turn
+
+- **WHEN** a host reads the pending ask of a chat turn
+- **THEN** the ask has `runId` `null` and `stepId` `null`

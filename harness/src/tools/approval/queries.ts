@@ -30,6 +30,9 @@ export type PendingAsk = {
     readonly analysisId: string;
     readonly userId: string;
     readonly threadId: string | null;
+    /** The run and the step of an ask that a sandbox step raised, else `null`. */
+    readonly runId: string | null;
+    readonly stepId: string | null;
     readonly title: string;
     readonly command: string;
     readonly detail: string | null;
@@ -42,6 +45,8 @@ const PendingAskRowSchema = z.object({
     analysis_id: z.string(),
     user_id: z.string(),
     thread_id: z.string().nullable(),
+    run_id: z.string().nullable(),
+    step_id: z.string().nullable(),
     title: z.string(),
     command: z.string(),
     detail: z.string().nullable(),
@@ -78,6 +83,8 @@ export type AskRow = {
     readonly analysisId: string;
     readonly userId: string;
     readonly threadId: string | null;
+    readonly runId: string | null;
+    readonly stepId: string | null;
     readonly title: string;
     readonly command: string;
     readonly detail: string | null;
@@ -94,14 +101,16 @@ export function insertPendingAsk(querier: Querier, row: AskRow): ResultAsync<voi
     return tryMutation("asks.insertPending", async () => {
         await querier.query({
             text: `INSERT INTO cortex_asks
-              (id, analysis_id, user_id, thread_id, title, command, detail, grant_key, grant_scope, workflow_id, status, created_at)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11)
+              (id, analysis_id, user_id, thread_id, run_id, step_id, title, command, detail, grant_key, grant_scope, workflow_id, status, created_at)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending', $13)
               ON CONFLICT (id) DO NOTHING`,
             values: [
                 row.id,
                 row.analysisId,
                 row.userId,
                 row.threadId,
+                row.runId,
+                row.stepId,
                 row.title,
                 row.command,
                 row.detail,
@@ -123,14 +132,16 @@ export function insertGrantedAsk(querier: Querier, row: AskRow, resolvedAt: stri
     return tryMutation("asks.insertGranted", async () => {
         await querier.query({
             text: `INSERT INTO cortex_asks
-              (id, analysis_id, user_id, thread_id, title, command, detail, grant_key, grant_scope, workflow_id, status, reply, created_at, resolved_at)
-              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'resolved', $11::jsonb, $12, $13)
+              (id, analysis_id, user_id, thread_id, run_id, step_id, title, command, detail, grant_key, grant_scope, workflow_id, status, reply, created_at, resolved_at)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'resolved', $13::jsonb, $14, $15)
               ON CONFLICT (id) DO NOTHING`,
             values: [
                 row.id,
                 row.analysisId,
                 row.userId,
                 row.threadId,
+                row.runId,
+                row.stepId,
                 row.title,
                 row.command,
                 row.detail,
@@ -186,7 +197,7 @@ export function markAborted(querier: Querier, id: string, resolvedAt: string): R
 export function selectPending(querier: Querier): ResultAsync<PendingAsk[], DbError> {
     return tryQuery("asks.selectPending", async () => {
         const result = await querier.query({
-            text: `SELECT id, analysis_id, COALESCE(user_id, '') AS user_id, thread_id, title, command, detail, created_at
+            text: `SELECT id, analysis_id, COALESCE(user_id, '') AS user_id, thread_id, run_id, step_id, title, command, detail, created_at
               FROM cortex_asks WHERE status = 'pending' ORDER BY created_at ASC`,
         });
         return result.rows.map(pendingAskOf);
@@ -200,6 +211,8 @@ function pendingAskOf(row: unknown): PendingAsk {
         analysisId: parsed.analysis_id,
         userId: parsed.user_id,
         threadId: parsed.thread_id ?? null,
+        runId: parsed.run_id,
+        stepId: parsed.step_id,
         title: parsed.title,
         command: parsed.command,
         detail: parsed.detail ?? null,
@@ -215,7 +228,7 @@ export function selectPendingByAnalyses(querier: Querier, input: PendingByAnalys
     if (input.analysisIds.length === 0) return okAsync([]);
     return tryQuery("asks.selectPendingByAnalyses", async () => {
         const result = await querier.query({
-            text: `SELECT id, analysis_id, COALESCE(user_id, '') AS user_id, thread_id, title, command, detail, created_at
+            text: `SELECT id, analysis_id, COALESCE(user_id, '') AS user_id, thread_id, run_id, step_id, title, command, detail, created_at
               FROM cortex_asks
               WHERE status = 'pending' AND analysis_id = ANY($1::text[]) AND ($2::text IS NULL OR user_id = $2)
               ORDER BY created_at ASC, id ASC

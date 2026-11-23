@@ -673,7 +673,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                     : workflowApproval({
                           gateway: deps.askGateway,
                           workflowId: childWorkflowId,
-                          scope: { analysisId: input.analysisId, userId: input.runSession.identity.user },
+                          scope: { analysisId: input.analysisId, userId: input.runSession.identity.user, runId: input.runId, stepId: input.stepId },
                           stepPrefix: "sandbox-step",
                           emitPart: safeEmit,
                           waitSeconds: DEFAULT_ASK_WAIT_SECONDS,
