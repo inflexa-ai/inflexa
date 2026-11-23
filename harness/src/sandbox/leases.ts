@@ -119,10 +119,14 @@ export type LeaseBinding = {
     readonly onSandboxWait?: (wait: SandboxWait) => Promise<void>;
 };
 
-export type SandboxWait = { readonly state: "waiting"; readonly size: ResourceSpec } | { readonly state: "ready" };
+/** `invocationId`: the tool call of the exec that waits, when a tool call runs it. */
+export type SandboxWait = { readonly invocationId: string | undefined } & (
+    | { readonly state: "waiting"; readonly size: ResourceSpec }
+    | { readonly state: "ready" }
+);
 
-/** The callbacks of the waits of an exec. */
-type ExecWaits = Pick<LeaseBinding, "emit" | "onSandboxWait">;
+/** The callbacks of the waits of an exec, and the tool call of the exec. */
+export type ExecWaits = Pick<LeaseBinding, "emit" | "onSandboxWait"> & { readonly invocationId?: string };
 
 export type AcquireOutcome =
     | { readonly kind: "granted"; readonly size: ResourceSpec }
@@ -136,7 +140,8 @@ export type NoLease = { readonly kind: "no_lease"; readonly detail?: string };
 export type BoundLease = {
     acquire(size: ResourceSpec): Promise<AcquireOutcome>;
     release(): Promise<void>;
-    exec(request: ExecRequest, emit: ExecEmit): Promise<Result<ExecResult, NoLease>>;
+    /** `invocationId`: the tool call that runs the exec. A wait for a machine shows under it. */
+    exec(request: ExecRequest, emit: ExecEmit, invocationId?: string): Promise<Result<ExecResult, NoLease>>;
 };
 
 export type SandboxLeases = {
@@ -486,8 +491,10 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
         const owner = await DBOS.getWorkflowStatus(ownerWorkflowId);
         if (owner === null || TERMINAL_STATUSES.has(owner.status)) return "owner-ended";
         const lease = unwrapOrThrow(await readLease(pool, id));
-        const machine = lease?.machine;
-        if (machine === undefined || lease?.machineGeneration !== machineGeneration) return "none";
+        if (lease?.state !== "granted" || lease.machineGeneration !== machineGeneration) return "none";
+        const machine = lease.machine;
+        // A lease whose machine died has no machine to ask, and only the idle period decides.
+        if (machine === undefined) return (await idleRemoval(id, machineGeneration)) ? "idle-removed" : "none";
         const running = await runningExecs(machine);
         if (running === "unreachable") {
             const liveness = await client.isAlive(machine).catch(() => undefined);
@@ -501,10 +508,15 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
             unwrapOrThrow(await touchLease(pool, id));
             return "busy";
         }
+        return (await idleRemoval(id, machineGeneration)) ? "idle-removed" : "none";
+    };
+
+    /** Move the lease to `idle` when no exec used it for the idle period, and remove its machine. */
+    const idleRemoval = async (id: string, machineGeneration: number): Promise<boolean> => {
         const idle = unwrapOrThrow(await clearIdleMachine(pool, id, machineGeneration, idlePeriodMs));
-        if (idle === undefined) return "none";
-        await teardownQuietly(idle, "idle");
-        return "idle-removed";
+        if (idle === undefined) return false;
+        if (idle.machine !== undefined) await teardownQuietly(idle.machine, "idle");
+        return true;
     };
 
     const runningExecs = async (machine: SandboxRef): Promise<number | "unreachable"> => {
@@ -688,12 +700,12 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
     const requestMachine = async (lease: LeaseRecord, after: number, waits: ExecWaits): Promise<Result<SandboxRef, NoLease>> => {
         const dbos = await engine();
         const key = DBOS.workflowID === undefined ? undefined : `${DBOS.workflowID}:${String(DBOS.stepID)}:machine:${after}`;
-        await waits.onSandboxWait?.({ state: "waiting", size: lease.requested });
+        await waits.onSandboxWait?.({ state: "waiting", size: lease.requested, invocationId: waits.invocationId });
         await dbos.send(lease.leaseWorkflowId, { kind: "machine", after } satisfies LeaseMessage, LEASE_TOPIC, key);
         const event = await waitForEvent<MachineEvent>(lease, machineEventKey(after + 1), waits.emit);
         if (event === "ended") return err({ kind: "no_lease", detail: "the lease ended" });
         if (event.kind === "failed") return err({ kind: "no_lease", detail: `the sandbox did not start again: ${event.detail}` });
-        await waits.onSandboxWait?.({ state: "ready" });
+        await waits.onSandboxWait?.({ state: "ready", invocationId: waits.invocationId });
         return ok(event.ref);
     };
 
@@ -789,7 +801,8 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
         bind: (binding) => ({
             acquire: (size) => leases.acquire(binding, size),
             release: () => leases.release(binding.leaseKey),
-            exec: (request, emit) => exec(binding.leaseKey, request, emit, { emit: binding.emit, onSandboxWait: binding.onSandboxWait }),
+            exec: (request, emit, invocationId) =>
+                exec(binding.leaseKey, request, emit, { emit: binding.emit, onSandboxWait: binding.onSandboxWait, invocationId }),
         }),
     };
     return leases;

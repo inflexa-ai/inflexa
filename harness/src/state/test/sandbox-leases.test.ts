@@ -208,12 +208,22 @@ describe("the machine of a lease", () => {
         await granted();
         await pool.query("UPDATE cortex_sandbox_leases SET last_used_at = now() - interval '1 hour'");
 
-        expect((await clearIdleMachine(pool, "lw-1", 1, 60_000))._unsafeUnwrap()).toEqual(MACHINE);
+        expect((await clearIdleMachine(pool, "lw-1", 1, 60_000))._unsafeUnwrap()).toEqual({ machine: MACHINE });
         const lease = (await readLease(pool, "lw-1"))._unsafeUnwrap();
         expect(lease?.machine).toBeUndefined();
         expect(lease?.state).toBe("idle");
         expect((await touchLease(pool, "lw-1"))._unsafeUnwrap()).toBeUndefined();
         expect((await openLeases(pool))._unsafeUnwrap().map((row) => row.state)).toEqual(["idle"]);
+    });
+
+    it("moves a granted lease whose machine died to idle after the idle period", async () => {
+        await granted();
+        (await clearMachine(pool, "lw-1", 1))._unsafeUnwrap();
+        expect((await clearIdleMachine(pool, "lw-1", 1, 60_000))._unsafeUnwrap()).toBeUndefined();
+        await pool.query("UPDATE cortex_sandbox_leases SET last_used_at = now() - interval '1 hour'");
+
+        expect((await clearIdleMachine(pool, "lw-1", 1, 60_000))._unsafeUnwrap()).toEqual({ machine: undefined });
+        expect((await readLease(pool, "lw-1"))._unsafeUnwrap()?.state).toBe("idle");
     });
 
     it("keeps the machine of a lease that an exec touched", async () => {

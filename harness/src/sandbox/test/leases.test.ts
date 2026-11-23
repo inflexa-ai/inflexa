@@ -493,6 +493,32 @@ describe("the machine of a lease", () => {
         expect(owners.lastIndexOf(idleLease.leaseWorkflowId)).toBeLessThan(owners.indexOf(thirdLease));
     }, 60_000);
 
+    it("moves a lease whose machine died to idle after the idle period, thus a paused step holds no grant", async () => {
+        backend.exec = () =>
+            Promise.resolve({
+                execId: "x",
+                exitCode: null,
+                stdout: "",
+                stderr: "",
+                durationMs: null,
+                timedOut: false,
+                syntheticFailure: { reason: "sandbox-dead" },
+            });
+        const run = start(rig.nextWorkflowId("an-"), async (lease) => {
+            await lease.acquire(SMALL);
+            const dead = (await lease.exec({ command: ["ls"] }, () => {}))._unsafeUnwrap();
+            await DBOS.recv<string>("go", 60);
+            await lease.release();
+            return dead;
+        });
+        const lease = await until(async () => leaseOf(run.caseId), "the lease");
+
+        await until(async () => ((await leaseRow(lease.leaseWorkflowId))?.state === "idle" ? true : undefined), "the idle removal of the dead lease");
+
+        await DBOS.send(run.caseId, "go", "go");
+        expect(await run.result).toMatchObject({ syntheticFailure: { reason: "sandbox-dead" } });
+    }, 60_000);
+
     it("releases an idle lease", async () => {
         backend.runningExecs = 0;
         const run = start(rig.nextWorkflowId("an-"), async (lease) => {

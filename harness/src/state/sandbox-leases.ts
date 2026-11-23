@@ -229,7 +229,9 @@ export function clearMachine(pool: Querier, leaseWorkflowId: string, machineGene
 
 /**
  * Clear the machine of an idle lease, and move the lease to `idle`: no exec used the lease for `idleMs`. The grant
- * then leaves the capacity sum, thus a paused consumer holds no capacity. An exec writes `last_used_at` before it
+ * then leaves the capacity sum, thus a paused consumer holds no capacity. A granted lease whose machine died has no
+ * machine, and it goes to `idle` by the same rule, thus a dead machine does not hold the grant either. Gives the
+ * machine that the row held, or `undefined` when the lease did not move. An exec writes `last_used_at` before it
  * submits, under the same row lock, thus an exec that starts can never lose its machine to this clear.
  */
 export function clearIdleMachine(
@@ -237,12 +239,12 @@ export function clearIdleMachine(
     leaseWorkflowId: string,
     machineGeneration: number,
     idleMs: number,
-): ResultAsync<PersistedSandboxRef | undefined, DbError> {
+): ResultAsync<{ readonly machine?: PersistedSandboxRef } | undefined, DbError> {
     return tryMutation("sandboxLeases.clearIdleMachine", async () => {
         const { rows } = await pool.query({
             text: `WITH old AS (
                        SELECT lease_workflow_id, machine FROM cortex_sandbox_leases
-                       WHERE lease_workflow_id = $1 AND machine_generation = $2 AND machine IS NOT NULL AND state = 'granted'
+                       WHERE lease_workflow_id = $1 AND machine_generation = $2 AND state = 'granted'
                          AND last_used_at < now() - make_interval(secs => $3::double precision / 1000)
                        FOR UPDATE
                    )
@@ -251,7 +253,9 @@ export function clearIdleMachine(
                    RETURNING old.machine`,
             values: [leaseWorkflowId, machineGeneration, idleMs],
         });
-        return rows.length === 0 ? undefined : PersistedSandboxRefSchema.parse(rows[0]?.machine);
+        if (rows.length === 0) return undefined;
+        const machine = PersistedSandboxRefSchema.nullable().parse(rows[0]?.machine);
+        return { machine: machine ?? undefined };
     });
 }
 
