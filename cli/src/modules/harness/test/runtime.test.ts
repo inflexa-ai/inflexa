@@ -956,7 +956,12 @@ describe("bootHarnessRuntime", () => {
         const seams: BootSeams = {
             ...recordingSeams(calls),
             resolveSandboxEngine: recorded(calls, "resolveSandboxEngine", () =>
-                ok({ runtime: runtimes.podman, socketPath: "/var/folders/xy/podman-api.sock", capacity: { cpu: 2, memoryGb: 1 } }),
+                ok({
+                    runtime: runtimes.podman,
+                    socketPath: "/var/folders/xy/podman-api.sock",
+                    capacity: { cpu: 2, memoryGb: 1 },
+                    detected: { executor: { kind: "vm", bindOwnership: "host-preserved" }, ociRuntime: undefined, podmanVersion: undefined },
+                }),
             ),
             createSandbox: (cfg) => {
                 captured.config = cfg;
