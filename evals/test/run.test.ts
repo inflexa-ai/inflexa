@@ -125,13 +125,13 @@ describe("the CLI host tools", () => {
 
     test("a gated run_inflexa command asks through the real approval of the tool, and a read-only one does not", async () => {
         const model = scriptedModel([
-            callTools(toolCall("c1", "run_inflexa", { argv: ["refs", "list"] }), toolCall("c2", "run_inflexa", { argv: ["refs", "download", "GRCh38"] })),
+            callTools(toolCall("c1", "run_inflexa", { argv: ["store", "ls"] }), toolCall("c2", "run_inflexa", { argv: ["store", "add", "apeglm"] })),
             reply([text("Queued.")]),
         ]);
         const result = await runTrial(
             evalCase({
                 tools: { run_inflexa: { ok: { status: "ran", exitCode: 0, stdout: "", stderr: "" } } },
-                grade: asked("run_inflexa", ["refs", "download", "GRCh38"]),
+                grade: asked("run_inflexa", ["store", "add", "apeglm"]),
             }),
             {
                 agents,
@@ -140,7 +140,7 @@ describe("the CLI host tools", () => {
             },
         );
         expect(result).toMatchObject({ kind: "graded", pass: true });
-        expect(result.kind === "graded" ? result.asks.map((ask) => ask.command) : []).toEqual(["inflexa refs download GRCh38"]);
+        expect(result.kind === "graded" ? result.asks.map((ask) => ask.command) : []).toEqual(["inflexa store add apeglm"]);
     });
 
     test("a denied ask reaches the model as a denial", async () => {

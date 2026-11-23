@@ -52,7 +52,7 @@ describe("list_available_refs", () => {
         const result = (await createTool(root).execute({}, makeToolContext().ctx))._unsafeUnwrap();
 
         expect(result).toMatchObject({ available: true, state: "populated", truncated: false, unlooked: 0 });
-        expect(result.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user", kind: "directory", fileCount: 1, bytes: 9 })]);
+        expect(result.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user/cohort/reference.h5ad", kind: "file", bytes: 9 })]);
     });
 
     // Skills name no reference paths, so an agent finds a file by describing what it needs. The
@@ -107,13 +107,25 @@ describe("list_available_refs", () => {
 
     // Browsing must stay a directory summary — a recursive dump of every file is what
     // the bounding exists to prevent.
-    it("browses one level when no query is given, summarizing directories", async () => {
-        const root = await makeStore("browse");
-        await put(root, "managed/collectri-human/2.0/CollecTRI_regulons.csv", "source,target");
+    // A download nests each file under its host and the path of its URL, thus the folders of a small store name nothing.
+    it("lists the files of a small store with their looks when no query is given", async () => {
+        const root = await makeStore("browse-small");
+        await put(root, "ftp.ebi.ac.uk/pub/databases/collectri/CollecTRI_regulons.csv", "source,target\n");
 
         const result = (await createTool(root).execute({}, makeToolContext().ctx))._unsafeUnwrap();
 
-        expect(result.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/managed", kind: "directory", fileCount: 1 })]);
+        expect(result.entries.map((entry) => [entry.path, entry.kind, "look" in entry])).toEqual([
+            ["/mnt/refs/ftp.ebi.ac.uk/pub/databases/collectri/CollecTRI_regulons.csv", "file", true],
+        ]);
+    });
+
+    it("browses one level of a larger store when no query is given, summarizing directories", async () => {
+        const root = await makeStore("browse-large");
+        await Promise.all(Array.from({ length: 41 }, (_, index) => put(root, `shards/${String(index).padStart(2, "0")}.tsv`, "a\tb\n")));
+
+        const result = (await createTool(root).execute({}, makeToolContext().ctx))._unsafeUnwrap();
+
+        expect(result.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/shards", kind: "directory", fileCount: 41 })]);
     });
 
     it("tells an agent without download_ref to report a reference that matches nothing as absent", async () => {
@@ -128,7 +140,7 @@ describe("list_available_refs", () => {
         );
     });
 
-    it("tells an agent with download_ref to download a reference that matches nothing from a source that it read", async () => {
+    it("tells an agent with download_ref that it can download a reference that matches nothing", async () => {
         const root = await makeStore("miss-download");
         await put(root, "collectri/CollecTRI_regulons.csv", "source,target");
 
@@ -136,7 +148,7 @@ describe("list_available_refs", () => {
 
         expect(result.total).toBe(0);
         expect(result.content).toBe(
-            'No reference beneath /mnt/refs matches "hallmark". The sandbox has no network. You can download the reference with download_ref from a URL that the user gave or that a page you fetched shows. Do not guess a path or a URL.',
+            'No reference beneath /mnt/refs matches "hallmark". The sandbox has no network. You can download the reference into the store with download_ref.',
         );
     });
 
@@ -147,7 +159,7 @@ describe("list_available_refs", () => {
 
         const tool = createTool(root);
         const listed = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
-        expect(listed.entries.map((entry) => entry.path)).toEqual(["/mnt/refs/user"]);
+        expect(listed.entries.map((entry) => entry.path)).toEqual(["/mnt/refs/user/observed.csv"]);
         const searched = (await tool.execute({ query: "example.org" }, makeToolContext().ctx))._unsafeUnwrap();
         expect(searched.entries).toEqual([]);
         const sources = (await tool.execute({ query: "sources" }, makeToolContext().ctx))._unsafeUnwrap();
@@ -297,16 +309,20 @@ describe("list_available_refs", () => {
     it("supports directory drill-down from the root", async () => {
         const root = await makeStore("drill");
         await put(root, "user/cohort/reference.h5ad", "reference");
+        await Promise.all(Array.from({ length: 40 }, (_, index) => put(root, `user/cohort/shards/${String(index).padStart(2, "0")}.tsv`, "a\tb\n")));
 
         const tool = createTool(root);
         const rootResult = (await tool.execute({}, makeToolContext().ctx))._unsafeUnwrap();
-        expect(rootResult.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user", kind: "directory", fileCount: 1, bytes: 9 })]);
+        expect(rootResult.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user", kind: "directory", fileCount: 41 })]);
 
         const userResult = (await tool.execute({ path: "/mnt/refs/user" }, makeToolContext().ctx))._unsafeUnwrap();
-        expect(userResult.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user/cohort", kind: "directory", fileCount: 1 })]);
+        expect(userResult.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user/cohort", kind: "directory", fileCount: 41 })]);
 
         const cohortResult = (await tool.execute({ path: "/mnt/refs/user/cohort" }, makeToolContext().ctx))._unsafeUnwrap();
-        expect(cohortResult.entries).toEqual([expect.objectContaining({ path: "/mnt/refs/user/cohort/reference.h5ad", kind: "file", bytes: 9 })]);
+        expect(cohortResult.entries.map((entry) => [entry.path, entry.kind, entry.bytes])).toEqual([
+            ["/mnt/refs/user/cohort/reference.h5ad", "file", 9],
+            ["/mnt/refs/user/cohort/shards", "directory", 160],
+        ]);
     });
 
     it("bounds the scan and the final envelope for large subtrees", async () => {

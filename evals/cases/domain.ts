@@ -948,8 +948,8 @@ const EQTL_38 = table(
     "\t",
 );
 
-const CHAIN_37_TO_38 = "- /mnt/refs/liftover/hg19ToHg38.over.chain (UCSC liftOver chain, GRCh37 to GRCh38) — chain file";
-const CHAIN_38_TO_37 = "- /mnt/refs/liftover/hg38ToHg19.over.chain (UCSC liftOver chain, GRCh38 to GRCh37) — chain file";
+const CHAIN_37_TO_38 = "liftover/hg19ToHg38.over.chain";
+const CHAIN_38_TO_37 = "liftover/hg38ToHg19.over.chain";
 
 /** `text` with `offset` added to each value of the numeric column `name`. */
 function shiftColumn(text: string, name: string, offset: number): string {
@@ -976,8 +976,8 @@ function chainOf(offset: number): string {
         return `chain 1000 chr${c + 1} ${size} + ${from} ${from + length} chr${c + 1} ${size} + ${to} ${to + length} ${c + 1}\n${length}\n`;
     }).join("\n");
 }
-const GO_BP = "- /mnt/refs/go/c5.go.bp.v2024.1.Hs.symbols.gmt (MSigDB GO biological process 2024.1, gene-sets, Homo sapiens) — GMT of human gene symbols";
-const GENETIC_REFS = { ...REF_FILES, "liftover/hg19ToHg38.over.chain": chainOf(BUILD_OFFSET), "liftover/hg38ToHg19.over.chain": chainOf(-BUILD_OFFSET) };
+const GO_BP = "go/c5.go.bp.v2024.1.Hs.symbols.gmt";
+const GENETIC_REFS = { ...REF_FILES, [CHAIN_37_TO_38]: chainOf(BUILD_OFFSET), [CHAIN_38_TO_37]: chainOf(-BUILD_OFFSET) };
 
 /** The number of CpGs that the sequencing covered in each gene. Each fifth gene is long and CpG-rich. */
 function cpgsOf(i: number): number {
@@ -1023,6 +1023,7 @@ const GO_SETS: readonly (readonly [string, readonly string[]])[] = [
     ].map((name, k): [string, string[]] => [name, GENE_SYMBOLS.filter((_, i) => (i * 7 + k * 13) % 11 === 0).slice(0, 25)]),
 ];
 const GO_GMT = `${GO_SETS.map(([name, genes]) => [name, "http://www.gsea-msigdb.org", ...genes].join("\t")).join("\n")}\n`;
+const GO_REFS = { ...REF_FILES, [GO_BP]: GO_GMT };
 
 function dmpHandoff(stepId: string, assay: string): UpstreamHandoff {
     const dir = `${ROOT}/runs/run-001/${stepId}`;
@@ -1645,9 +1646,7 @@ export const domainCases: readonly EvalCase[] = [
         }),
         setup: { files: deFiles("T1S1", "mouse"), packages: ENRICH_LOCK, result: "8 hallmark sets at FDR < 0.25" },
         tools: {
-            list_available_refs: refs([
-                "- /mnt/refs/msigdb/hallmark/mh.all.v2024.1.Mm.symbols.gmt (MSigDB mouse hallmark 2024.1, gene-sets, Mus musculus) — GMT of mouse gene symbols",
-            ]),
+            list_available_refs: refs(["msigdb/hallmark/mh.all.v2024.1.Mm.symbols.gmt"]),
         },
         maxSteps: MAX_STEPS,
         timeoutMs: TIMEOUT,
@@ -1672,10 +1671,10 @@ export const domainCases: readonly EvalCase[] = [
         setup: {
             files: dmpFiles("T1S1"),
             packages: ENRICH_LOCK,
-            refs: { ...REF_FILES, "go/c5.go.bp.v2024.1.Hs.symbols.gmt": GO_GMT },
+            refs: GO_REFS,
             result: "2 GO terms at FDR < 0.05",
         },
-        tools: { list_available_refs: refs([GO_BP]) },
+        tools: { list_available_refs: refs([GO_BP], GO_REFS) },
         maxSteps: MAX_STEPS,
         timeoutMs: TIMEOUT,
         grade: probeBiasCorrected(),
@@ -1697,10 +1696,10 @@ export const domainCases: readonly EvalCase[] = [
         setup: {
             files: dmpFiles("T1S1"),
             packages: ENRICH_LOCK,
-            refs: { ...REF_FILES, "go/c5.go.bp.v2024.1.Hs.symbols.gmt": GO_GMT },
+            refs: GO_REFS,
             result: "2 processes at FDR < 0.05",
         },
-        tools: { list_available_refs: refs([GO_BP]) },
+        tools: { list_available_refs: refs([GO_BP], GO_REFS) },
         maxSteps: MAX_STEPS,
         timeoutMs: TIMEOUT,
         grade: probeBiasCorrected(),
@@ -2014,7 +2013,7 @@ export const domainCases: readonly EvalCase[] = [
             refs: GENETIC_REFS,
             result: "6 GWAS variants are liver eQTLs",
         },
-        tools: { list_available_refs: refs([CHAIN_37_TO_38, CHAIN_38_TO_37]) },
+        tools: { list_available_refs: refs([CHAIN_37_TO_38, CHAIN_38_TO_37], GENETIC_REFS) },
         maxSteps: MAX_STEPS,
         timeoutMs: TIMEOUT,
         grade: alignsBuilds(),
@@ -2065,7 +2064,7 @@ export const domainCases: readonly EvalCase[] = [
             refs: GENETIC_REFS,
             result: "5 lead variants are blood eQTLs",
         },
-        tools: { list_available_refs: refs([CHAIN_37_TO_38, CHAIN_38_TO_37]) },
+        tools: { list_available_refs: refs([CHAIN_37_TO_38, CHAIN_38_TO_37], GENETIC_REFS) },
         maxSteps: MAX_STEPS,
         timeoutMs: TIMEOUT,
         grade: alignsBuilds(),

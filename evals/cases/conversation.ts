@@ -26,7 +26,6 @@ import {
     mentions,
     never,
     neverSays,
-    notAsked,
     notMentions,
     numbersGrounded,
     priorCall,
@@ -40,6 +39,7 @@ import {
     type TurnState,
 } from "../lib/case.js";
 import type { ScriptedResult } from "../lib/agent.js";
+import { downloadRefTool, INFLEXA_REFS_BLOCKED, refsTool, type RefStore } from "../lib/refs.js";
 
 const LITERATURE_TOOLS = ["pubmed", "search_semantic_scholar", "search_arxiv"];
 const RUN_TOOLS = ["execute_analysis", "generate_plan"];
@@ -513,30 +513,32 @@ const REPORT_EXISTING_TOOLS = {
     start_report_session: { ok: { outcome: "existing-session", threadId: "0193f7b0-1111-7c00-8d3c-4b6e0f1a2c33", title: "Treatment response" } },
 };
 
-const REFS_LIST = {
-    ok: {
-        collections: [
-            {
-                collection: "genomes",
-                datasets: [
-                    { id: "GRCh38", installed: true },
-                    { id: "GRCm39", installed: false },
-                ],
-            },
-            { collection: "gene-sets", datasets: [{ id: "MSigDB hallmark 2024.1", installed: true }] },
-        ],
+/** A store with the human genome and the hallmark gene sets, at the paths that `download_ref` gives them. */
+const REFS_STORE: RefStore = {
+    "ftp.ensembl.org/pub/release-112/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz": {
+        text: ">1 dna:primary_assembly primary_assembly:GRCh38:1:1:248956422:1 REF\nNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN\n",
+        bytes: 881_211_416,
+    },
+    "data.broadinstitute.org/gsea-msigdb/msigdb/release/2024.1.Hs/h.all.v2024.1.Hs.symbols.gmt": {
+        text: [
+            "HALLMARK_ADIPOGENESIS\thttps://www.gsea-msigdb.org/gsea/msigdb/human/geneset/HALLMARK_ADIPOGENESIS\tABCA1\tABCB8\tACAA2\tACADL",
+            "HALLMARK_ALLOGRAFT_REJECTION\thttps://www.gsea-msigdb.org/gsea/msigdb/human/geneset/HALLMARK_ALLOGRAFT_REJECTION\tAARS1\tABCE1\tABI1",
+            "HALLMARK_ANDROGEN_RESPONSE\thttps://www.gsea-msigdb.org/gsea/msigdb/human/geneset/HALLMARK_ANDROGEN_RESPONSE\tABCC4\tABHD2\tACSL3",
+            "",
+        ].join("\n"),
+        bytes: 189_412,
     },
 };
 
+const GO_BP_URL = "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2024.1.Hs/c5.go.bp.v2024.1.Hs.symbols.gmt";
+const COLLECTRI_URL = "https://zenodo.org/records/8192729/files/CollecTRI_regulons.csv";
+
 const REFS_TOOLS = {
-    list_available_refs: REFS_LIST,
-    run_inflexa: {
-        ok: {
-            status: "ran",
-            exitCode: 0,
-            stdout: "genomes:\n  GRCh38   installed\n  GRCm39   available\ngene-sets:\n  msigdb-hallmark   installed",
-            stderr: "",
-        },
+    list_available_refs: refsTool(REFS_STORE),
+    download_ref: downloadRefTool(),
+    run_inflexa: (input: unknown): ScriptedResult => {
+        const argv = parseUnknownRecord(input)?.argv;
+        return Array.isArray(argv) && argv[0] === "refs" ? INFLEXA_REFS_BLOCKED : { ok: { status: "ran", exitCode: 0, stdout: "", stderr: "" } };
     },
 };
 
@@ -1183,7 +1185,7 @@ export const conversationCases: readonly EvalCase[] = [
         user: "what refs are available?",
         maxSteps: 4,
         tools: REFS_TOOLS,
-        grade: all(callsAny(["list_available_refs", "run_inflexa"]), atMostCalls(4), notAsked("run_inflexa"), neverSays(/\bgit\b/i), mentions("GRCh38")),
+        grade: all(callsAny(["list_available_refs"]), atMostCalls(4), inputLacks("run_inflexa", ['"refs"']), neverSays(/\bgit\b/i), mentions("GRCh38")),
     },
     {
         id: "refs-question-lists-refs-held-out",
@@ -1192,7 +1194,25 @@ export const conversationCases: readonly EvalCase[] = [
         user: "which reference data do I have?",
         maxSteps: 4,
         tools: REFS_TOOLS,
-        grade: all(callsAny(["list_available_refs", "run_inflexa"]), atMostCalls(4), notAsked("run_inflexa"), neverSays(/\bgit\b/i), mentions("GRCh38")),
+        grade: all(callsAny(["list_available_refs"]), atMostCalls(4), inputLacks("run_inflexa", ['"refs"']), neverSays(/\bgit\b/i), mentions("GRCh38")),
+    },
+    {
+        id: "refs-user-url-downloads",
+        set: "dev",
+        source: "download_ref description: a reference that the store does not hold downloads from the URL that the user gives",
+        user: `Add the GO biological process gene sets to the reference store. The file is at ${GO_BP_URL}`,
+        maxSteps: 4,
+        tools: REFS_TOOLS,
+        grade: all(submits("download_ref", [GO_BP_URL]), inputLacks("run_inflexa", ['"refs"'])),
+    },
+    {
+        id: "refs-user-url-downloads-held-out",
+        set: "held-out",
+        source: "paraphrase of refs-user-url-downloads: a different reference, on a host that asks",
+        user: `A later TF activity step needs the CollecTRI regulons. Get them from ${COLLECTRI_URL} please.`,
+        maxSteps: 4,
+        tools: REFS_TOOLS,
+        grade: all(submits("download_ref", [COLLECTRI_URL]), inputLacks("run_inflexa", ['"refs"'])),
     },
     {
         id: "launch-no-later-check-promise",

@@ -97,3 +97,18 @@ Each completed file MUST add one line to `<store>/.inflexa/sources.jsonl` with i
 - **GIVEN** a URL that an earlier call downloaded
 - **WHEN** a different agent downloads the same URL
 - **THEN** the call gives the existing path, and no transfer occurs
+
+### Requirement: A URL that the server does not have gives the files of its folder
+
+When the server answers 404 for a URL, the tool MUST read the page of the folder of that URL, with the same HTTPS rule, redirect limit, and address guard as a download. The failed file MUST then name the entries that the page links to inside that folder, at most 100. A folder that does not answer MUST leave the plain reason.
+
+#### Scenario: A file name that is wrong
+
+- **GIVEN** a folder page that links to `Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz`
+- **WHEN** an agent downloads a file of that folder that the server does not have
+- **THEN** the failed file names the folder and `Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz`
+
+#### Scenario: A folder that does not answer
+
+- **WHEN** an agent downloads a missing file, and its folder answers 404 too
+- **THEN** the failed file gives the reason `the server answered HTTP 404`
