@@ -2180,6 +2180,36 @@ describe("setup() — batch orchestration", () => {
             // The default budget is half the host, 8 cores. The engine has 4, so the offer is all of the engine.
             expect(persistedBudget(readConfig().harness)).toEqual({ cpu: 4, memoryGb: 6 });
         });
+
+        test("Enter keeps a budget whose memory share is larger than its CPU share", async () => {
+            replaceProperty(process.stdin, "isTTY", true);
+            const prompts: string[] = [];
+            spies.push(...stubRecordedPrompts(prompts, []));
+            globalThis.fetch = fakeFetch(respondWith(null, { status: 404 }));
+            engine.mockImplementation(() => Promise.resolve({ cpu: 16, memoryGb: 15 }));
+            writeConfig({ ...readConfig(), harness: { resourceLimits: { budget: { cpu: 4, memoryGb: 13 } } } })._unsafeUnwrap();
+
+            const output = await runSetup({ auth: false, start: false, force: false, postgres: false, flags: { connection: "cliproxy" } });
+
+            expect(process.exitCode).toBe(0);
+            expect(persistedBudget(readConfig().harness)).toEqual({ cpu: 4, memoryGb: 13 });
+            expect(prompts).toContain("Max share of the VM analyses may use in total (%) — Enter keeps 4 cores / 13 GB");
+            expect(output).not.toContain("does not fit");
+        });
+
+        test("Enter cuts each figure of a budget to the engine, and says so", async () => {
+            replaceProperty(process.stdin, "isTTY", true);
+            spies.push(...stubRecordedPrompts([], []));
+            globalThis.fetch = fakeFetch(respondWith(null, { status: 404 }));
+            engine.mockImplementation(() => Promise.resolve({ cpu: 8, memoryGb: 15 }));
+            writeConfig({ ...readConfig(), harness: { resourceLimits: { budget: { cpu: 12, memoryGb: 4 } } } })._unsafeUnwrap();
+
+            const output = await runSetup({ auth: false, start: false, force: false, postgres: false, flags: { connection: "cliproxy" } });
+
+            expect(process.exitCode).toBe(0);
+            expect(persistedBudget(readConfig().harness)).toEqual({ cpu: 8, memoryGb: 4 });
+            expect(output).toContain("The allowance of 12 cores / 4 GB does not fit the VM. Enter keeps 8 cores / 4 GB.");
+        });
     });
 
     test.each([

@@ -1332,8 +1332,9 @@ async function promptPostgresConfig(answered: SetupAnswers["postgres"], canPromp
  * and persist it as absolute values under `harness.resourceLimits.budget`.
  * One question: everything else about resource limits (per-step ceilings,
  * ephemeral sizing) is derived from the allowance or expert config, not setup
- * material. The default share reflects the currently-resolved budget (half the
- * machine on a fresh config), so re-running setup shows what already applies.
+ * material. Enter keeps the currently-resolved budget (half the machine on a
+ * fresh config), each figure cut to the engine, so re-running setup never takes
+ * memory or cores from a budget that still fits.
  *
  * The share is a share of the host cut to the engine, less {@link ENGINE_MEMORY_RESERVE_GB} for the services: the
  * same ceiling the boot clamps the budget to. A budget above it would persist a figure that no analysis can get, and
@@ -1358,8 +1359,11 @@ async function promptResourceConfig(rt: ContainerRuntime, answeredSharePct: numb
     const capacity = await engineCapacity(rt);
     const ceiling = capacity === undefined ? undefined : engineBudgetCeiling(capacity);
     const machine = ceiling === undefined ? host : { cpu: Math.min(host.cpu, ceiling.cpu), memoryGb: Math.min(host.memoryGb, ceiling.memoryGb) };
-    const resolved = resolveHarnessConfig();
-    const currentPct = Math.min(100, Math.max(1, Math.round((resolved.resourcePolicy.budget.cpu / machine.cpu) * 100)));
+    const current = resolveHarnessConfig().resourcePolicy.budget;
+    // One share cannot carry a budget whose CPU share and memory share differ, thus Enter keeps the budget itself,
+    // each figure cut to the engine. The share on offer is only the CPU share of that budget.
+    const kept = { cpu: Math.min(current.cpu, machine.cpu), memoryGb: Math.min(current.memoryGb, machine.memoryGb) };
+    const currentPct = Math.min(100, Math.max(1, Math.round((kept.cpu / machine.cpu) * 100)));
     // "Configure …" is an instruction to someone about to be asked something. A batch run reaches this
     // line only with the share already ANSWERED, so it states the detected machine instead — the same
     // fact, phrased for a transcript nobody is going to type into.
@@ -1371,6 +1375,12 @@ async function promptResourceConfig(rt: ContainerRuntime, answeredSharePct: numb
     const smallerVm = capacity !== undefined && (capacity.cpu < host.cpu || capacity.memoryGb < host.memoryGb);
     if (smallerVm) note(engineVmNote(rt, capacity, machine), "Analyses run in a smaller VM");
 
+    if (!share.answered && (kept.cpu < current.cpu || kept.memoryGb < current.memoryGb)) {
+        log.warn(
+            `The allowance of ${current.cpu} cores / ${current.memoryGb} GB does not fit ${smallerVm ? "the VM" : "this machine"}. Enter keeps ${kept.cpu} cores / ${kept.memoryGb} GB.`,
+        );
+    }
+
     const sharePct = (v: string): string | undefined => {
         if (v.trim() === "") return undefined;
         const n = Number(v.trim());
@@ -1379,17 +1389,22 @@ async function promptResourceConfig(rt: ContainerRuntime, answeredSharePct: numb
     };
     const answer = share.answered
         ? String(share.value)
-        : await promptText(`Max share of ${smallerVm ? "the VM" : "this machine"} analyses may use in total (%)`, {
-              defaultValue: String(currentPct),
-              placeholder: String(currentPct),
-              validate: sharePct,
-          }).catch(() => String(currentPct));
+        : await promptText(
+              `Max share of ${smallerVm ? "the VM" : "this machine"} analyses may use in total (%) — Enter keeps ${kept.cpu} cores / ${kept.memoryGb} GB`,
+              {
+                  defaultValue: String(currentPct),
+                  placeholder: String(currentPct),
+                  validate: sharePct,
+              },
+          ).catch(() => String(currentPct));
     const parsed = Number(answer);
-    const pct = parsed > 0 && parsed <= 100 ? parsed : currentPct;
-    const budget = {
-        cpu: Math.max(1, Math.floor((machine.cpu * pct) / 100)),
-        memoryGb: Math.max(1, Math.floor((machine.memoryGb * pct) / 100)),
-    };
+    const budget =
+        !share.answered && (answer.trim() === String(currentPct) || !(parsed > 0 && parsed <= 100))
+            ? kept
+            : {
+                  cpu: Math.max(1, Math.floor((machine.cpu * parsed) / 100)),
+                  memoryGb: Math.max(1, Math.floor((machine.memoryGb * parsed) / 100)),
+              };
     log.message(`Analyses may use up to ${budget.cpu} cores / ${budget.memoryGb} GB in total`);
 
     const read = readConfigForWrite();
