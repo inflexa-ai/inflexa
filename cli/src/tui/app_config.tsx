@@ -9,7 +9,7 @@ import type { EmbeddingDefaults, EmbeddingSettings, PostgresSettings, ServerSett
 import { DEFAULT_CLIENT_OPTS, describeClientError, type ClientOpts } from "../client/api.ts";
 import { fetchEmbeddingModels, fetchSettings, updateSettings } from "../client/machine.ts";
 import { fail, requireInteractiveTerminal } from "../lib/cli.ts";
-import { readConfig, writeConfig } from "../lib/config.ts";
+import { readConfig, readConfigForWrite, writeConfig } from "../lib/config.ts";
 import { env, isReservedPostgresPort } from "../lib/env.ts";
 import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
 import { shutdown } from "../lib/shutdown.ts";
@@ -578,7 +578,7 @@ export function ConfigApp(props: { settings: ServerSettings; onClose?: () => voi
         // only the postgres fields that differ from their channel defaults. saved() still holds the FULL
         // resolved draft so the on-screen form keeps every field populated.
         if (next.theme !== saved().theme) {
-            const theme = writeConfig({ ...readConfig(), theme: next.theme });
+            const theme = readConfigForWrite().andThen((config) => writeConfig({ ...config, theme: next.theme }));
             if (theme.isErr()) {
                 setNotice({ kind: "error", text: `Failed to save: ${theme.error.type}` });
                 return;

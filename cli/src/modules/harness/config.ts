@@ -2,15 +2,8 @@ import { availableParallelism, totalmem } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import type { MachineBudget, ResourceLimits, ResourcePolicy } from "@inflexa-ai/harness";
-import { type Result } from "neverthrow";
-import {
-    AGENT_EFFORTS,
-    modelsConfigSchema,
-    readConfig,
-    writeConfig,
-    type ConfigError,
-    type ModelAuthConfig,
-} from "../../lib/config.ts";
+import { err, type Result } from "neverthrow";
+import { AGENT_EFFORTS, modelsConfigSchema, readConfig, readConfigForWrite, writeConfig, type ConfigError, type ModelAuthConfig } from "../../lib/config.ts";
 import { env, resolveKnowledgeApiKey } from "../../lib/env.ts";
 import { recordOrEmpty } from "../../lib/json_record.ts";
 import { SANDBOX_IMAGE } from "../libs/images.ts";
@@ -132,17 +125,13 @@ function resolvePolicy(cfg: z.infer<typeof harnessConfigSchema> | undefined): Re
 }
 
 /** All-defaults resolved config, used when the `harness` key is absent or when it failed validation. */
-function defaultsWith(
-    cfg: z.infer<typeof harnessConfigSchema> | undefined,
-    configError?: { issues: string },
-): ResolvedHarnessConfig {
+function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, configError?: { issues: string }): ResolvedHarnessConfig {
     const resourcePolicy = resolvePolicy(cfg);
     return {
         model: cfg?.model ?? null,
         sandboxImage: cfg?.sandboxImage ?? SANDBOX_IMAGE,
         resourcePolicy,
-        skillsDir:
-            cfg?.skillsDir ?? (env.isDevelopment ? devSkillsDir : releaseContentDir("skills")),
+        skillsDir: cfg?.skillsDir ?? (env.isDevelopment ? devSkillsDir : releaseContentDir("skills")),
         configError,
     };
 }
@@ -159,9 +148,7 @@ export function resolveHarnessConfig(): ResolvedHarnessConfig {
     if (raw === undefined) return defaultsWith(undefined);
     const parsed = harnessConfigSchema.safeParse(raw);
     if (parsed.success) return defaultsWith(parsed.data);
-    const issues = parsed.error.issues
-        .map((i) => `harness.${i.path.join(".")}: ${i.message}`)
-        .join("; ");
+    const issues = parsed.error.issues.map((i) => `harness.${i.path.join(".")}: ${i.message}`).join("; ");
     return defaultsWith(undefined, { issues });
 }
 
@@ -178,12 +165,7 @@ const OPENAI_API_HOST = "api.openai.com";
  */
 export function impliedWireProtocol(provider: string, baseURL: string): ModelWireProtocol {
     if (provider === "anthropic") return "anthropic";
-    if (
-        provider === "openai" &&
-        URL.canParse(baseURL) &&
-        new URL(baseURL).hostname === OPENAI_API_HOST
-    )
-        return "openai";
+    if (provider === "openai" && URL.canParse(baseURL) && new URL(baseURL).hostname === OPENAI_API_HOST) return "openai";
     return "openai-compatible";
 }
 
@@ -200,11 +182,7 @@ export type AgentName = keyof NonNullable<z.infer<typeof modelsConfigSchema>["ag
  * The closed agent set as a runtime list — the source boot iterates for its per-agent resolution. The
  * `satisfies` guard rejects any element that is not a {@link AgentName}, keeping the list honest.
  */
-export const AGENT_NAMES = [
-    "conversation",
-    "sandbox",
-    "utility",
-] as const satisfies readonly AgentName[];
+export const AGENT_NAMES = ["conversation", "sandbox", "utility"] as const satisfies readonly AgentName[];
 
 /**
  * Per-agent model-id overrides from `models.agents`, each optional. An absent agent falls through the
@@ -221,7 +199,9 @@ export type AgentModelOverrides = { readonly [Agent in AgentName]?: string };
  * (the palette picker) surfaces a failure and does NOT then apply a runtime change config disagrees with.
  */
 export function writeAgentModel(agent: AgentName, model: string): Result<void, ConfigError> {
-    const config = readConfig();
+    const read = readConfigForWrite();
+    if (read.isErr()) return err(read.error);
+    const config = read.value;
     // `config.models` is `unknown` in lib/config.ts (validated downstream by resolveModelConnection), so
     // spread both it and its nested `agents` as plain records to preserve the sibling keys this write does
     // not manage (the connection, and the other agent).
@@ -261,11 +241,10 @@ export function resolveAgentEfforts(): Record<AgentName, AgentEffort> {
  * other agent, stay as they are. One write, because a failed second write would leave the model changed
  * and the effort not.
  */
-export function writeAgentSelection(
-    agent: AgentName,
-    selection: { readonly model: string; readonly effort: AgentEffort },
-): Result<void, ConfigError> {
-    const config = readConfig();
+export function writeAgentSelection(agent: AgentName, selection: { readonly model: string; readonly effort: AgentEffort }): Result<void, ConfigError> {
+    const read = readConfigForWrite();
+    if (read.isErr()) return err(read.error);
+    const config = read.value;
     // `config.models` is `unknown` in lib/config.ts, thus spread it and its nested `agents` and `efforts` as
     // plain records, the same as `writeAgentModel`.
     const models = recordOrEmpty(config.models);
@@ -359,8 +338,7 @@ export function pickRequestBounds(connection: { requestTimeoutMs?: number; maxRe
     maxRetries?: number;
 } {
     const bounds: { requestTimeoutMs?: number; maxRetries?: number } = {};
-    if (connection.requestTimeoutMs !== undefined)
-        bounds.requestTimeoutMs = connection.requestTimeoutMs;
+    if (connection.requestTimeoutMs !== undefined) bounds.requestTimeoutMs = connection.requestTimeoutMs;
     if (connection.maxRetries !== undefined) bounds.maxRetries = connection.maxRetries;
     return bounds;
 }
@@ -385,9 +363,7 @@ export function resolveModelConnection(): ResolvedModelConnection {
     if (raw === undefined) return DEFAULT_MODEL_CONNECTION;
     const parsed = modelsConfigSchema.safeParse(raw);
     if (!parsed.success) {
-        const issues = parsed.error.issues
-            .map((i) => `models.${i.path.join(".")}: ${i.message}`)
-            .join("; ");
+        const issues = parsed.error.issues.map((i) => `models.${i.path.join(".")}: ${i.message}`).join("; ");
         return { ...DEFAULT_MODEL_CONNECTION, configError: { issues } };
     }
     const agents: AgentModelOverrides = parsed.data.agents ?? {};
@@ -406,8 +382,7 @@ export function resolveModelConnection(): ResolvedModelConnection {
             ...fallbacks,
         };
     }
-    const protocol: ModelWireProtocol =
-        connection.protocol ?? impliedWireProtocol(connection.provider, connection.baseURL);
+    const protocol: ModelWireProtocol = connection.protocol ?? impliedWireProtocol(connection.provider, connection.baseURL);
     // Carry the optional token-free `auth` source verbatim (present only on a well-formed direct block).
     const directOptions: {
         auth?: ModelAuthConfig;
@@ -415,10 +390,8 @@ export function resolveModelConnection(): ResolvedModelConnection {
         supportsMultiPartToolContent?: boolean;
     } = {};
     if (connection.auth !== undefined) directOptions.auth = connection.auth;
-    if (connection.contextWindow !== undefined)
-        directOptions.contextWindow = connection.contextWindow;
-    if (connection.supportsMultiPartToolContent !== undefined)
-        directOptions.supportsMultiPartToolContent = connection.supportsMultiPartToolContent;
+    if (connection.contextWindow !== undefined) directOptions.contextWindow = connection.contextWindow;
+    if (connection.supportsMultiPartToolContent !== undefined) directOptions.supportsMultiPartToolContent = connection.supportsMultiPartToolContent;
     return {
         mode: "direct",
         provider: connection.provider,
@@ -440,9 +413,7 @@ export function resolveModelConnection(): ResolvedModelConnection {
  * unauthenticated client.
  */
 export type ResolvedKnowledgeConfig =
-    | { readonly kind: "configured"; readonly baseUrl: string; readonly apiKey: string }
-    | { readonly kind: "missing_key"; readonly baseUrl: string }
-    | null;
+    { readonly kind: "configured"; readonly baseUrl: string; readonly apiKey: string } | { readonly kind: "missing_key"; readonly baseUrl: string } | null;
 
 export function resolveKnowledgeConfig(): ResolvedKnowledgeConfig {
     const baseUrl = readConfig().knowledge?.baseUrl?.trim();

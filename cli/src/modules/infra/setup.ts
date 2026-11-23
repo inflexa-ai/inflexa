@@ -13,6 +13,7 @@ import type { BootPullProgress, BootStepId } from "../../api/server.ts";
 import {
     ensureRuntime,
     readConfig,
+    readConfigForWrite,
     resolveConnectionMode,
     resolvePostgresConfig,
     selectedRuntime,
@@ -358,10 +359,12 @@ export async function setup(options: SetupOptions): Promise<void> {
                       ? `${selected.label} isn't ready — continuing with ${rt.label} and saving it as the container runtime.`
                       : `Using ${rt.label} as the container runtime (saved to settings).`,
             );
-            const writeError = writeConfig({ ...readConfig(), runtime: rt.id }).match(
-                () => null,
-                (e) => e,
-            );
+            const writeError = readConfigForWrite()
+                .andThen((config) => writeConfig({ ...config, runtime: rt.id }))
+                .match(
+                    () => null,
+                    (e) => e,
+                );
             if (writeError) {
                 log.error(`Could not save the runtime selection: ${writeError.type}`);
                 process.exitCode = 1;
@@ -1296,7 +1299,9 @@ async function promptPostgresConfig(answered: SetupAnswers["postgres"], canPromp
         password,
     };
 
-    const config = readConfig();
+    const read = readConfigForWrite();
+    if (read.isErr()) return err(read.error);
+    const config = read.value;
     // Rebuild the persisted block fresh from the prompt, keeping only explicit choices. An empty result
     // (all defaults) writes `postgres: undefined`, which JSON.stringify drops — healing a frozen default on
     // whichever channel runs setup, since a reserved port is never carried forward.
@@ -1366,7 +1371,9 @@ async function promptResourceConfig(answeredSharePct: number | undefined, canPro
     };
     log.message(`Analyses may use up to ${budget.cpu} cores / ${budget.memoryGb} GB in total`);
 
-    const config = readConfig();
+    const read = readConfigForWrite();
+    if (read.isErr()) return err(read.error);
+    const config = read.value;
     // `config.harness` is deliberately `unknown` in lib/config.ts (the harness
     // module owns its validation) — spread it as a plain record so the fields
     // this prompt does not manage (model, per-step overrides, …)
@@ -1761,7 +1768,9 @@ type DirectConnectionInput = {
  * configured `auth` block persists only the non-secret variable name / command string / scheme.
  */
 export function writeDirectConnection(input: DirectConnectionInput): Result<void, ConfigError> {
-    const config = readConfig();
+    const read = readConfigForWrite();
+    if (read.isErr()) return err(read.error);
+    const config = read.value;
     // `config.models` is `unknown` in lib/config.ts (validated downstream by resolveModelConnection),
     // so spread it as a plain record to preserve sibling keys this write does not manage.
     const models = recordOrEmpty(config.models);
@@ -2489,7 +2498,9 @@ const PROVIDER_SLUG: Record<Provider, string> = {
  * is a warning, not a setup-aborting error — the login itself succeeded).
  */
 export function recordCliproxyProvider(kind: Provider): Result<void, ConfigError> {
-    const config = readConfig();
+    const read = readConfigForWrite();
+    if (read.isErr()) return err(read.error);
+    const config = read.value;
     // See writeDirectConnection: `config.models` is `unknown`, spread as a record to keep siblings.
     const models = recordOrEmpty(config.models);
     return writeConfig({ ...config, models: { ...models, connection: { mode: "cliproxy", provider: PROVIDER_SLUG[kind] } } });

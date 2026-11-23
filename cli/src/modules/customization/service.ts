@@ -61,11 +61,14 @@ import type {
 import { messageOf } from "../../lib/cause.ts";
 import {
     credentialSourceSchema,
+    describeConfigReadError,
     mcpServerEntrySchema,
     readConfig,
+    readConfigResult,
     writeConfig,
     type Config,
     type ConfigError,
+    type ConfigReadError,
     type CredentialSourceConfig,
     type McpServerEntry,
 } from "../../lib/config.ts";
@@ -271,6 +274,8 @@ export type CustomizationOpts = {
     /** The built-in skills of this build, read at each call. `null` when the build has none, which a boot refuses. */
     readonly builtinSkillsDir: () => string | null;
     readonly readConfig: () => Config;
+    /** The config for a change, or why the file does not read. */
+    readonly readConfigResult: () => Result<Config, ConfigReadError>;
     readonly writeConfig: (config: Config) => Result<void, ConfigError>;
     readonly credentials: CredentialReader;
     /** The values that the user typed for `stored` credentials. */
@@ -304,6 +309,7 @@ export function defaultCustomizationOpts(mcpFailures: CustomizationOpts["mcpFail
         replacedDir: env.replacedDir,
         builtinSkillsDir: () => resolveHarnessConfig().skillsDir,
         readConfig,
+        readConfigResult,
         writeConfig,
         credentials: createCredentialReader(),
         credentialStore: createCredentialStore(),
@@ -915,6 +921,13 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
     const writeConfigChange = (config: Config): Result<void, CustomizationError> => opts.writeConfig(config);
 
     /**
+     * The config before a change. A file that does not read stops the change: the defaults that `readConfig` gives
+     * for it would replace the settings of the person at the write.
+     */
+    const readConfigForChange = (): Result<Config, CustomizationError> =>
+        opts.readConfigResult().mapErr((e): CustomizationError => ({ type: "config_write_failed", cause: new Error(describeConfigReadError(e)) }));
+
+    /**
      * The path that an import reads. An absolute path stays. A relative path reads inside the workspace of `analysis`, and
      * a path that leaves the workspace, also through a link, is refused.
      */
@@ -1026,7 +1039,9 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                         if (builtin !== undefined) {
                             // Read the config again just before the write: the check above awaited, and a different
                             // request can have written the config in that time.
-                            const config = opts.readConfig();
+                            const readConfig = readConfigForChange();
+                            if (readConfig.isErr()) return err(readConfig.error);
+                            const config = readConfig.value;
                             const change = changeAttachment(config.agents?.[id] ?? {}, attachmentsView(builtin.defaults), KEY_OF[kind], name, attach);
                             return writeConfigChange(withAgentChange(config, id, change));
                         }
@@ -1290,7 +1305,9 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
             (cause): CustomizationError => ({ type: "io_failed", op: "store the credentials of the server", cause }),
         );
         return stored.andThen(() => {
-            const current = opts.readConfig();
+            const readCurrent = readConfigForChange();
+            if (readCurrent.isErr()) return errAsync(readCurrent.error);
+            const current = readCurrent.value;
             let credentials = current.credentials;
             for (const { credential } of secrets) credentials = withRecordEntry<unknown>(credentials, credential, { kind: "stored" });
             const written = writeConfigChange({ ...current, credentials });
@@ -1333,7 +1350,9 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                     const agent = agentDetails(state).find((candidate) => candidate.id === agentId);
                     if (agent === undefined) return err({ type: "unknown_agent", id: agentId });
                     if (agent.role !== single) return err({ type: "role_mismatch", id: agentId, role: single });
-                    const config = opts.readConfig();
+                    const readConfig = readConfigForChange();
+                    if (readConfig.isErr()) return err(readConfig.error);
+                    const config = readConfig.value;
                     // The built-in agent is the default of its role, thus a choice of it is no choice to keep.
                     const chosen = agent.kind === "builtin" ? undefined : agentId;
                     return writeConfigChange({ ...config, roles: withRecordEntry(config.roles, single, chosen) });
@@ -1438,7 +1457,9 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                     const builtin = LOCAL_BUILTIN_AGENTS.find((agent) => agent.id === id);
                     if (builtin !== undefined && !enabled && !builtin.canDisable) return err({ type: "cannot_disable", id });
                     if (builtin === undefined && !state.files.some((file) => file.id === id)) return err({ type: "unknown_agent", id });
-                    const config = opts.readConfig();
+                    const readConfig = readConfigForChange();
+                    if (readConfig.isErr()) return err(readConfig.error);
+                    const config = readConfig.value;
                     const current = config.agents?.[id] ?? {};
                     return writeConfigChange(withAgentChange(config, id, { ...current, enabled: enabled ? undefined : false }));
                 })
@@ -1454,7 +1475,9 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                 const file = state.files.find((candidate) => candidate.id === id);
                 if (file === undefined) return err({ type: "unknown_agent", id });
                 return rmResult(file.path, "delete the agent file").andThen(() => {
-                    const config = opts.readConfig();
+                    const readConfig = readConfigForChange();
+                    if (readConfig.isErr()) return err(readConfig.error);
+                    const config = readConfig.value;
                     // A role that chose the agent goes back to its built-in agent.
                     const roles = Object.fromEntries(Object.entries(config.roles ?? {}).filter(([, chosen]) => chosen !== id));
                     const withoutChoice: Config = { ...config, roles: Object.keys(roles).length === 0 ? undefined : roles };
@@ -1640,7 +1663,9 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
             if (definition === undefined) return errAsync({ type: "unknown_connector", id });
             const unknownSlot = Object.keys(patch.credentials ?? {}).find((slot) => !(slot in definition.credentials));
             if (unknownSlot !== undefined) return errAsync({ type: "unknown_slot", id, slot: unknownSlot });
-            const config = opts.readConfig();
+            const readConfig = readConfigForChange();
+            if (readConfig.isErr()) return errAsync(readConfig.error);
+            const config = readConfig.value;
             const current = config.connectors?.[id] ?? {};
             const endpoint =
                 patch.endpoint === undefined ? current.endpoint : patch.endpoint === null || patch.endpoint.length === 0 ? undefined : patch.endpoint;
@@ -1675,7 +1700,9 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
         setCredential: (name, request) => {
             if (!isValidCredentialName(name)) return errAsync({ type: "invalid_credential_name", name });
             return new ResultAsync(writeCredential(name, request)).andThen((source) => {
-                const config = opts.readConfig();
+                const readConfig = readConfigForChange();
+                if (readConfig.isErr()) return errAsync(readConfig.error);
+                const config = readConfig.value;
                 const written = writeConfigChange({ ...config, credentials: withRecordEntry<unknown>(config.credentials, name, source) });
                 if (written.isErr()) return errAsync<CredentialView, CustomizationError>(written.error);
                 return ResultAsync.fromPromise(credentialView(name, source), (cause): CustomizationError => ({
@@ -1687,7 +1714,9 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
         },
 
         removeCredential: (name) => {
-            const config = opts.readConfig();
+            const readConfig = readConfigForChange();
+            if (readConfig.isErr()) return errAsync(readConfig.error);
+            const config = readConfig.value;
             if (config.credentials === undefined || !Object.hasOwn(config.credentials, name)) return errAsync({ type: "unknown_credential", name });
             const written = writeConfigChange({ ...config, credentials: withRecordEntry<unknown>(config.credentials, name, undefined) });
             if (written.isErr()) return errAsync(written.error);
@@ -1716,7 +1745,9 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                     type: "invalid_mcp_entry",
                     detail: parsed.error.issues.map((issue) => `${issue.path.join(".") || "entry"}: ${issue.message}`).join("; "),
                 });
-            const config = opts.readConfig();
+            const readConfig = readConfigForChange();
+            if (readConfig.isErr()) return errAsync(readConfig.error);
+            const config = readConfig.value;
             if (config.mcp !== undefined && Object.hasOwn(config.mcp, name)) return errAsync({ type: "mcp_server_exists", name });
             const written = writeConfigChange({ ...config, mcp: withRecordEntry<unknown>(config.mcp, name, parsed.data) });
             if (written.isErr()) return errAsync(written.error);
@@ -1778,7 +1809,9 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
         },
 
         setMcpEnabled: (name, enabled) => {
-            const config = opts.readConfig();
+            const readConfig = readConfigForChange();
+            if (readConfig.isErr()) return errAsync(readConfig.error);
+            const config = readConfig.value;
             const entry = mcpEntryOf(config, name);
             if (entry.isErr()) return errAsync(entry.error);
             const next: McpServerEntry = { ...entry.value, enabled };
@@ -1788,7 +1821,9 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
         },
 
         removeMcp: (name) => {
-            const config = opts.readConfig();
+            const readConfig = readConfigForChange();
+            if (readConfig.isErr()) return errAsync(readConfig.error);
+            const config = readConfig.value;
             if (config.mcp === undefined || !Object.hasOwn(config.mcp, name)) return errAsync({ type: "unknown_mcp_server", name });
             // A copy of the entry under a different name can share the URL, and with it the tokens: a removal deletes them for each copy.
             const entry = mcpEntryOf(config, name);

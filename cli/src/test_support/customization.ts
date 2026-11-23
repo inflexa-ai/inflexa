@@ -105,6 +105,7 @@ export function customizationFixture(): CustomizationFixture {
             replacedDir: join(root, "replaced"),
             builtinSkillsDir: () => builtinSkillsDir,
             readConfig: () => fixture.config,
+            readConfigResult: () => ok(fixture.config),
             writeConfig: (config) => {
                 fixture.config = config;
                 return ok(undefined);

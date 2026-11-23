@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import { Result, ok, err } from "neverthrow";
 import { z } from "zod";
@@ -7,7 +7,7 @@ import { DEFAULT_THEME_ID, themeIds } from "./design_system.ts";
 import { ContainerRuntimeError, ensureReady, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime } from "./container.ts";
 import { messageOf } from "./cause.ts";
 import { env, isReservedPostgresPort } from "./env.ts";
-import { errnoCode } from "./fs.ts";
+import { errnoCode, rmResult } from "./fs.ts";
 import { getLogger } from "./log.ts";
 import { unknownRecordSchema } from "./json_record.ts";
 import { isMember } from "./types.ts";
@@ -478,22 +478,53 @@ function canonicalKeyOrder(value: unknown, schema: z.core.$ZodType | null): unkn
 }
 
 /**
+ * The config before a change that a caller writes back, or the write error. A read-modify-write caller uses this,
+ * never {@link readConfig}: the defaults that `readConfig` gives for a file that does not read would replace the
+ * settings of the person at the write.
+ */
+export function readConfigForWrite(): Result<Config, ConfigError> {
+    return readConfigResult().mapErr((e): ConfigError => ({ type: "config_write_failed", cause: new Error(describeConfigReadError(e)) }));
+}
+
+/**
  * Persist the user config, serialized in a canonical key order derived from {@link configSchema} (see
  * {@link canonicalKeyOrder}) so that a config with the same values always produces the same bytes — the
  * property `inflexa setup --yes` idempotency rests on. Creates the parent directory if needed.
+ *
+ * The write is atomic: a temporary file in the same folder, an fsync, then a rename over the file. A crash or a
+ * full disk in the middle leaves the old file or the new one, never a part that the next start refuses. The
+ * temporary file keeps the mode of the old file, because the config holds the Postgres password.
  */
 export function writeConfig(config: Config): Result<void, ConfigError> {
     // `config` can hold the defaults that `readConfig` gave for a file that does not read. A write would then
     // replace the settings of the person, thus the write waits until the file reads again.
     const current = readConfigResult();
     if (current.isErr()) return err({ type: "config_write_failed", cause: new Error(describeConfigReadError(current.error)) });
-    return Result.fromThrowable(
+    const path = env.configPath;
+    const temporary = `${path}.${process.pid}.tmp`;
+    const written = Result.fromThrowable(
         () => {
-            mkdirSync(dirname(env.configPath), { recursive: true });
-            writeFileSync(env.configPath, JSON.stringify(canonicalKeyOrder(config, configSchema), null, 4) + "\n");
+            mkdirSync(dirname(path), { recursive: true });
+            const mode = existsSync(path) ? statSync(path).mode & 0o777 : 0o600;
+            const fd = openSync(temporary, "w", mode);
+            try {
+                writeSync(fd, JSON.stringify(canonicalKeyOrder(config, configSchema), null, 4) + "\n");
+                fsyncSync(fd);
+            } finally {
+                closeSync(fd);
+            }
+            renameSync(temporary, path);
         },
         (cause): ConfigError => ({ type: "config_write_failed", cause }),
     )();
+    // A failed write leaves the temporary file. Its removal can fail too, and then the next write replaces it.
+    if (written.isErr()) {
+        rmResult(temporary, "remove the temporary config file").match(
+            () => undefined,
+            () => undefined,
+        );
+    }
+    return written;
 }
 
 /**
@@ -589,7 +620,7 @@ export async function ensureRuntime(
     // id — afterward the raw peek would find nothing to name.
     const discarded = discardedRuntimeValue();
 
-    const write = writeConfig({ ...readConfig(), runtime: rt.id });
+    const write = readConfigForWrite().andThen((config) => writeConfig({ ...config, runtime: rt.id }));
     if (write.isErr()) {
         return err(
             new ContainerRuntimeError(

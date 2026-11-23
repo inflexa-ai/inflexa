@@ -19,7 +19,7 @@ import {
     type ServerSettings,
     type SettingsPatch,
 } from "../../api/machine.ts";
-import { AGENT_EFFORTS, readConfig, resolvePostgresConfig, writeConfig, type Config, type ConfigError } from "../../lib/config.ts";
+import { AGENT_EFFORTS, readConfig, readConfigForWrite, resolvePostgresConfig, writeConfig, type Config, type ConfigError } from "../../lib/config.ts";
 import { runtimeIds } from "../../lib/container.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
 import { env, isReservedPostgresPort } from "../../lib/env.ts";
@@ -413,7 +413,9 @@ function serverSettings(): ServerSettings {
  * send keeps its stored value, because no client has it.
  */
 function saveSettings(patch: SettingsPatch): Result<void, ConfigError> {
-    const config = readConfig();
+    const read = readConfigForWrite();
+    if (read.isErr()) return err(read.error);
+    const config = read.value;
     const embedding = patch.embedding?.mode === "api-key" ? { ...patch.embedding, apiKey: patch.embedding.apiKey ?? config.embedding.apiKey } : patch.embedding;
     // A key that the patch omits keeps its stored value, thus it stays absent from the patch layer: an `undefined`
     // value would overwrite the stored one. `runtime: null` is the one explicit clear.

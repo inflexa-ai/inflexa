@@ -25,7 +25,7 @@ import { err, ok, type Result } from "neverthrow";
 
 import { createEmbeddingProvider, makeLocalAuth, type AgentSession } from "@inflexa-ai/harness";
 
-import { readConfig, writeConfig, type ConfigError } from "../../lib/config.ts";
+import { readConfig, readConfigForWrite, writeConfig, type ConfigError } from "../../lib/config.ts";
 import { promptSecret, promptText, select, stdinIsTTY } from "../../lib/cli.ts";
 import { EMBEDDING_API_KEY_VAR, env, resolveEmbeddingApiKey } from "../../lib/env.ts";
 import { isCompiledBinary } from "../../lib/install_context.ts";
@@ -355,7 +355,9 @@ export type EmbeddingSetupAnswers = {
  * no backend to configure: it is rejected as `invalid_answers`, never dropped on the way to an `ok`.
  */
 export async function runEmbeddingSetup(interactive: boolean, answers?: EmbeddingSetupAnswers): Promise<Result<void, EmbeddingSetupError>> {
-    const config = readConfig();
+    const read = readConfigForWrite();
+    if (read.isErr()) return err(configWriteFailed("read the config", read.error));
+    const config = read.value;
     // The single "may this run ask a question?" fact, applied to every branch below: a batch run falls
     // back to the answers and the pre-fills instead of dying inside a prompt that cannot render. Both
     // call sites pass `process.stdin.isTTY` as `interactive`.
