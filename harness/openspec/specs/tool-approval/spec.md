@@ -112,7 +112,7 @@ The harness MUST give `answer(id, reply)` on the chat turns, and `pending()` on 
 
 ### Requirement: The ask status machine covers approval, denial, abort, and expiry
 
-An ask MUST move from `pending` to exactly one terminal status: `resolved` (approved `once` or `always`), `rejected`, `aborted`, or `expired`. A pending ask whose turn stops MUST become `aborted`, and the turn MUST end through its abort path. A pending ask that no answer reaches in the wait of its turn MUST become `expired`, and the loop MUST deny its call. A pending ask that a dead process left MUST be swept to `expired` at boot. The sweep MUST expire only pending asks older than a max age (default 24 hours, overridable per call through `sweepExpired(maxAgeMs?)`). Thus a boot, also of each pod of a rolling deployment, cannot expire an ask that a live turn waits for. The return count of the sweep MUST reflect only the rows that it swept.
+An ask MUST move from `pending` to exactly one terminal status: `resolved` (approved `once` or `always`), `rejected`, `aborted`, or `expired`. A pending ask whose turn stops MUST become `aborted`, and the turn MUST end through its abort path. A pending ask that no answer reaches in the wait of its turn MUST become `expired`, and the loop MUST deny its call. A pending ask that a dead process left MUST be swept to `expired` at boot. The sweep MUST NOT expire the ask of a sandbox step, because the step waits until an answer comes. The sweep MUST expire only pending asks older than a max age (default 24 hours, overridable per call through `sweepExpired(maxAgeMs?)`). Thus a boot, also of each pod of a rolling deployment, cannot expire an ask that a live turn waits for. The return count of the sweep MUST reflect only the rows that it swept.
 
 #### Scenario: Turn abort aborts a pending ask
 
@@ -137,6 +137,12 @@ An ask MUST move from `pending` to exactly one terminal status: `resolved` (appr
 - **GIVEN** one `pending` row older than the max age and one fresh `pending` row
 - **WHEN** the ledger is swept
 - **THEN** the sweep returns 1, the stale row is `expired`, and the fresh row stays `pending`
+
+#### Scenario: The sweep keeps the ask of a step
+
+- **GIVEN** a `pending` ask of a sandbox step older than the max age
+- **WHEN** the ledger is swept
+- **THEN** the row stays `pending`
 
 ### Requirement: A pending ask is surfaced as a harness-defined chat part
 
@@ -232,7 +238,7 @@ A tool MUST be able to declare an approval hook. The hook gets the input of the 
 
 ### Requirement: The wait for an approval is durable
 
-A chat turn and a sandbox step MUST wait for the answer of an ask with a durable wait of their workflow. The wait ends at the time limit of the ask. Each ask row MUST record the id of the workflow that waits. The answer of the host MUST reach that workflow by the ask id. A wait MUST NOT run inside a step of DBOS.
+A chat turn and a sandbox step MUST wait for the answer of an ask with a durable wait of their workflow. The wait of a chat turn ends at the time limit of the ask. The wait of a sandbox step MUST last until an answer comes, or until the run stops. Each ask row MUST record the id of the workflow that waits. The answer of the host MUST reach that workflow by the ask id. A wait MUST NOT run inside a step of DBOS.
 
 #### Scenario: An answer after a crash
 
@@ -242,7 +248,7 @@ A chat turn and a sandbox step MUST wait for the answer of an ask with a durable
 
 #### Scenario: An ask that nobody answers
 
-- **WHEN** the time limit of a pending ask ends
+- **WHEN** the time limit of a pending ask of a chat turn ends
 - **THEN** the ask row is `expired`, and the call gets a denied result
 
 #### Scenario: A step waits for an answer
@@ -250,6 +256,18 @@ A chat turn and a sandbox step MUST wait for the answer of an ask with a durable
 - **GIVEN** a step agent whose call needs an approval
 - **WHEN** the user answers the ask `once` by its id
 - **THEN** the answer reaches the workflow of the step, and the call runs
+
+#### Scenario: A step waits until the person comes back
+
+- **GIVEN** a step whose ask nobody answers for some hours
+- **WHEN** the person answers `once`
+- **THEN** the call runs, and the step continues
+
+#### Scenario: A canceled run aborts the asks of its steps
+
+- **GIVEN** a step of a run that waits for an answer
+- **WHEN** the run is canceled
+- **THEN** the ask row is `aborted`
 
 ### Requirement: A denial gives the call a denied result and stops the turn
 

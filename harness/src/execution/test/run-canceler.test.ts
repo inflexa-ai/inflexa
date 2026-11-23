@@ -85,7 +85,7 @@ type FakeDb = {
      * `ledger` is the step table the two step writes act on; it starts as a copy of the last read batch. `pauses` is
      * the table of the waiting workflows, keyed by `work_id`.
      */
-    state: { run: Row | null; swept: number; ledger: Row[]; pauses: Row[] };
+    state: { run: Row | null; swept: number; ledger: Row[]; pauses: Row[]; abortedAsksOfRuns: unknown[] };
 };
 
 /** Successive `queryStepsByRun` reads consume `stepBatches`; the last repeats. */
@@ -94,11 +94,13 @@ function fakeDb(
     stepBatches: Row[][] = [[]],
     opts: { sweepFails?: boolean; settleFails?: boolean; failStepReadsAfter?: number; runWriteFails?: boolean; pauses?: Row[] } = {},
 ): FakeDb {
+    const abortedAsksOfRuns: unknown[] = [];
     const state = {
         run,
         swept: 0,
         ledger: (stepBatches[stepBatches.length - 1] ?? []).map((row) => ({ ...row })),
         pauses: (opts.pauses ?? []).map((row) => ({ ...row })),
+        abortedAsksOfRuns,
     };
     let stepReads = 0;
     const pool = Object.assign(new Pool(), {
@@ -108,6 +110,10 @@ function fakeDb(
                 const before = state.pauses.length;
                 state.pauses = state.pauses.filter((row) => row.work_id !== values?.[0]);
                 return Promise.resolve({ rowCount: before - state.pauses.length });
+            }
+            if (text.startsWith("UPDATE cortex_asks SET status = 'aborted'") && text.includes("WHERE run_id = $1")) {
+                state.abortedAsksOfRuns.push(values?.[0]);
+                return Promise.resolve({ rowCount: 0 });
             }
             if (text.includes("UPDATE cortex_step_executions")) {
                 if (text.includes("SET status = 'skipped'")) {
@@ -342,6 +348,18 @@ describe("createRunCanceler", () => {
         expect(pausesAtCancel).toEqual([["wf-child-1", "wf-child-2", "wf-other"]]);
         expect(db.state.pauses.map((row) => row.workflow_id)).toEqual(["wf-other"]);
         expect(closes).toEqual([{ analysisId: "analysis-1", runId: "run-1", outcome: { kind: "canceled" } }]);
+    });
+
+    it("aborts the pending asks of the steps of the run, because the cancel ended their waits", async () => {
+        const db = fakeDb(runRow(), [[stepRow("s1", "wf-child-1")]]);
+        const { charge } = recordingCharge();
+        const { authorizer } = recordingAuthorizer();
+        const { cancelWorkflows } = recordingCancel();
+        const canceler = createRunCanceler({ pool: db.pool, runCharge: charge, runAuthorizer: authorizer, cancelWorkflows });
+
+        await canceler.cancel("run-1", session);
+
+        expect(db.state.abortedAsksOfRuns).toEqual(["run-1"]);
     });
 
     it("cancels a child whose workflow id commits only after the parent cancel", async () => {

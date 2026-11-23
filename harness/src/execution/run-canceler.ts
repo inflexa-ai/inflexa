@@ -47,6 +47,7 @@ import { markRunCanceledIfActive, queryRun, updateRunStatus } from "../state/run
 import type { RunStatus, StepExecutionRow } from "../state/schema.js";
 import { cancelRunningStepExecutions, queryStepsByRun, sweepPendingStepExecutions } from "../state/step-executions.js";
 import { clearPausesOfWork } from "../state/paused-work.js";
+import { abortPendingAsksOfRun } from "../tools/approval/queries.js";
 import { createDbosWorkflowPurger, dbosClientFor } from "./dbos-workflow-purger.js";
 import type { RunAuthorizer } from "./run-authorizer.js";
 import { parseRecordedRunEnd, RUN_END_EVENT_KEY, type RecordedRunEnd } from "./run-end-record.js";
@@ -193,6 +194,9 @@ export function createRunCanceler(deps: RunCancelerDeps): RunCanceler {
             // The cancel ended each wait of a paused step, and no workflow of the run deletes its row again.
             const cleared = await clearPausesOfWork(pool, runId);
             if (cleared.isErr()) logger.error("the pauses of the run did not clear", { runId, op: cleared.error.op });
+            // The cancel also ended each wait of a step for an answer, thus its ask can never be answered.
+            const aborted = await abortPendingAsksOfRun(pool, runId, new Date().toISOString());
+            if (aborted.isErr()) logger.error("the asks of the run did not abort", { runId, op: aborted.error.op });
 
             // The run end that the body recorded after a failed status write. A value
             // that is not a recorded run end counts as a failed read.

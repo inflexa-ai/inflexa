@@ -6,7 +6,7 @@ import { countingQuerier } from "../../../__tests__/setup/counting-querier.js";
 import { withSchema } from "../../../__tests__/setup/postgres.js";
 import type { AskRequest } from "../contract.js";
 import { askPartOf, createAskGateway, type AskGateway, type AskScope } from "../gateway.js";
-import { insertPendingAsk, type AskRow } from "../queries.js";
+import { abortPendingAsksOfRun, insertPendingAsk, type AskRow } from "../queries.js";
 import { uuidv7 } from "../uuidv7.js";
 
 const AskStateRowSchema = z.object({ status: z.string(), reply: z.json() });
@@ -318,6 +318,24 @@ describe("createAskGateway — sweep", () => {
             createdAt,
         };
     }
+
+    it("leaves the ask of a sandbox step pending, because it waits until an answer comes", async () => {
+        const step = { ...pendingRow(STALE), runId: "run-1", stepId: "T1S1" };
+        (await insertPendingAsk(pool, step))._unsafeUnwrap();
+
+        expect(await gateway.sweepExpired()).toBe(0);
+        expect((await selectRow(step.id))?.status).toBe("pending");
+    });
+
+    it("aborts the pending asks of a canceled run, and no ask of another run", async () => {
+        const canceled = { ...pendingRow(STALE), runId: "run-1", stepId: "T1S1" };
+        const other = { ...pendingRow(STALE), runId: "run-2", stepId: "T1S1" };
+        for (const row of [canceled, other]) (await insertPendingAsk(pool, row))._unsafeUnwrap();
+
+        expect((await abortPendingAsksOfRun(pool, "run-1", new Date().toISOString()))._unsafeUnwrap()).toBe(1);
+        expect((await selectRow(canceled.id))?.status).toBe("aborted");
+        expect((await selectRow(other.id))?.status).toBe("pending");
+    });
 
     it("expires orphaned pending rows past the max age and returns the count swept", async () => {
         const rows = [pendingRow(STALE), pendingRow(STALE)];

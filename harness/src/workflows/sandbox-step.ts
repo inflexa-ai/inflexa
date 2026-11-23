@@ -90,7 +90,7 @@ import { blockerOf } from "../tools/sandbox/report-blocker.js";
 import { createFileMetadataCell, SUBMIT_FILE_METADATA_TOOL_ID, type FileMetadataCell } from "../tools/sandbox/submit-file-metadata.js";
 import { hasSuccessfulTemplateRun, RUN_TEMPLATE_TOOL_ID, type StepTemplate } from "../tools/knowledge/run-template.js";
 import type { AskGateway } from "../tools/approval/gateway.js";
-import { DEFAULT_ASK_WAIT_SECONDS, workflowApproval } from "../tools/approval/workflow-approval.js";
+import { workflowApproval } from "../tools/approval/workflow-approval.js";
 import { pauseAtGate, workPause } from "./pause.js";
 
 // ── Workflow input/output shapes ─────────────────────────────────────
@@ -676,7 +676,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
                           scope: { analysisId: input.analysisId, userId: input.runSession.identity.user, runId: input.runId, stepId: input.stepId },
                           stepPrefix: "sandbox-step",
                           emitPart: safeEmit,
-                          waitSeconds: DEFAULT_ASK_WAIT_SECONDS,
+                          waitSeconds: "until-answered",
                       }),
             // A denied call leaves the step agent its other sources, or a blocker.
             continuesAfterDenial: true,
