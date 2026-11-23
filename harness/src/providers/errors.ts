@@ -162,7 +162,9 @@ export function modelFailureClass(err: unknown): string | undefined {
         case "auth":
             return "the model endpoint refused the credential";
         case "suspend":
-            return `the model endpoint refused the request (${error.reason})`;
+            // The reason is text of the host: a value of its `suspendOn` map, or the reason of its header hook.
+            // Nothing bounds it, thus the class names only the kind.
+            return "the host refused the model request";
         case "provider":
             break;
     }
