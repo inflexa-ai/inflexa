@@ -1659,7 +1659,10 @@ describe("setup() — batch orchestration", () => {
                     return answerFor(message, present(options[0]).value);
                 }),
             ),
-            spyOn(cliPrompts, "confirm").mockImplementation(() => Promise.resolve(false)),
+            spyOn(cliPrompts, "confirm").mockImplementation((message: string) => {
+                prompts.push(message);
+                return Promise.resolve(false);
+            }),
         ];
     }
 
@@ -2898,6 +2901,7 @@ describe("setup() — batch orchestration", () => {
             expect(asked(selects, "How should inflexa reach models?")).toBe(false);
             expect(asked(prompts, "Username")).toBe(false);
             expect(asked(prompts, "Port")).toBe(false);
+            expect(asked(prompts, "Download the sandbox images")).toBe(false);
             // The checkpoint step itself still asks — a continue starts AT the step that failed.
             expect(present(refsStep.mock.calls.at(-1))[0].interactive).toBe(true);
             // A silenced step resolves what the failed run persisted, and writes nothing new.
@@ -2916,6 +2920,7 @@ describe("setup() — batch orchestration", () => {
             expect(asked(selects, "How should inflexa reach models?")).toBe(true);
             expect(asked(prompts, "Username")).toBe(true);
             expect(asked(prompts, "Port")).toBe(true);
+            expect(asked(prompts, "Download the sandbox images")).toBe(true);
             expect(existsSync(env.setupStatePath)).toBe(false);
         });
     });

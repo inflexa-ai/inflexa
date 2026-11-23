@@ -278,6 +278,8 @@ On a run that can prompt, a record MUST produce ONE question, ahead of the wizar
 
 A step BEFORE the chosen continue point MUST still run, and it MUST NOT ask its questions. It MUST resolve its value through the same no-prompt path `--yes` uses. Thus the later steps that consume that value see no difference. A step at or after the continue point MUST ask as it does with no record.
 
+The download question of the three transfers is the first step, because it is the first question of the wizard. Thus a continue from a later step MUST NOT ask it again.
+
 The connection-mode question and the connection block that follows it MUST be skipped as one unit. The direct branch has no no-prompt path, thus a partial skip would ask again for the endpoint, the credential, and the model.
 
 The container work MUST NOT be skipped. A continue rewrites the compose file, starts the stack, and waits on Postgres, exactly as a fresh run does. Those steps read live state, not an answer.

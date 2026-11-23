@@ -463,7 +463,7 @@ export function browserAdvice(facts: BrowserAdviceFacts): string | null {
 // are done" list would instead make every later re-run partial.
 
 /** The step names in wizard order — the index of a name is what "before the checkpoint" means. */
-const SETUP_STEPS = ["connection", "auth", "postgres", "model", "resources", "embeddings", "refs", "sandbox"] as const;
+const SETUP_STEPS = ["sandbox", "connection", "auth", "postgres", "model", "resources", "embeddings", "refs"] as const;
 
 type SetupStep = (typeof SETUP_STEPS)[number];
 
@@ -692,7 +692,7 @@ export async function setup(options: SetupOptions): Promise<void> {
 
     // The try below leaves through many error returns and one throw. One variable set at the head of each
     // step, plus one write in the `finally`, covers all of them, so a new return needs no new mark.
-    let currentStep: SetupStep = "connection";
+    let currentStep: SetupStep = "sandbox";
 
     try {
         // The download consent is the FIRST question of the wizard, by decision:
@@ -730,11 +730,12 @@ export async function setup(options: SetupOptions): Promise<void> {
         // rest of the setup while the bytes move, and setup exits without a
         // wait on them. The `--sandbox` answer is the ONE consent for all
         // three, and nothing downloads without it.
-        await runTransfersSetup(answers.sandbox, canPrompt);
+        await runTransfersSetup(answers.sandbox, asks("sandbox"));
 
         // The connection mode is the ONE question whose batch default the resolver applies early and
         // whose interactive default it deliberately does NOT — applying it would pre-empt the wizard's
         // first prompt. So an unresolved mode here means exactly "an interactive run still has to ask".
+        currentStep = "connection";
         const mode = await chooseConnectionMode(connectionMode, asks("connection"));
 
         // `--provider` wears the vocabulary of the connection mode, so its check can only run
