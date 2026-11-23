@@ -76,12 +76,12 @@ The tool MUST write each file to a `.part` file beside its target. It MUST renam
 
 ### Requirement: The tool extracts an archive on request
 
-With `extract: true`, the tool MUST extract a tar, gzip-compressed tar, or zip file into a directory beside it, named for the archive without its suffix. Then the tool MUST delete the archive. The extraction MUST write only regular files and directories, and it MUST skip each link entry. It MUST refuse an entry whose path is absolute or contains `..`. A gzip file of one file MUST stay compressed.
+With `extract: true`, the tool MUST extract a tar, gzip-compressed tar, or zip file into a directory beside it, named for the archive without its suffix. Then the tool MUST delete the archive. The extraction MUST write only regular files and directories, and it MUST skip each link entry. It MUST refuse an entry whose path is absolute or contains `..`. A gzip file of one file MUST stay compressed. The result MUST give the paths of the extracted files, up to a fixed limit, and the count of the files past the limit.
 
 #### Scenario: A tarball
 
 - **WHEN** an agent downloads `.../unite.tgz` with `extract: true`
-- **THEN** its files are under `.../unite/`, and `.../unite.tgz` is not in the store
+- **THEN** its files are under `.../unite/`, `.../unite.tgz` is not in the store, and the result gives the path of each file
 
 #### Scenario: An entry that escapes
 
