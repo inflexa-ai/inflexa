@@ -171,7 +171,7 @@ For your own data, go to the data folder and run `inflexa`. The full guide is at
 
 - **You control what leaves your machine.** An Inflexa account is not necessary. Your model provider receives only the chat and the content that the agent reads. The research tools send queries, for example gene names, to public services such as PubMed. With a local model and local embeddings, the chat and your files stay on your machine.
 - **The analysis code runs in a sandbox.** No network, no root, and a limit on CPU and memory. [`SECURITY.md`](./SECURITY.md) gives the full isolation model.
-- **Use the model that you prefer.** Use a local model or your own endpoint. Or sign in with a Claude, OpenAI, Gemini, Qwen, or iFlow account.
+- **Use the model that you prefer.** Use a local model or your own endpoint. Or sign in with a Claude or OpenAI account.
 - **Open source, in full.** Apache-2.0. The CLI is the complete product, not a trial.
 
 ## What you can analyze

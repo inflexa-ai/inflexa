@@ -653,19 +653,13 @@ describe("connection config writes", () => {
     test("every account kind maps to the documented slug", () => {
         recordCliproxyProvider("openai")._unsafeUnwrap();
         expect(readModels().connection).toEqual({ mode: "cliproxy", provider: "openai" });
-        recordCliproxyProvider("gemini")._unsafeUnwrap();
-        expect(readModels().connection).toEqual({ mode: "cliproxy", provider: "google" });
-        recordCliproxyProvider("qwen")._unsafeUnwrap();
-        expect(readModels().connection).toEqual({ mode: "cliproxy", provider: "qwen" });
-        recordCliproxyProvider("iflow")._unsafeUnwrap();
-        expect(readModels().connection).toEqual({ mode: "cliproxy", provider: "iflow" });
     });
 
     test("re-authenticating a different account kind rewrites the provider slug", () => {
         recordCliproxyProvider("claude")._unsafeUnwrap();
         expect(readModels().connection).toEqual({ mode: "cliproxy", provider: "anthropic" });
-        recordCliproxyProvider("gemini")._unsafeUnwrap();
-        expect(readModels().connection).toEqual({ mode: "cliproxy", provider: "google" });
+        recordCliproxyProvider("openai")._unsafeUnwrap();
+        expect(readModels().connection).toEqual({ mode: "cliproxy", provider: "openai" });
     });
 
     test("recording is spread-preserving — other config keys and other models keys survive", () => {

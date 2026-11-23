@@ -1397,7 +1397,7 @@ export function buildProgram(): Command {
             .option("--connection <mode>", "How inflexa reaches models: cliproxy|direct (default cliproxy)")
             .option(
                 "--provider <name>",
-                "With cliproxy: the account kind to sign in — gemini|openai|claude|qwen|iflow (interactive runs only, the sign-in needs a browser). " +
+                "With cliproxy: the account kind to sign in — openai|claude (interactive runs only, the sign-in needs a browser). " +
                     "With --connection direct: the vendor slug recorded for the endpoint, e.g. anthropic, openai, deepseek",
             )
             .option("--base-url <url>", "Direct connections only: the endpoint inflexa sends model requests to, `/v1`-terminated")
