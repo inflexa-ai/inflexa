@@ -79,7 +79,7 @@ function setBaseline(iso: string): void {
 }
 
 function ask(id: string, analysisId: string, threadId: string | null, createdAt = "2026-10-06T10:00:00.000Z"): PendingAsk {
-    return { id, analysisId, userId: "local", threadId, title: "Run a command", command: "ls", detail: null, createdAt };
+    return { id, analysisId, userId: "local", threadId, runId: null, stepId: null, title: "Run a command", command: "ls", detail: null, createdAt };
 }
 
 function progress(runId: string, analysisId: string, over: Partial<RunProgressSummary> = {}): RunProgressSummary {

@@ -180,7 +180,7 @@ describe("list_available_refs", () => {
         await utimes(file, FIXED_TIME, FIXED_TIME);
 
         const tool = createTool(root);
-        await tool.execute({ path: "sets" }, makeToolContext().ctx);
+        (await tool.execute({ path: "sets" }, makeToolContext().ctx))._unsafeUnwrap();
         await writeFile(file, "OMEGA_SET\tna\tA\tB\n");
         await utimes(file, FIXED_TIME, FIXED_TIME);
         const second = (await tool.execute({ path: "sets" }, makeToolContext().ctx))._unsafeUnwrap();
