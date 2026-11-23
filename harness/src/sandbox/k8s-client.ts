@@ -21,6 +21,7 @@ import {
     BatchV1Api,
     CoreV1Api,
     KubeConfig,
+    type V1EnvVar,
     type V1Job,
     type V1JobList,
     type V1ObjectMeta,
@@ -38,6 +39,7 @@ import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { readFarmLock, resolveFarmSource } from "./farm.js";
 import { harnessLabels, MANAGED_BY_LABEL, MANAGED_BY_VALUE, mergeLabels, OWNER_WORKFLOW_KEY, SANDBOX_ID_LABEL } from "./labels.js";
 import { buildMountPlan, buildSessionSubPaths, mountCoordsOf } from "./mount-plan.js";
+import { EXEC_TOKEN_ENV, mintExecToken, withoutHarnessEnv } from "./identity.js";
 import { threadLimitEnv } from "./thread-env.js";
 import type { SpawnSession } from "../auth/types.js";
 import type {
@@ -236,6 +238,7 @@ async function buildJobSpec(
     identity: SandboxIdentity,
     farm: FarmLocation | undefined,
     libsMounted: boolean,
+    execToken: string,
 ): Promise<V1Job> {
     const { sandboxId } = identity;
     // The lock gate of the package-store spec: `farmPath` is PVC-relative,
@@ -254,11 +257,13 @@ async function buildJobSpec(
     const spec = sandboxSpec.resources;
     // Composed as one record, not as a list of `{name, value}`. A duplicate name
     // in the env of a container resolves at the kubelet, thus the later spread
-    // must win here, not there.
+    // must win here, not there. Only this call sets the exec token, thus each
+    // key that the harness sets leaves the extra env of the spec.
     const env = Object.entries({
         ...threadLimitEnv(spec),
         ...plan.env,
-        ...sandboxSpec.extraEnv,
+        ...withoutHarnessEnv(sandboxSpec.extraEnv),
+        [EXEC_TOKEN_ENV]: execToken,
     }).map(([name, value]) => ({ name, value }));
 
     // requests == limits → Guaranteed QoS and a predictable OOM bound; also
@@ -583,7 +588,7 @@ function createOrAdoptJob(
     sandboxId: string,
     ownerWorkflowId: string,
     job: V1Job,
-): ResultAsync<void, SandboxError> {
+): ResultAsync<{ readonly adoptedEnv?: readonly V1EnvVar[] }, SandboxError> {
     const createFailed = (status: number | undefined, cause: unknown): SandboxError => ({
         type: "container_create_failed",
         op: "k8s.createNamespacedJob",
@@ -592,9 +597,9 @@ function createOrAdoptJob(
         cause,
     });
     return new ResultAsync(
-        (async (): Promise<Result<void, SandboxError>> => {
+        (async (): Promise<Result<{ readonly adoptedEnv?: readonly V1EnvVar[] }, SandboxError>> => {
             const created = await trySandbox(() => batchApi.createNamespacedJob({ namespace, body: job }), createFailed);
-            if (created.isOk()) return ok(undefined);
+            if (created.isOk()) return ok({});
             if (statusOf(created.error) !== 409) return err(created.error);
 
             const existingRead = await trySandbox(() => batchApi.readNamespacedJob({ namespace, name: sandboxId }), createFailed);
@@ -618,9 +623,9 @@ function createOrAdoptJob(
                 if (gone.isErr()) return err(gone.error);
                 const recreated = await trySandbox(() => batchApi.createNamespacedJob({ namespace, body: job }), createFailed);
                 if (recreated.isErr()) return err(recreated.error);
-                return ok(undefined);
+                return ok({});
             }
-            return ok(undefined);
+            return ok({ adoptedEnv: existingRead.value.spec?.template.spec?.containers[0]?.env ?? [] });
         })(),
     );
 }
@@ -689,7 +694,8 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                         }
                     }
 
-                    const job = await buildJobSpec(session, spec, hostLabels, config, identity, farm, libsMounted);
+                    const mintedToken = mintExecToken();
+                    const job = await buildJobSpec(session, spec, hostLabels, config, identity, farm, libsMounted, mintedToken);
 
                     const adopted = await createOrAdoptJob(batchApi, coreApi, config.namespace, sandboxId, spec.ownerWorkflowId, job);
                     if (adopted.isErr()) return err(adopted.error);
@@ -702,11 +708,15 @@ export function createK8sSandboxOps(config: K8sClientConfig): {
                     // zombie that floods k8s events indefinitely.
                     const ready = await waitForPodReady(coreApi, config.namespace, sandboxId, { logger: config.logger });
                     if (ready.isOk()) {
+                        // An adopted Job runs with the token of the attempt that made it. A Job from
+                        // before the token gives none, and the exec then refuses the machine.
+                        const { adoptedEnv } = adopted.value;
                         const ref: SandboxRef = {
                             sandboxId,
                             host: ready.value.podIP,
                             port: SANDBOX_SERVER_PORT,
                             backend: "k8s",
+                            execToken: adoptedEnv === undefined ? mintedToken : adoptedEnv.find((e) => e.name === EXEC_TOKEN_ENV)?.value,
                         };
                         return ok(ref);
                     }

@@ -20,11 +20,14 @@ const EXEC_ID = "an-1:run-1-0:7";
 const NOW_MS = 1_700_000_000_000;
 const DEADLINE = NOW_MS + 60_000;
 
+const EXEC_TOKEN = "a".repeat(64);
+
 const REF: SandboxRef = {
     sandboxId: "sb-1",
     host: "127.0.0.1",
     port: 8765,
     backend: "docker",
+    execToken: EXEC_TOKEN,
 };
 
 const REQUEST = { command: ["echo", "hi"] } as const;
@@ -181,6 +184,48 @@ describe("the submit", () => {
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: sandbox([completed], seen) });
 
         expect(presentAt(seen, 1).url).toBe(`http://127.0.0.1:8765/exec/${encodeURIComponent(EXEC_ID)}?since=0`);
+    });
+});
+
+describe("the exec token", () => {
+    test("the submit and each poll carry the token of the machine", async () => {
+        const seen: SeenRequest[] = [];
+        await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, {
+            ...BASE,
+            fetch: sandbox(
+                [
+                    { status: "running", events: [], cursor: 0 },
+                    { status: "completed", events: [], cursor: 0, result: okResult },
+                ],
+                seen,
+            ),
+        });
+
+        expect(seen.length).toBeGreaterThanOrEqual(3);
+        for (const request of seen) expect(new Headers(request.init?.headers).get("authorization")).toBe(`Bearer ${EXEC_TOKEN}`);
+    });
+
+    test("a machine with no token fails the exec with its own reason, and no request leaves the host", async () => {
+        const seen: SeenRequest[] = [];
+        const { execToken: _dropped, ...untokened } = REF;
+        const { execDeps } = tickingClock();
+        const result = await runExec(untokened, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...execDeps, fetch: sandbox(["unavailable"], seen) });
+
+        expect(result.syntheticFailure).toEqual({ reason: "sandbox-no-exec-token" });
+        expect(result.exitCode).toBeNull();
+        expect(seen).toEqual([]);
+    });
+
+    test("a poll that the server refuses with 401 ends the exec with an error that names the token", async () => {
+        const refusing = Object.assign(
+            (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+                Promise.resolve(init?.method === "POST" ? new Response("{}", { status: 202 }) : new Response("unauthorized", { status: 401 })),
+            { preconnect: fetch.preconnect },
+        );
+
+        // The ticking clock bounds the loop, thus the test ends on a timeout if the refusal does not end the exec.
+        const { execDeps } = tickingClock();
+        await expect(runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...execDeps, fetch: refusing })).rejects.toThrow("exec token");
     });
 });
 

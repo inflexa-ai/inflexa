@@ -26,10 +26,15 @@ const SESSION_PVC_ROOT = "/sessions";
 const RECORD_TAIL = ".sandbox/exec-records/0123456789abcdef";
 const resolveWorkspaceRoot = (analysisId: string) => Promise.resolve(`${SESSION_PVC_ROOT}/${analysisId}`);
 
+/** True for 32 bytes as lowercase hex: the shape of a minted exec token. */
+function isHexToken(token: string | undefined): boolean {
+    return token !== undefined && token.length === 64 && Buffer.from(token, "hex").toString("hex") === token;
+}
+
 /** The managed shape: one farm location, PVC-relative, for every analysis. */
 const FIXED_FARM: FarmSource = { kind: "fixed", location: { farmPath: "farms/catalog" } };
 
-function stubApis(podSequence: V1Pod[], opts: { create409Times?: number; existingOwner?: string } = {}) {
+function stubApis(podSequence: V1Pod[], opts: { create409Times?: number; existingOwner?: string; existingToken?: string } = {}) {
     const createdJobs: V1Job[] = [];
     const deletedJobs: string[] = [];
     let podIdx = 0;
@@ -60,7 +65,11 @@ function stubApis(podSequence: V1Pod[], opts: { create409Times?: number; existin
             if (existingDeleted) {
                 return Promise.reject(Object.assign(new Error("not found"), { code: 404 }));
             }
-            return Promise.resolve({ metadata: { name, uid: "job-uid-existing", annotations: { "cortex/owner-workflow-id": existingOwner } } });
+            const env = opts.existingToken === undefined ? [] : [{ name: "SANDBOX_EXEC_TOKEN", value: opts.existingToken }];
+            return Promise.resolve({
+                metadata: { name, uid: "job-uid-existing", annotations: { "cortex/owner-workflow-id": existingOwner } },
+                spec: { template: { spec: { containers: [{ name: "sandbox", env }] } } },
+            });
         },
     };
 
@@ -96,7 +105,7 @@ const DEFAULT_SPAWN: TestSpawn = {
 async function spawnSandbox(
     pods: V1Pod[],
     overrides: {
-        stubApis?: { create409Times?: number; existingOwner?: string };
+        stubApis?: { create409Times?: number; existingOwner?: string; existingToken?: string };
         ops?: Partial<K8sClientConfig>;
         spawn?: Partial<TestSpawn>;
     } = {},
@@ -526,6 +535,27 @@ describe("k8s createSandbox adoption (recovery re-run)", () => {
             expect(result.error.type).toBe("name_conflict");
         }
         expect(stub.deletedJobs).toEqual([]); // sibling's Job untouched
+    });
+});
+
+describe("k8s createSandbox — the exec token", () => {
+    const RUNNING: V1Pod[] = [{ status: { phase: "Running", podIP: "10.0.0.1" }, metadata: { name: "p" } }];
+    const tokenOf = (job: V1Job | undefined): string | undefined =>
+        job?.spec?.template.spec?.containers[0]?.env?.find((e) => e.name === "SANDBOX_EXEC_TOKEN")?.value;
+
+    test("the pod env carries a new random token, the ref carries the same, and the extra env cannot set it", async () => {
+        const { stub, result } = await spawnSandbox(RUNNING, { spawn: { extraEnv: { SANDBOX_EXEC_TOKEN: "chosen" } } });
+        const ref = result._unsafeUnwrap();
+
+        expect(isHexToken(ref.execToken)).toBe(true);
+        expect(tokenOf(stub.createdJobs[0])).toBe(ref.execToken);
+    });
+
+    test("an adopted live Job keeps the token of its pod", async () => {
+        const standingToken = "c".repeat(64);
+        const { result } = await spawnSandbox(RUNNING, { stubApis: { create409Times: 1, existingToken: standingToken } });
+
+        expect(result._unsafeUnwrap().execToken).toBe(standingToken);
     });
 });
 

@@ -72,9 +72,10 @@ export async function probeLiveness(isAlive: (ref: SandboxRef) => Promise<Sandbo
 
 /**
  * The closed set of reasons a synthetic failure carries. `sandbox-replaced`: a new machine of the lease found the
- * exec cut by the end of the earlier machine.
+ * exec cut by the end of the earlier machine. `sandbox-no-exec-token`: the machine has no exec token, thus the
+ * command did not run, and the lease replaces the machine.
  */
-export type SyntheticFailureReason = "sandbox-oom-killed" | "sandbox-dead" | "sandbox-replaced";
+export type SyntheticFailureReason = "sandbox-oom-killed" | "sandbox-dead" | "sandbox-replaced" | "sandbox-no-exec-token";
 
 /**
  * An OOM-killed machine gets a distinguishable reason so the step failure

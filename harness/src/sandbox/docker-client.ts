@@ -48,11 +48,12 @@ import type { Logger } from "../lib/logger.js";
 import { tailWritePrefix, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 import { type SandboxError, trySandbox } from "./sandbox-error.js";
 import { readFarmLock, resolveFarmSource } from "./farm.js";
+import { EXEC_TOKEN_ENV, mintExecToken, withoutHarnessEnv } from "./identity.js";
 import { harnessLabels, MANAGED_BY_LABEL, MANAGED_BY_VALUE, mergeLabels, OWNER_WORKFLOW_KEY, SANDBOX_ID_LABEL } from "./labels.js";
 import { buildMountPlan, mountCoordsOf, sandboxWriteTail } from "./mount-plan.js";
 import { CPU_ONLINE_PATH, CPUINFO_PATH, cpuFiles, readHostCpuinfoOnce } from "./cpu-files.js";
 import { threadLimitEnv } from "./thread-env.js";
-import { WORKLOAD_USER_ENV_KEYS, workloadIdentityOf, type SandboxExecutor } from "./workload-identity.js";
+import { workloadIdentityOf, type SandboxExecutor } from "./workload-identity.js";
 
 /** Read the originating HTTP status off any `SandboxError` variant that carries one. */
 function statusOf(e: SandboxError): number | undefined {
@@ -78,6 +79,24 @@ const HEALTH_POLL_MS = 250;
 
 const OWNER_WORKFLOW_LABEL = OWNER_WORKFLOW_KEY;
 
+/**
+ * The process limit of a sandbox (`pids.max` of its cgroup). Linux counts each thread
+ * as a process here. The thread env gives each pool one thread and each worker pool
+ * one worker per cpu, thus a parallel R or Python job holds some hundred tasks at the
+ * largest cpu request. 4096 leaves headroom for a library that starts its own thread
+ * pool per worker, and a fork bomb then stops at the cgroup, not at the host limit.
+ */
+const SANDBOX_PIDS_LIMIT = 4096;
+
+/** The exec token in the env of a standing container, or `undefined` when it has none. */
+function tokenOfEnv(env: readonly string[] | undefined): string | undefined {
+    const prefix = `${EXEC_TOKEN_ENV}=`;
+    // The last entry wins in a container env, the same as in the Env array of the create.
+    const entries = (env ?? []).filter((kv) => kv.startsWith(prefix));
+    const entry = entries[entries.length - 1];
+    return entry === undefined ? undefined : entry.slice(prefix.length);
+}
+
 /** The directory next to the workspace root that holds the cpu files of each sandbox. */
 const CPU_FILES_DIR = ".cpu";
 
@@ -94,7 +113,7 @@ type EngineContainer = {
 };
 
 type EngineInspectInfo = {
-    Config?: { Labels?: Record<string, string> };
+    Config?: { Labels?: Record<string, string>; Env?: string[] };
     State: { Running?: boolean; OOMKilled?: boolean };
     NetworkSettings: { Ports?: Record<string, Array<{ HostPort?: string }>> };
 };
@@ -301,7 +320,7 @@ async function createOrAdopt(
     ownerWorkflowId: string,
     createFailed: (status: number | undefined, cause: unknown) => SandboxError,
     logger: Logger,
-): Promise<Result<{ container: EngineContainer; alreadyRunning: boolean }, SandboxError>> {
+): Promise<Result<{ container: EngineContainer; alreadyRunning: boolean; adoptedEnv?: readonly string[] }, SandboxError>> {
     const created = await trySandbox(() => docker.createContainer(createOpts), createFailed);
     if (created.isOk()) return ok({ container: created.value, alreadyRunning: false });
 
@@ -321,7 +340,7 @@ async function createOrAdopt(
     // step's sandbox back to the prior attempt that made it.
     if (info.State.Running) {
         logger.info("adopted standing container on recovery re-run", { sandboxId: name, ownerWorkflowId });
-        return ok({ container: existing, alreadyRunning: true });
+        return ok({ container: existing, alreadyRunning: true, adoptedEnv: info.Config?.Env });
     }
 
     const removed = await removeContainerIgnoreMissing(docker, name);
@@ -489,13 +508,15 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     });
 
                     const image = spec.image ?? config.image;
+                    const mintedToken = mintExecToken();
 
                     const limits = spec.resources;
 
                     // The firewall flag makes the root entrypoint install the egress block
                     // before it drops to the workload user. Only the executor fact names
-                    // that user: each key that names it leaves the extra env of the spec,
-                    // also when the fact sets no such key.
+                    // that user, and only this call sets the exec token: each key that
+                    // the harness sets leaves the extra env of the spec, also when this
+                    // call sets no such key.
                     //
                     // Composed as one record, not as a list of `K=V`. A duplicate key in
                     // the Env array resolves at the libc that scans `environ`, thus the
@@ -504,8 +525,9 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         SANDBOX_EGRESS_FIREWALL: "1",
                         ...threadLimitEnv(limits),
                         ...plan.env,
-                        ...Object.fromEntries(Object.entries(spec.extraEnv ?? {}).filter(([key]) => !WORKLOAD_USER_ENV_KEYS.includes(key))),
+                        ...withoutHarnessEnv(spec.extraEnv),
                         ...workload.env,
+                        [EXEC_TOKEN_ENV]: mintedToken,
                     }).map(([k, v]) => `${k}=${v}`);
 
                     const createOpts: ContainerCreateOptions = {
@@ -541,6 +563,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                             // answer. With no swap the OOM killer removes the largest fork in
                             // seconds, and sandbox-server survives. K8s runs with no swap.
                             MemorySwap: limits.memoryGb * 1024 ** 3,
+                            PidsLimit: SANDBOX_PIDS_LIMIT,
                             AutoRemove: false,
                         },
                     };
@@ -568,11 +591,16 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     const healthy = await trySandbox(() => pollHealth(fetchImpl, `http://${host}:${port}/health`, HEALTH_TIMEOUT_MS), createFailed);
                     if (healthy.isErr()) return err(healthy.error);
 
+                    // An adopted container runs with the token of the attempt that made it, and a new token
+                    // would not match its server. A container from before the token gives none, and the
+                    // exec then refuses the machine.
+                    const execToken = sandbox.value.alreadyRunning ? tokenOfEnv(sandbox.value.adoptedEnv) : mintedToken;
                     const ref: SandboxRef = {
                         sandboxId,
                         host,
                         port,
                         backend: "docker",
+                        execToken,
                     };
                     return ok(ref);
                 })(),

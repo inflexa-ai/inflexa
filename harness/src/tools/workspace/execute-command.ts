@@ -104,7 +104,9 @@ type ExecuteCommandResult = { readonly status: "ok"; readonly note?: string } & 
 /** What the agent must know about a result that is not a plain exit: a timeout, a dropped end of a stream, or an ended sandbox. */
 export function execNote(result: BoundedExecResult): string | undefined {
     const notes: string[] = [];
-    if (result.syntheticFailure !== undefined) {
+    if (result.syntheticFailure?.reason === "sandbox-no-exec-token") {
+        notes.push("The sandbox of the lease is from before the exec token, thus the command did not run. The next command runs on a new sandbox.");
+    } else if (result.syntheticFailure !== undefined) {
         notes.push(
             "The sandbox ended under the command" +
                 (result.syntheticFailure.reason === "sandbox-oom-killed" ? ": the command passed the memory limit." : ".") +
