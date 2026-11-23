@@ -63,6 +63,7 @@ import {
     stepPartId,
     toolActivityKey,
 } from "../sandbox/sandbox-step-translate.js";
+import { modelFailureClass } from "../providers/errors.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { forSubAgent, type RunSession, type SpawnSession } from "../auth/types.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
@@ -329,10 +330,13 @@ function isBareEntries(checkpoint: StepFileMetadata | readonly FileMetadataEntry
  * logs and in `lastErrorClass`; the surfaces a user sees — the live run panel
  * (`data-step-activity`), `cortex_step_executions.error` (read by `inspectRun`
  * and `routes/runs.ts`), and the parent's DAG snapshot / `cortex_runs.error` —
- * carry only this generic phrase.
+ * carry only this phrase. A failed model call adds its class from the fixed set of
+ * `modelFailureClass`, never the text of the provider.
  */
-function userFacingStepFailure(errorClass: "agent_loop" | "lineage_attestation"): string {
-    return errorClass === "lineage_attestation" ? "Step results could not be finalized." : "Step failed during execution.";
+function userFacingStepFailure(errorClass: "agent_loop" | "lineage_attestation", err: unknown): string {
+    if (errorClass === "lineage_attestation") return "Step results could not be finalized.";
+    const model = modelFailureClass(err);
+    return model === undefined ? "Step failed during execution." : `Step failed: ${model}.`;
 }
 
 /**
@@ -540,7 +544,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
             lastExec,
             ...logger.errorFields(err),
         });
-        const safe = userFacingStepFailure(errorClass);
+        const safe = userFacingStepFailure(errorClass, err);
         await DBOS.runStep(
             async () => {
                 unwrapOrThrow(
