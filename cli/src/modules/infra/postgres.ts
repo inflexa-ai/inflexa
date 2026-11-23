@@ -113,6 +113,43 @@ const MISSING_EXTENSION_STDERR = ['extension "vector" does not exist', "could no
 /** The lowercase phrases of a psql error that mean the user lacks the privilege to create the extension. */
 const PRIVILEGE_STDERR = ["permission denied", "must be superuser"];
 
+/** The maintenance database of each cluster that the image makes: the one database that exists before the configured one. */
+const MAINTENANCE_DATABASE = "postgres";
+
+/**
+ * Make the configured database when the cluster does not hold it. `POSTGRES_DB` acts only when the image runs `initdb`
+ * on an empty data dir, thus a config that names a new database on a cluster with data gets no database from the image.
+ * Both statements run in the maintenance database, through the same `psql` of the container as the vector install.
+ *
+ * The `pg_isready` poll can pass in the first phase of a first start, before the entrypoint makes `POSTGRES_DB`. Thus
+ * a lost connection is retried, and "already exists" from a `CREATE DATABASE` that came second is a success.
+ */
+export async function ensureDatabase(rt: ContainerRuntime, conn: PostgresConnection): Promise<Result<void, PostgresError>> {
+    const literal = conn.database.replaceAll("'", "''");
+    const identifier = conn.database.replaceAll('"', '""');
+    const psql = (sql: string): Promise<CaptureResult> =>
+        capture(rt, ["exec", POSTGRES_CONTAINER_NAME, "psql", "-U", conn.user, "-d", MAINTENANCE_DATABASE, "-tA", "-c", sql]);
+    const deadline = Date.now() + VECTOR_RETRY_TIMEOUT_MS;
+    let stderr = "";
+    while (Date.now() < deadline) {
+        const found = await psql(`SELECT 1 FROM pg_database WHERE datname = '${literal}'`);
+        if (found.code === 0 && found.stdout.trim() === "1") return ok(undefined);
+        if (found.code === 0) {
+            const made = await psql(`CREATE DATABASE "${identifier}"`);
+            if (made.code === 0 || made.stderr.includes("already exists")) return ok(undefined);
+            stderr = made.stderr.trim();
+        } else {
+            stderr = found.stderr.trim();
+        }
+        if (!mentionsAny(stderr, TRANSIENT_CONNECTION_STDERR)) break;
+        await Promise.sleep(VECTOR_RETRY_INTERVAL_MS);
+    }
+    return err({
+        type: "database_create_failed",
+        message: `Failed to make the database \`${conn.database}\` for the user \`${conn.user}\`.\n  ${stderr}`,
+    });
+}
+
 /**
  * Run `CREATE EXTENSION IF NOT EXISTS vector` via the image's bundled `psql`.
  * This single idempotent statement is both the probe and the install.
@@ -173,8 +210,8 @@ export async function ensureVectorExtension(rt: ContainerRuntime, conn: Postgres
 /**
  * Provision Postgres as part of `inflexa setup`. The compose file is generated
  * and `compose up -d` is run by the caller (modules/infra/setup.ts) — this
- * function handles the Postgres-specific post-start steps: readiness wait and
- * pgvector self-install. Returns `skipped_disabled` when `--no-postgres`.
+ * function handles the Postgres-specific post-start steps: readiness wait, the
+ * configured database, and pgvector self-install. Returns `skipped_disabled` when `--no-postgres`.
  */
 export async function provisionPostgres(options: SetupOptions): Promise<Result<ProvisionOutcome, PostgresError>> {
     const conn = resolvePostgresConfig();
@@ -192,6 +229,9 @@ export async function provisionPostgres(options: SetupOptions): Promise<Result<P
     const readyResult2 = await waitForReady(rt, conn);
     if (readyResult2.isErr()) return err(readyResult2.error);
 
+    const databaseResult = await ensureDatabase(rt, conn);
+    if (databaseResult.isErr()) return err(databaseResult.error);
+
     const vectorResult = await ensureVectorExtension(rt, conn);
     if (vectorResult.isErr()) return err(vectorResult.error);
 
@@ -203,7 +243,7 @@ export async function provisionPostgres(options: SetupOptions): Promise<Result<P
 /**
  * The self-healing launch-time gate. Transparently provisions the substrate:
  * generates the compose file if missing, runs `compose up -d`, waits for ready,
- * and runs the pgvector self-install. A first-time user running `inflexa` with
+ * makes the configured database, and runs the pgvector self-install. A first-time user running `inflexa` with
  * no prior `inflexa setup` reaches a working Postgres without an explicit setup
  * step.
  */
@@ -236,6 +276,9 @@ export async function ensurePostgresReady(): Promise<Result<PostgresConnection, 
     console.log("  Waiting for Postgres to be ready…");
     const readyResult2 = await waitForReady(rt, conn);
     if (readyResult2.isErr()) return err(readyResult2.error);
+
+    const databaseResult = await ensureDatabase(rt, conn);
+    if (databaseResult.isErr()) return err(databaseResult.error);
 
     const vectorResult = await ensureVectorExtension(rt, conn);
     if (vectorResult.isErr()) return err(vectorResult.error);

@@ -11,13 +11,17 @@ import {
     DEFAULT_USER,
     type PostgresError,
 } from "../postgres_types.ts";
+import { ok } from "neverthrow";
+import * as config from "../../../lib/config.ts";
 import { resolvePostgresConfig } from "../../../lib/config.ts";
 import * as container from "../../../lib/container.ts";
 import { runtimes, type CaptureResult } from "../../../lib/container.ts";
 import { env } from "../../../lib/env.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
+import * as compose from "../compose.ts";
 import { generateComposeFile, POSTGRES_CONTAINER_NAME, PROXY_CONTAINER_NAME } from "../compose.ts";
-import { waitForReady } from "../postgres.ts";
+import { ensurePostgresReady, provisionPostgres, waitForReady } from "../postgres.ts";
+import { awaitOk } from "../../../test_support/result.ts";
 import { isAsciiDigits } from "../../../lib/text.ts";
 import { countOccurrences } from "../../../test_support/text_shapes.ts";
 
@@ -347,5 +351,69 @@ describe("waitForReady", () => {
         expect(timeout.type).toBe("ready_timeout");
         expect(timeout.message).not.toContain("Last lines of the container log");
         expect(timeout.message).toContain(`docker logs ${POSTGRES_CONTAINER_NAME}`);
+    });
+});
+
+// `POSTGRES_DB` acts only when the image runs `initdb` on an empty data dir. A config that names a new database on a
+// cluster that already holds data must still get that database, or each later psql call fails with "does not exist".
+describe("the configured database on an existing cluster", () => {
+    const spies: Array<{ mockRestore: () => void }> = [];
+    afterEach(() => {
+        for (const spy of spies.splice(0)) spy.mockRestore();
+    });
+
+    /** A cluster that holds `databases`, behind a fake engine that answers `pg_isready` and `psql` like the image does. */
+    function cluster(databases: string[]): { created: string[] } {
+        const present = new Set(databases);
+        const created: string[] = [];
+        spies.push(spyOn(config, "ensureRuntime").mockImplementation(() => Promise.resolve(ok(runtimes.docker))));
+        const conn = { ...resolvePostgresConfig(), database: 'e2e "stack"' };
+        spies.push(spyOn(config, "resolvePostgresConfig").mockImplementation(() => conn));
+        spies.push(
+            spyOn(container, "capture").mockImplementation((_rt, args) =>
+                Promise.try(() => {
+                    if (args.includes("pg_isready")) return { code: 0, stdout: "accepting connections", stderr: "" };
+                    const database = args[args.indexOf("-d") + 1] ?? "";
+                    const sql = args[args.indexOf("-c") + 1] ?? "";
+                    if (!present.has(database)) return { code: 2, stdout: "", stderr: `psql: error: FATAL:  database "${database}" does not exist` };
+                    if (sql.startsWith("SELECT 1 FROM pg_database")) {
+                        return { code: 0, stdout: present.has('e2e "stack"') ? "1\n" : "", stderr: "" };
+                    }
+                    if (sql === 'CREATE DATABASE "e2e ""stack"""') {
+                        present.add('e2e "stack"');
+                        created.push('e2e "stack"');
+                    }
+                    return { code: 0, stdout: "", stderr: "" };
+                }),
+            ),
+        );
+        return { created };
+    }
+
+    test("setup makes the configured database when the cluster does not hold it", async () => {
+        const { created } = cluster(["postgres", "inflexa"]);
+
+        const outcome = await awaitOk(provisionPostgres({ start: true, force: false, postgres: true }));
+
+        expect(outcome.kind).toBe("provisioned");
+        expect(created).toEqual(['e2e "stack"']);
+    });
+
+    test("the boot gate makes the configured database after the compose", async () => {
+        const { created } = cluster(["postgres", "inflexa"]);
+        spies.push(spyOn(compose, "composeUp").mockImplementation(() => Promise.resolve(ok(undefined))));
+        spies.push(spyOn(console, "log").mockImplementation(() => undefined));
+
+        await awaitOk(ensurePostgresReady());
+
+        expect(created).toEqual(['e2e "stack"']);
+    });
+
+    test("a cluster that holds the configured database gets no second one", async () => {
+        const { created } = cluster(["postgres", 'e2e "stack"']);
+
+        await awaitOk(provisionPostgres({ start: true, force: false, postgres: true }));
+
+        expect(created).toEqual([]);
     });
 });

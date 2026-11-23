@@ -113,6 +113,23 @@ The CLI SHALL default database `inflexa`, user `inflexa`, password `inflexa`, ho
 - **WHEN** the config file sets `postgres.{host,port,database,user,password}` to custom values
 - **THEN** every one of those custom values is used in place of the defaults
 
+### Requirement: The configured database exists at every gate
+
+The image makes `POSTGRES_DB` only when it runs `initdb` on an empty data
+directory. Thus at each gate, after the container is ready and before the
+pgvector install, the CLI MUST make sure that the configured database exists.
+The CLI reads `pg_database` in the `postgres` database through `psql` in the
+container. If the configured database is not there, the CLI runs
+`CREATE DATABASE` with the quoted name. A lost connection gets a retry with the
+30 s bound of the pgvector install. An "already exists" error is a success.
+
+#### Scenario: A new database name on a cluster with data
+
+- **GIVEN** a Postgres data directory that holds the database `inflexa` only
+- **AND** a config that names the database `inflexa_e2e`
+- **WHEN** `inflexa setup` or the launch-time gate runs
+- **THEN** the CLI makes the database `inflexa_e2e` before the pgvector install
+
 ### Requirement: pgvector is self-installed and verified at every gate
 
 The CLI SHALL run `CREATE EXTENSION IF NOT EXISTS vector` in the configured database at every gate — both `inflexa setup` (after the container is ready) and the launch-time gate. The statement SHALL retry on transient connection failures (e.g. the PG Docker entrypoint's init-phase fast shutdown killing the connection) with a bounded timeout (30s). Permanent failures (missing extension files, privilege denied) SHALL fail immediately with an actionable error.
