@@ -89,8 +89,10 @@ starts nothing.
 
 `sandbox-entrypoint.sh` sources `inflexa-seed-caches.sh` and calls `seed_caches`
 before the firewall path and before the exec. When the read-write cache mount
-at `/mnt/libs/cache` is present, the seed does nothing — the env of the mount
-plan already points into it. Without the mount, the seed copies `numba-cache`
+at `/mnt/libs/cache` is present and the workload user can write it, the seed
+does nothing — the env of the mount plan already points into it. The write
+probe runs as the workload user, because root in the container has no
+`CAP_DAC_OVERRIDE`. Without the mount, the seed copies `numba-cache`
 and `matplotlib_config` from the farm to writable paths under `/tmp`. The
 copy is necessary because numba selects a cache directory by a write probe,
 and it skips a read-only one. A missing cache degrades in silence: a cold
@@ -117,11 +119,12 @@ The env of the harness selects the workload user:
 | Env | Engine | Workload user |
 |-|-|-|
 | `SANDBOX_UID`, `SANDBOX_GID`, `SANDBOX_GROUPS` | A rootful engine on Linux | The host user, with its supplementary groups. The entrypoint gives the `sandbox` entries of `/etc/passwd` and `/etc/group` the same ids. A uid of 0 stays 1000. |
-| `SANDBOX_KEEP_GROUPS=1` | Rootless Podman with `keep-id` | uid 1000, with the groups that the engine kept from the host user. |
+| `SANDBOX_KEEP_GROUPS=1` | Rootless Podman 5.1 or later with `keep-id` | uid 1000, with the groups that the engine kept from the host user. When the engine did not keep them, the drop clears the groups, thus the workload never keeps gid 0 of the container root. |
 | none | An engine in a VM | uid 1000. |
 
-A malformed id stops the start. `/home/sandbox` has the mode `1777`, thus each
-workload user can write `$HOME`.
+A malformed id, and a gid of 0, stop the start. Under the firewall flag,
+sandbox-server also refuses to start when it holds gid 0. `/home/sandbox` has the mode
+`1777`, thus each workload user can write `$HOME`.
 The inbound poll of the host uses the established connection. Thus the poll
 works while egress is blocked. `lo` stays open for local tooling.
 

@@ -12,13 +12,19 @@
 # server, and the cache check of the build sources it before it runs its own
 # program. As a result the check exercises the code that a sandbox runs.
 
+# seed_caches [command...]
+#
+# The arguments are optional. They are a command prefix that runs the write
+# probe as the workload user, for a caller that runs as a different user. The
+# probe must answer for the workload: a root with no CAP_DAC_OVERRIDE cannot
+# write a cache that only the workload user can write, and the reverse.
 seed_caches() {
     # The read-write cache mount of the analysis. When it is present, the env
     # of the mount plan already points into it, and the seed does nothing. The
     # probe is a real write, because a permission bit cannot see a read-only
-    # mount, and root passes a permission bit regardless.
-    if [ -d /mnt/libs/cache ] && touch /mnt/libs/cache/.inflexa-write-probe 2>/dev/null; then
-        rm -f /mnt/libs/cache/.inflexa-write-probe 2>/dev/null || true
+    # mount.
+    if [ -d /mnt/libs/cache ] && "$@" touch /mnt/libs/cache/.inflexa-write-probe 2>/dev/null; then
+        "$@" rm -f /mnt/libs/cache/.inflexa-write-probe 2>/dev/null || true
         return 0
     fi
     # No cache mount: copy the prepared caches of the farm to writable paths

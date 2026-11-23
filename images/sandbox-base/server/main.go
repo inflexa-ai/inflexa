@@ -445,7 +445,11 @@ func writeBody(w http.ResponseWriter, body []byte) {
 func main() {
 	initLogLevel()
 
-	if err := verifyPrivilegeDrop(os.Getenv(envEgressFirewall), os.Geteuid()); err != nil {
+	groups, err := os.Getgroups()
+	if err != nil {
+		log.Fatalf("startup confinement error: read the groups: %v", err)
+	}
+	if err := verifyPrivilegeDrop(os.Getenv(envEgressFirewall), os.Geteuid(), os.Getegid(), groups); err != nil {
 		log.Fatalf("startup confinement error: %v", err)
 	}
 
