@@ -110,24 +110,26 @@ export function serverClient(discovery: ServerDiscovery, fetchFn: ServerLookupOp
 
 /** The process that a discovery file names, for the same liveness rule as a lock file. */
 export function discoveryProcess(discovery: ServerDiscovery): ProcessIdentity {
-    return { pid: discovery.pid, host: discovery.host, start: discovery.processStart };
+    return { pid: discovery.pid, machine: discovery.machine, host: discovery.host, start: discovery.processStart };
 }
 
 /**
- * Read the discovery file, and probe the server that it names with `GET /api/v1/server`. A probe that gets no
- * answer reads the process: a dead pid, a reused pid, or a different host is a stale file. This writes nothing, thus a read-only command can call it.
+ * Read the discovery file, and probe the server that it names with `GET /api/v1/server`. An answer that accepts
+ * the token proves a server of this machine, whatever machine id the file names. With no such answer, a file of
+ * a different machine names the server of that host, and on this machine a dead or a reused pid is a stale file.
+ * This writes nothing, thus a read-only command can call it.
  */
 export async function lookupServer(opts: ServerLookupOpts = DEFAULT_SERVER_LOOKUP_OPTS): Promise<Result<ServerLookup, ServerError>> {
     const read = opts.readDiscovery(opts.discoveryPath);
     if (read.isErr()) return err({ type: "discovery_unreadable", path: opts.discoveryPath, cause: read.error.cause });
     const discovery = read.value;
     if (discovery === null) return ok({ kind: "none" });
-    // A server of a different host listens on the loopback address of that host, thus a probe here proves
-    // nothing. It holds the runtime lock of the shared data folder, and a server here could not boot.
-    const host = foreignHost(discoveryProcess(discovery));
-    if (host !== null) return err({ type: "other_host", path: opts.discoveryPath, discovery, host });
     const probe = await fetchServerState(serverClient(discovery, opts.fetch, opts.probeTimeoutMs));
     if (probe.isOk()) return ok({ kind: "answering", discovery, state: probe.value });
+    // A server of a different host listens on the loopback address of that host, thus no answer here says
+    // nothing of it. It holds the runtime lock of the shared data folder, and a server here could not boot.
+    const host = foreignHost(discoveryProcess(discovery));
+    if (host !== null) return err({ type: "other_host", path: opts.discoveryPath, discovery, host });
     switch (probe.error.type) {
         case "http":
         case "bad_json":
@@ -255,6 +257,9 @@ async function connectOrStart(opts: EnsureServerOpts, mayReplace: boolean): Prom
  * The server that answers, or `null` when none runs. A stale discovery file is removed on the way. A server
  * whose process lives but whose port is silent gets the start limit to answer: a long synchronous step of the
  * server, for example a large scan, holds its event loop, and a second server would only fail at the bind.
+ *
+ * The wait needs the start token of the file. With no token, a live pid can be a different process that took
+ * the pid of a server that is gone, thus the client goes to the start, and a second server fails at the bind.
  */
 async function findServer(opts: EnsureServerOpts): Promise<Result<ConnectedServer | null, ServerError>> {
     const start = opts.now();
@@ -272,6 +277,7 @@ async function findServer(opts: EnsureServerOpts): Promise<Result<ConnectedServe
             case "none":
                 return ok(null);
             case "silent": {
+                if (lookup.discovery.processStart === null) return ok(null);
                 const waitedMs = opts.now() - start;
                 if (waitedMs >= opts.startWaitMs) return err({ type: "not_answering", discovery: lookup.discovery, waitedMs, logPath: opts.logPath });
                 if (!told) {

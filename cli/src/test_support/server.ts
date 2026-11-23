@@ -102,6 +102,7 @@ export function startTestServer(opts: { boot?: ServerBoot } = {}): TestServer {
         apiVersion: state.apiVersion,
         startedAt: state.startedAt,
         channel: "development",
+        machine: ownProcessIdentity().machine,
         host: ownProcessIdentity().host,
         processStart: ownProcessIdentity().start,
     };

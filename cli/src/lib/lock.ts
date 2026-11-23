@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { env } from "./env.ts";
 import { errnoCode } from "./fs.ts";
+import { isAsciiDigits } from "./text.ts";
 import { getLogger } from "./log.ts";
 
 // A keyed advisory instance lock so a resource is held by at most one `inflexa` process at a time.
@@ -91,12 +92,17 @@ export function instanceLockPath(key: string): string {
  *
  * A pid alone is not an identity. After a reboot the kernel gives the same pid to a different process, and a
  * lock that holds only the pid then waits for that process for ever. The start time makes a reused pid read as a
- * different process. The host name tells a record of a different machine apart: a data folder on a shared home
+ * different process. The machine id tells a record of a different machine apart: a data folder on a shared home
  * (NFS) is open to each host, and a pid of a different host cannot be probed from here.
+ *
+ * The machine id decides, never the host name: macOS changes the host name with the network (Wi-Fi, VPN), thus
+ * the own server and the own locks would read as a different host, and hold for ever.
  */
 export type ProcessIdentity = {
     readonly pid: number;
-    /** The host name of the machine of the process. `null` when the record does not say. */
+    /** The stable id of the machine of the process (see {@link machineId}). `null` when the record does not say. */
+    readonly machine: string | null;
+    /** The host name of the machine, for a message only. It can change while the machine runs. */
     readonly host: string | null;
     /** An opaque token of the start of the process (see {@link processStartToken}). `null` when it is not known. */
     readonly start: string | null;
@@ -104,9 +110,66 @@ export type ProcessIdentity = {
 
 const lockRecordSchema = z.object({
     pid: z.number().int().positive(),
+    machine: z.string().nullable(),
     host: z.string().nullable(),
     start: z.string().nullable(),
 });
+
+/**
+ * The stable id of this machine, or `null` when the platform does not give one.
+ *
+ * Linux: `/etc/machine-id`, with `/var/lib/dbus/machine-id` as the fallback that systemd uses when the first is
+ * empty or missing (machine-id(5)). The id stays the same across boots and network changes. The value
+ * `uninitialized` marks a first boot, before systemd commits the id, and does not count.
+ *
+ * macOS: `IOPlatformUUID` of the `IOPlatformExpertDevice` node of the I/O Registry, which Apple names as the
+ * hardware id of a Mac (TN1103). `ioreg` reads it with no privileges.
+ */
+function readMachineId(): string | null {
+    if (process.platform === "linux") {
+        for (const path of ["/etc/machine-id", "/var/lib/dbus/machine-id"]) {
+            try {
+                const id = readFileSync(path, "utf8").trim();
+                if (id !== "" && id !== "uninitialized") return id;
+            } catch {
+                // An absent or unreadable file: try the next one.
+            }
+        }
+        return null;
+    }
+    if (process.platform === "darwin") {
+        try {
+            const out = Bun.spawnSync(["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], { stdout: "pipe", stderr: "ignore" }).stdout.toString();
+            // The line reads `"IOPlatformUUID" = "<uuid>"`: the value is the last quoted field of that line.
+            const line = out.split("\n").find((text) => text.includes('"IOPlatformUUID"'));
+            const fields = line?.split('"') ?? [];
+            const id = fields.at(-2) ?? "";
+            return id === "" || id === "IOPlatformUUID" ? null : id;
+        } catch {
+            return null; // The spawn failed: no id.
+        }
+    }
+    return null;
+}
+
+let ownMachine: { readonly id: string | null } | null = null;
+
+/** The stable id of this machine, read one time. */
+export function machineId(): string | null {
+    ownMachine ??= { id: readMachineId() };
+    return ownMachine.id;
+}
+
+/**
+ * A lock file of an older inflexa: the bare pid, with no machine and no start. It reads as a holder that the pid
+ * alone judges. To reclaim it at once would let the sweep of the package store delete what a live old server uses.
+ */
+function plainPidRecord(raw: string): ProcessIdentity | null {
+    const text = raw.trim();
+    if (!isAsciiDigits(text)) return null;
+    const pid = Number(text);
+    return pid > 0 ? { pid, machine: null, host: null, start: null } : null;
+}
 
 /**
  * An opaque token that changes when `pid` names a different process: the start time of the process, as the
@@ -150,18 +213,24 @@ let ownIdentity: ProcessIdentity | null = null;
 
 /** The identity of this process. Read one time, because the start of a process does not change. */
 export function ownProcessIdentity(): ProcessIdentity {
-    ownIdentity ??= { pid: process.pid, host: hostname(), start: processStartToken(process.pid) };
+    ownIdentity ??= { pid: process.pid, machine: machineId(), host: hostname(), start: processStartToken(process.pid) };
     return ownIdentity;
 }
 
 /** The identity of the process `pid` of this host, as a lock file records it. */
 export function processIdentity(pid: number): ProcessIdentity {
-    return pid === process.pid ? ownProcessIdentity() : { pid, host: hostname(), start: processStartToken(pid) };
+    return pid === process.pid ? ownProcessIdentity() : { pid, machine: machineId(), host: hostname(), start: processStartToken(pid) };
 }
 
-/** The host of a record when it is a different host than this one, else `null`. */
+/** Whether a record names a different machine. A record or a machine with no id counts as this machine. */
+function isForeignMachine(holder: ProcessIdentity): boolean {
+    const own = machineId();
+    return holder.machine !== null && own !== null && holder.machine !== own;
+}
+
+/** The host name of a record of a different machine, for a message, else `null` for a record of this machine. */
 export function foreignHost(holder: ProcessIdentity): string | null {
-    return holder.host !== null && holder.host !== hostname() ? holder.host : null;
+    return isForeignMachine(holder) ? (holder.host ?? "an unknown host") : null;
 }
 
 /**
@@ -181,12 +250,12 @@ export function isProcessAlive(holder: ProcessIdentity): boolean {
     return now === null || now === holder.start;
 }
 
-/** Whether a record names this process: the same pid on the same host. */
+/** Whether a record names this process: the same pid on the same machine. */
 function isOwnRecord(holder: ProcessIdentity): boolean {
-    return holder.pid === process.pid && (holder.host === null || holder.host === hostname());
+    return holder.pid === process.pid && !isForeignMachine(holder);
 }
 
-/** Read the holder from a lock file, or null if it is missing or its contents aren't a lock record (a truncated/corrupt write counts as no live holder, so it gets reclaimed). */
+/** Read the holder from a lock file, or null if it is missing or its contents aren't a lock record (a truncated/corrupt write counts as no live holder, so it gets reclaimed). A bare pid reads through {@link plainPidRecord}. */
 function readHolder(path: string): ProcessIdentity | null {
     let raw: string;
     try {
@@ -194,7 +263,7 @@ function readHolder(path: string): ProcessIdentity | null {
     } catch {
         return null; // ENOENT (gone) or any read error → treat as no holder
     }
-    return JSON.parseWith(raw, lockRecordSchema);
+    return JSON.parseWith(raw, lockRecordSchema) ?? plainPidRecord(raw);
 }
 
 /**

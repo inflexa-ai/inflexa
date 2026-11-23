@@ -8,7 +8,15 @@ import { err, ok, type Result } from "neverthrow";
 import pkg from "../../../package.json";
 import { API_VERSION, type ServerActivity, type ServerDiscovery, type ServerState } from "../../api/server.ts";
 import { env } from "../../lib/env.ts";
-import { acquireInstanceLock, instanceLockPath, isProcessAlive, processIdentity, releaseInstanceLock, SERVER_SPAWN_LOCK_KEY } from "../../lib/lock.ts";
+import {
+    acquireInstanceLock,
+    instanceLockPath,
+    isProcessAlive,
+    machineId,
+    processIdentity,
+    releaseInstanceLock,
+    SERVER_SPAWN_LOCK_KEY,
+} from "../../lib/lock.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { describeServerError, ensureServer, lookupServer, type EnsureServerOpts } from "../server.ts";
 
@@ -20,9 +28,13 @@ const DISCOVERY: ServerDiscovery = {
     apiVersion: API_VERSION,
     startedAt: "2026-10-03T00:00:00.000Z",
     channel: "development",
+    machine: null,
     host: null,
     processStart: null,
 };
+
+/** A server whose file carries its start token: a silent port then means a busy server, not a reused pid. */
+const BUSY_DISCOVERY: ServerDiscovery = { ...DISCOVERY, processStart: "the start of the server" };
 
 const IDLE: ServerActivity = { stopping: null, turns: 0, profileDrives: 0, durable: { state: "counted", runs: 0, profiles: 0 } };
 const BUSY: ServerActivity = { stopping: null, turns: 1, profileDrives: 0, durable: { state: "counted", runs: 0, profiles: 0 } };
@@ -233,30 +245,39 @@ describe("ensureServer: start", () => {
 
     test("a live pid whose port stays silent is a busy server: the client waits to the limit, and starts nothing", async () => {
         const { opts, world } = machine();
-        world.file = DISCOVERY;
+        world.file = BUSY_DISCOVERY;
         world.live.add(DISCOVERY.pid);
         const e = (await ensureServer(opts))._unsafeUnwrapErr();
-        expect(e).toMatchObject({ type: "not_answering", discovery: DISCOVERY, logPath: opts.logPath });
+        expect(e).toMatchObject({ type: "not_answering", discovery: BUSY_DISCOVERY, logPath: opts.logPath });
         if (e.type === "not_answering") expect(e.waitedMs).toBeGreaterThanOrEqual(opts.startWaitMs);
         expect(describeServerError(e)).toContain(`pid ${DISCOVERY.pid}, port ${DISCOVERY.port}) runs but did not answer`);
         expect([world.removed, world.lockTaken, world.starts]).toEqual([[], 0, 0]);
         expect(world.notices.join("\n")).toContain("It can be busy.");
     });
 
-    test("a busy server that answers within the limit is used, and nothing starts", async () => {
+    test("a file with no start token and a silent live pid goes to the start, as the pid can be a different process", async () => {
         const { opts, world } = machine();
         world.file = DISCOVERY;
+        world.live.add(DISCOVERY.pid);
+        world.onStart = () => err("`inflexa server start` exited with code 1");
+        expect((await ensureServer(opts))._unsafeUnwrapErr().type).toBe("start_failed");
+        expect([world.removed, world.starts]).toEqual([[], 1]);
+    });
+
+    test("a busy server that answers within the limit is used, and nothing starts", async () => {
+        const { opts, world } = machine();
+        world.file = BUSY_DISCOVERY;
         world.live.add(DISCOVERY.pid);
         world.onSleep = (sleeps) => {
             if (sleeps === 5) world.listening.set(DISCOVERY.port, { state: STARTING });
         };
-        expect((await ensureServer(opts))._unsafeUnwrap().discovery).toEqual(DISCOVERY);
+        expect((await ensureServer(opts))._unsafeUnwrap().discovery).toEqual(BUSY_DISCOVERY);
         expect([world.lockTaken, world.starts]).toEqual([0, 0]);
     });
 
     test("a busy server whose process ends in the wait is stale: the client starts one server", async () => {
         const { opts, world } = machine();
-        world.file = DISCOVERY;
+        world.file = BUSY_DISCOVERY;
         world.live.add(DISCOVERY.pid);
         world.onSleep = (sleeps) => {
             if (sleeps === 2) world.live.delete(DISCOVERY.pid);
@@ -331,11 +352,19 @@ describe("lookupServer", () => {
         expect(world.removed).toEqual([]);
     });
 
+    test("a file of a different machine id whose port answers with the token is a local server: the probe comes first", async () => {
+        // The machine id can be missing or differ in a file of this machine, for example one copied from a backup.
+        const { opts, world } = machine();
+        const renamed: ServerDiscovery = { ...DISCOVERY, machine: "0123456789abcdef0123456789abcdef", host: "node-b" };
+        runServer(world, renamed);
+        expect((await lookupServer(opts))._unsafeUnwrap()).toEqual({ kind: "answering", discovery: renamed, state: STARTING });
+    });
+
     test("a file of a different host is the server of that host: an error that names the host and the file, and no probe", async () => {
         const { opts, world } = machine();
-        world.file = { ...DISCOVERY, host: `not-${hostname()}` };
+        world.file = { ...DISCOVERY, machine: "0123456789abcdef0123456789abcdef", host: "node-b" };
         const e = (await lookupServer(opts))._unsafeUnwrapErr();
-        expect(e).toMatchObject({ type: "other_host", host: `not-${hostname()}`, path: opts.discoveryPath });
+        expect(e).toMatchObject({ type: "other_host", host: "node-b", path: opts.discoveryPath });
         expect(describeServerError(e)).toContain(`If that host is gone, remove ${opts.discoveryPath}.`);
         expect((await ensureServer(opts))._unsafeUnwrapErr().type).toBe("other_host");
         expect([world.removed, world.lockTaken, world.starts]).toEqual([[], 0, 0]);
@@ -346,7 +375,7 @@ describe("lookupServer", () => {
         const { opts, world } = machine();
         const other = Bun.spawn(["sleep", "60"]);
         try {
-            const reused: ServerDiscovery = { ...DISCOVERY, pid: other.pid, host: hostname(), processStart: "a start before the reboot" };
+            const reused: ServerDiscovery = { ...DISCOVERY, pid: other.pid, machine: machineId(), host: hostname(), processStart: "a start before the reboot" };
             world.file = reused;
             const found = await lookupServer({ ...opts, isProcessAlive });
             expect(found._unsafeUnwrap()).toEqual({ kind: "stale", discovery: reused });

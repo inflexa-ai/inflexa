@@ -42,6 +42,7 @@ const DISCOVERY: ServerDiscovery = {
     apiVersion: API_VERSION,
     startedAt: "2026-10-02T00:00:00.000Z",
     channel: "development",
+    machine: null,
     host: null,
     processStart: null,
 };
