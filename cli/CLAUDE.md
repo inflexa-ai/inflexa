@@ -468,8 +468,8 @@ wire types of the two sides. Refer to [The local server](#the-local-server).
     server call. The `prov export`, `prov lineage`, and `prov verify` commands are
     clients of the server in `src/client/commands/prov.ts`
   - `staging/` — it puts the analysis input files under the `data/` root of the
-    analysis workspace. It gives each file a content hash, and it writes the
-    `StagedInput` manifest that the harness accepts.
+    analysis workspace. It reads no file content, and it writes the
+    `StagedInput` manifest, whose summary the data-profile trigger accepts.
 - `src/db/` — the shared SQLite layer (server side): `primary.ts` (the connection),
   `primary_migrations.ts`, `primary_query.ts`, `primary_mutation.ts`, `errors.ts`,
   and `util.ts`. The queries and the mutations stay here, verb-split, beside the

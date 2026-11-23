@@ -613,7 +613,7 @@ The server MUST keep these items, because the harness does not enforce them and 
 - An input change from a route or from the `manage_inputs` tool starts the re-profile in the server.
 - The oldest pending package add starts the flush after 10 s, also with no client.
 
-The input change MUST arm a 500 ms timer for its analysis. When the timer fires before the runtime is ready, it MUST arm again, thus the drive runs at the first fire after the ready edge. When the sandbox gate refuses, the change MUST arm again after 30 s, because no event tells the server that a download ended. `GET {A}/data-profile` MUST give `workPending: true` while the server holds profile work that the ledger row does not show yet: a change that waits, or a drive that is queued or runs.
+The input change MUST arm a 500 ms timer for its analysis. When the timer fires before the runtime is ready, it MUST arm again, thus the drive runs at the first fire after the ready edge. When the sandbox gate refuses, the change MUST arm again after 30 s, because no event tells the server that a download ended. `GET {A}/data-profile` MUST give `workPending: true` while the server holds profile work that the ledger row does not show yet: a change that waits, or a drive that is queued or runs. While a drive stages the inputs, the route MUST also give `staging: { done, total }`, the progress of the pass, and the TUI MUST show it on the DATA PROFILE line. The route MUST give the seed as `seedInputCount`, a count, and never a list of file ids.
 
 The server MUST NOT keep a write queue for each thread, because the harness locks each write of a thread. It MUST NOT write a run outcome into the transcript, because no harness or Cortex code writes that record.
 
@@ -3355,6 +3355,23 @@ An absent folder of this list gives no item and no error.
 - **GIVEN** a Linux machine with no `/media/<user>`, no `/run/media/<user>`, and an empty `/mnt`
 - **WHEN** a client reads the places
 - **THEN** the server answers 200, and `drives` has an empty `items`
+
+### Requirement: An add tells when staging will copy the inputs
+
+`POST /api/v1/analyses/link-probe` takes `{ folder, paths }` for a new analysis, and `POST {A}/inputs/link-probe` takes `{ paths }` for an analysis. Each MUST answer `{ copyWarning }`: the warning of `probeHardlinks` (see the input-staging spec) for the workspace `data/` folder, or `null`. A probe changes no input and no row.
+
+`POST /api/v1/analyses` with inputs, `POST {A}/inputs`, and `PUT {A}/inputs` MUST add the inputs as before, and MUST give `copyWarning` in the response when the probe of the added paths warns. The TUI MUST probe before it creates an analysis with inputs or applies a picker change that adds an input, and it MUST ask "Continue?" with the warning before the add. The `manage_inputs` tool MUST give `copy_warning` with the warning and add nothing, until the agent calls it again with `allowCopy: true`, thus the agent asks the user first.
+
+#### Scenario: A source on a different volume warns
+
+- **GIVEN** analysis `a1`, and a source that refuses a hardlink into the folder of `a1`
+- **WHEN** a client sends `POST {A}/inputs/link-probe` with that path
+- **THEN** the server answers 200 with a `copyWarning` that tells the user to put the analysis folder on the same volume as the data
+
+#### Scenario: The tool asks before a copy
+
+- **WHEN** the agent adds a source that staging must copy, with no `allowCopy`
+- **THEN** the tool result is `copy_warning`, and the analysis has no new input
 
 ### Requirement: An input of an analysis gives its size and its kind
 

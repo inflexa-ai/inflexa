@@ -30,7 +30,7 @@ the columns: `analysis_id` (TEXT, PRIMARY KEY), `status` (TEXT, NOT NULL),
 `data_profile_error` (TEXT, nullable), `data_profile_started_at` (TEXT,
 nullable), `data_profile_completed_at` (TEXT, nullable), `data_profile_result`
 (JSONB, nullable), `data_profile_workflow_id` (TEXT, nullable),
-`seed_input_file_ids` (JSONB, nullable), `created_at` (TEXT,
+`seed_input_count` (INTEGER, nullable), `created_at` (TEXT,
 NOT NULL), `updated_at` (TEXT, NOT NULL).
 
 The `status` column SHALL NOT take the value `'suspended_insufficient_funds'`. A
@@ -91,17 +91,17 @@ resolved by the embedder at charge time, never persisted in the state layer
 #### Scenario: Analysis upserted without user_id column
 
 - **WHEN** an analysis is created via `upsertAnalysis(pool, resourceId, context,
-  inputFileIds?)`
+  seedInputCount?)`
 - **THEN** a row is inserted with `status` `'active'`, `context` from the
-  argument, `data_profile_status` `'pending'`, and `seed_input_file_ids` set
-  from `inputFileIds` when supplied
+  argument, `data_profile_status` `'pending'`, and `seed_input_count` set
+  from `seedInputCount` when supplied
 - **AND** no `user_id` column exists on the table
 
 #### Scenario: Re-upsert replaces mutable fields
 
 - **WHEN** `upsertAnalysis` is called again for an existing analysis
 - **THEN** `context` and `updated_at` SHALL be replaced, and
-  `seed_input_file_ids` SHALL be coalesced (kept when the new value is null)
+  `seed_input_count` SHALL be coalesced (kept when the new value is null)
 
 #### Scenario: Legacy billing_context column is dropped on startup
 
@@ -200,9 +200,9 @@ BIGINT so files larger than 2 GB do not overflow on INSERT. There SHALL be no
 `legacy_artifact_id` column or `idx_cortex_artifacts_legacy` index — they do not
 exist in the current schema.
 
-#### Scenario: Input file registered at materialization
+#### Scenario: A host registers an input file
 
-- **WHEN** an input file is registered
+- **WHEN** a host registers an input file (the harness registers none)
 - **THEN** a row is inserted with `role='input'`, `source_step` and `source_run`
   NULL, `file_id` set to the upstream file identity when known, and `artifact_id`
   NULL
