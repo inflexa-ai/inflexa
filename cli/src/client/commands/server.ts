@@ -5,7 +5,6 @@ import { err, ok, type Result } from "neverthrow";
 import pkg from "../../../package.json";
 import {
     API_VERSION,
-    SHUTDOWN_DRAIN_LIMIT_MS,
     type ServerActivity,
     type ServerBootError,
     type ServerConnection,
@@ -23,14 +22,13 @@ import {
     DEFAULT_SERVER_LOOKUP_OPTS,
     describeActivity,
     describeServerError,
-    discoveryProcess,
     fetchServerActivity,
     hasActiveWork,
     lookupServer,
     removeStaleDiscovery,
     requestServerBoot,
-    requestServerShutdown,
     SERVER_STOP_WAIT_MS,
+    stopServer,
     serverClient,
     type ServerLookup,
     type ServerLookupOpts,
@@ -229,34 +227,11 @@ export async function serverStop(flags: { mode: ShutdownMode }, opts: ServerComm
             throw new Error(`unhandled server lookup: ${JSON.stringify(exhaustive)}`);
         }
     }
-    const stopped = await stopServer(lookup.discovery, flags.mode, opts);
+    const stopped = await stopServer(lookup.discovery, flags.mode, opts, (line) => opts.write(`${line}\n`));
     stopped.match(
         () => opts.write(`Stopped the Inflexa server (pid ${lookup.discovery.pid}).\n`),
         (message) => opts.fail(message),
     );
-}
-
-/** Send the stop request to the server of `discovery`, and wait for the exit of its process. */
-async function stopServer(discovery: ServerDiscovery, mode: ShutdownMode, opts: ServerCommandOpts): Promise<Result<void, string>> {
-    const sent = await requestServerShutdown(discovery, mode, opts.fetch);
-    // The exit of a stop can close the connection before the 202 arrives. Thus only an answer with an error ends
-    // the stop here, and a broken connection still waits for the exit.
-    if (sent.isErr() && sent.error.type !== "unreachable") return err(`The Inflexa server refused the stop: ${describeClientError(sent.error)}`);
-    const turns = sent.isOk() ? sent.value.activeTurns : 0;
-    const waitTurns =
-        sent.isOk() && sent.value.mode === "drain" && turns > 0
-            ? ` It waits up to ${SHUTDOWN_DRAIN_LIMIT_MS / 1000} s for ${turns} running chat turn${turns === 1 ? "" : "s"}.`
-            : "";
-    opts.write(`Stopping the Inflexa server (pid ${discovery.pid}).${waitTurns}\n`);
-    const waitMs = opts.stopWaitMs[mode];
-    const start = opts.now();
-    while (opts.isProcessAlive(discoveryProcess(discovery))) {
-        if (opts.now() - start >= waitMs) {
-            return err(`The Inflexa server (pid ${discovery.pid}) still runs ${Math.round(waitMs / 1000)} s after the stop request. Its log: ${opts.logPath}`);
-        }
-        await opts.sleep(opts.exitPollMs);
-    }
-    return ok(undefined);
 }
 
 /**
@@ -382,7 +357,7 @@ export async function stopServerAfterUpgrade(newVersion: string, opts: ServerCom
             return;
         }
     }
-    (await stopServer(lookup.discovery, "drain", opts)).match(
+    (await stopServer(lookup.discovery, "drain", opts, (line) => opts.write(`${line}\n`))).match(
         () => opts.write(`Stopped the old Inflexa server. The next inflexa command starts inflexa ${newVersion}.\n`),
         (message) => opts.write(`${message}\n`),
     );

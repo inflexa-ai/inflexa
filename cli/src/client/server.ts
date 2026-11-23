@@ -66,6 +66,8 @@ export type ServerError =
     | { readonly type: "not_running"; readonly path: string }
     /** The server speaks a different version of the HTTP API. */
     | { readonly type: "api_mismatch"; readonly discovery: ServerDiscovery; readonly state: ServerState }
+    /** The process of the file lives, but its port gave no answer within the start limit: a busy or a hung server. */
+    | { readonly type: "not_answering"; readonly discovery: ServerDiscovery; readonly waitedMs: number; readonly logPath: string }
     | { readonly type: "start_failed"; readonly detail: string; readonly logPath: string }
     | { readonly type: "start_timeout"; readonly waitedMs: number; readonly logPath: string };
 
@@ -150,17 +152,28 @@ export type ServerWaitOpts = ServerLookupOpts & {
     readonly logPath: string;
 };
 
-/** What {@link ensureServer} reads, locks, and starts. Tests replace each one. */
-export type EnsureServerOpts = ServerWaitOpts & {
-    /** False when a different owner starts and stops the server, for example a test. */
-    readonly autoStart: boolean;
-    readonly acquireSpawnLock: () => LockOutcome;
-    readonly releaseSpawnLock: () => void;
-    /** Run `inflexa server start`, and settle at its exit. The error channel holds why it failed. */
-    readonly startServer: () => Promise<Result<void, string>>;
-    /** Tells the person why the command waits. */
-    readonly notice: (line: string) => void;
+/** What {@link stopServer} sends and how long it waits for the exit. Tests replace each one. */
+export type ServerStopOpts = ServerLookupOpts & {
+    readonly sleep: (ms: number) => Promise<void>;
+    readonly now: () => number;
+    /** The interval of the liveness read of the process while a stop waits for the exit. */
+    readonly exitPollMs: number;
+    readonly stopWaitMs: Record<ShutdownMode, number>;
+    readonly logPath: string;
 };
+
+/** What {@link ensureServer} reads, locks, and starts. Tests replace each one. */
+export type EnsureServerOpts = ServerWaitOpts &
+    ServerStopOpts & {
+        /** False when a different owner starts and stops the server, for example a test. */
+        readonly autoStart: boolean;
+        readonly acquireSpawnLock: () => LockOutcome;
+        readonly releaseSpawnLock: () => void;
+        /** Run `inflexa server start`, and settle at its exit. The error channel holds why it failed. */
+        readonly startServer: () => Promise<Result<void, string>>;
+        /** Tells the person why the command waits. */
+        readonly notice: (line: string) => void;
+    };
 
 /** The production {@link EnsureServerOpts}. */
 export const DEFAULT_ENSURE_SERVER_OPTS: EnsureServerOpts = {
@@ -170,6 +183,8 @@ export const DEFAULT_ENSURE_SERVER_OPTS: EnsureServerOpts = {
     now: () => Date.now(),
     pollMs: 200,
     startWaitMs: SERVER_START_WAIT_MS,
+    exitPollMs: 250,
+    stopWaitMs: SERVER_STOP_WAIT_MS,
     logPath: env.serverLogPath,
     autoStart: env.serverAutoStart,
     acquireSpawnLock: () => acquireInstanceLock(SERVER_SPAWN_LOCK_KEY),
@@ -181,31 +196,141 @@ export const DEFAULT_ENSURE_SERVER_OPTS: EnsureServerOpts = {
 /**
  * Connect to the local server, or start one: the check of each `instance` command before its action runs.
  *
- * A server that answers in any phase counts, because the SQLite routes work before the runtime is ready. With
- * no answer, the client removes a stale discovery file, takes the `server-spawn` lock, reads the file again,
- * and runs `inflexa server start`. A client that finds the lock held starts nothing, and waits for the
- * answer of the server that the holder starts. A server with a different `apiVersion` is refused: its routes
- * can send bodies that this client does not know.
+ * A server that answers in any phase counts, because the SQLite routes work before the runtime is ready. A
+ * server whose process lives but whose port does not answer is busy: the client waits for it up to the start
+ * limit, and it never starts a second server, which could not bind the port. With no server, the client
+ * removes a stale discovery file, takes the `server-spawn` lock, reads the file again, and runs
+ * `inflexa server start`. A client that finds the lock held starts nothing, and waits for the answer of the
+ * server that the holder starts.
+ *
+ * A server of an older version than this client is replaced when it has no active work: an update leaves the
+ * old server running with its old code. With active work it stays, and the client warns. A server with a
+ * different `apiVersion` that stays is refused: its routes can send bodies that this client does not know.
  */
 export async function ensureServer(opts: EnsureServerOpts = DEFAULT_ENSURE_SERVER_OPTS): Promise<Result<ConnectedServer, ServerError>> {
-    const found = await findAnsweringServer(opts);
+    return connectOrStart(opts, true);
+}
+
+async function connectOrStart(opts: EnsureServerOpts, mayReplace: boolean): Promise<Result<ConnectedServer, ServerError>> {
+    const found = await findServer(opts);
     if (found.isErr()) return err(found.error);
-    if (found.value !== null) return sameApiVersion(found.value);
+    if (found.value !== null) return useServer(found.value, opts, mayReplace);
     if (!opts.autoStart) return err({ type: "not_running", path: opts.discoveryPath });
 
     const lock = opts.acquireSpawnLock();
     if (!lock.acquired) return (await waitForServer(opts, () => null)).andThen(sameApiVersion);
+    let raced: ConnectedServer;
     try {
-        const again = await findAnsweringServer(opts);
+        const again = await findServer(opts);
         if (again.isErr()) return err(again.error);
-        if (again.value !== null) return sameApiVersion(again.value);
-        opts.notice(`Starting the Inflexa server in the background. Its log: ${opts.logPath}`);
-        const started = await opts.startServer();
-        if (started.isErr()) return err({ type: "start_failed", detail: started.error, logPath: opts.logPath });
-        return (await waitForServer(opts, () => null)).andThen(sameApiVersion);
+        if (again.value === null) {
+            opts.notice(`Starting the Inflexa server in the background. Its log: ${opts.logPath}`);
+            const started = await opts.startServer();
+            if (started.isErr()) return err({ type: "start_failed", detail: started.error, logPath: opts.logPath });
+            return (await waitForServer(opts, () => null)).andThen(sameApiVersion);
+        }
+        raced = again.value;
     } finally {
         opts.releaseSpawnLock();
     }
+    // A different client started this server between the two reads. A replace takes the lock again.
+    return useServer(raced, opts, mayReplace);
+}
+
+/**
+ * The server that answers, or `null` when none runs. A stale discovery file is removed on the way. A server
+ * whose process lives but whose port is silent gets the start limit to answer: a long synchronous step of the
+ * server, for example a large scan, holds its event loop, and a second server would only fail at the bind.
+ */
+async function findServer(opts: EnsureServerOpts): Promise<Result<ConnectedServer | null, ServerError>> {
+    const start = opts.now();
+    let told = false;
+    for (;;) {
+        const found = await lookupServer(opts);
+        if (found.isErr()) return err(found.error);
+        const lookup = found.value;
+        switch (lookup.kind) {
+            case "answering":
+                return ok({ discovery: lookup.discovery, state: lookup.state });
+            case "stale":
+                opts.removeStale(opts.discoveryPath, lookup.discovery.pid);
+                return ok(null);
+            case "none":
+                return ok(null);
+            case "silent": {
+                const waitedMs = opts.now() - start;
+                if (waitedMs >= opts.startWaitMs) return err({ type: "not_answering", discovery: lookup.discovery, waitedMs, logPath: opts.logPath });
+                if (!told) {
+                    opts.notice(
+                        `The Inflexa server (pid ${lookup.discovery.pid}) runs but does not answer. It can be busy. Waiting up to ${Math.round(opts.startWaitMs / 1000)} s for it.`,
+                    );
+                    told = true;
+                }
+                await opts.sleep(opts.pollMs);
+                break;
+            }
+            default: {
+                const exhaustive: never = lookup;
+                throw new Error(`unhandled server lookup: ${JSON.stringify(exhaustive)}`);
+            }
+        }
+    }
+}
+
+/** Whether `server` runs an older inflexa than this client, for example the server from before an update. */
+function isOlderServer(server: ConnectedServer): boolean {
+    return Bun.semver.order(server.state.version, pkg.version) < 0;
+}
+
+/**
+ * Use the server that answers. An older server with no active work is stopped, and the client starts the
+ * server of its own version. An older server with active work stays, with a warning: a stop would end a chat
+ * turn of a different client.
+ *
+ * Only an older server is replaced. A newer server is the server of a newer install, and a stop by an older
+ * client would start the old code again.
+ */
+async function useServer(server: ConnectedServer, opts: EnsureServerOpts, mayReplace: boolean): Promise<Result<ConnectedServer, ServerError>> {
+    if (!mayReplace || !opts.autoStart || !isOlderServer(server)) return sameApiVersion(server);
+    const versions = `The Inflexa server (pid ${server.discovery.pid}) is inflexa ${server.state.version}, and this command is inflexa ${pkg.version}.`;
+    const activity = await fetchServerActivity(server.discovery, opts.fetch);
+    if (activity.isErr() || hasActiveWork(activity.value)) {
+        const work = activity.isOk() ? describeActivity(activity.value) : "unknown, because the activity read failed";
+        opts.notice(`${versions} It has active work (${work}), thus it keeps running. Run \`inflexa server stop\` when the work ends.`);
+        return sameApiVersion(server);
+    }
+    opts.notice(`${versions} It has no active work, thus it stops, and inflexa ${pkg.version} starts.`);
+    const stopped = await stopServer(server.discovery, "drain", opts, opts.notice);
+    if (stopped.isErr()) return err({ type: "start_failed", detail: stopped.error, logPath: opts.logPath });
+    return connectOrStart(opts, false);
+}
+
+/** Send the stop request to the server of `discovery`, and wait for the exit of its process. `say` tells the person. */
+export async function stopServer(
+    discovery: ServerDiscovery,
+    mode: ShutdownMode,
+    opts: ServerStopOpts,
+    say: (line: string) => void,
+): Promise<Result<void, string>> {
+    const sent = await requestServerShutdown(discovery, mode, opts.fetch);
+    // The exit of a stop can close the connection before the 202 arrives. Thus only an answer with an error ends
+    // the stop here, and a broken connection still waits for the exit.
+    if (sent.isErr() && sent.error.type !== "unreachable") return err(`The Inflexa server refused the stop: ${describeClientError(sent.error)}`);
+    const turns = sent.isOk() ? sent.value.activeTurns : 0;
+    const waitTurns =
+        sent.isOk() && sent.value.mode === "drain" && turns > 0
+            ? ` It waits up to ${SHUTDOWN_DRAIN_LIMIT_MS / 1000} s for ${turns} running chat turn${turns === 1 ? "" : "s"}.`
+            : "";
+    say(`Stopping the Inflexa server (pid ${discovery.pid}).${waitTurns}`);
+    const waitMs = opts.stopWaitMs[mode];
+    const start = opts.now();
+    while (opts.isProcessAlive(discoveryProcess(discovery))) {
+        if (opts.now() - start >= waitMs) {
+            return err(`The Inflexa server (pid ${discovery.pid}) still runs ${Math.round(waitMs / 1000)} s after the stop request. Its log: ${opts.logPath}`);
+        }
+        await opts.sleep(opts.exitPollMs);
+    }
+    return ok(undefined);
 }
 
 /**
@@ -288,6 +413,11 @@ export function describeServerError(e: ServerError): string {
             return (
                 `The Inflexa server (pid ${e.discovery.pid}) is inflexa ${e.state.version} with API version ${e.state.apiVersion}, ` +
                 `and this command is inflexa ${pkg.version} with API version ${API_VERSION}. Run \`inflexa server stop\`, then try again.`
+            );
+        case "not_answering":
+            return (
+                `The Inflexa server (pid ${e.discovery.pid}, port ${e.discovery.port}) runs but did not answer within ${Math.round(e.waitedMs / 1000)} s. ` +
+                `It can be busy: try again later. \`inflexa server status\` shows it, and \`inflexa server stop\` stops it. See its log: ${e.logPath}`
             );
         case "start_failed":
             return `Could not start the Inflexa server: ${e.detail}. See its log: ${e.logPath}`;

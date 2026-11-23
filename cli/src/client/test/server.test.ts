@@ -6,7 +6,7 @@ import { dirname } from "node:path";
 import { err, ok, type Result } from "neverthrow";
 
 import pkg from "../../../package.json";
-import { API_VERSION, type ServerDiscovery, type ServerState } from "../../api/server.ts";
+import { API_VERSION, type ServerActivity, type ServerDiscovery, type ServerState } from "../../api/server.ts";
 import { env } from "../../lib/env.ts";
 import { acquireInstanceLock, instanceLockPath, isProcessAlive, processIdentity, releaseInstanceLock, SERVER_SPAWN_LOCK_KEY } from "../../lib/lock.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
@@ -23,6 +23,9 @@ const DISCOVERY: ServerDiscovery = {
     host: null,
     processStart: null,
 };
+
+const IDLE: ServerActivity = { stopping: null, turns: 0, profileDrives: 0, durable: { state: "counted", runs: 0, profiles: 0 } };
+const BUSY: ServerActivity = { stopping: null, turns: 1, profileDrives: 0, durable: { state: "counted", runs: 0, profiles: 0 } };
 
 const STARTING: ServerState = {
     version: pkg.version,
@@ -46,6 +49,8 @@ const FAILED: ServerState = {
 
 type MachineWorld = {
     file: ServerDiscovery | null;
+    activity: ServerActivity;
+    stops: number[];
     listening: Map<number, { state: ServerState; status?: number }>;
     live: Set<number>;
     lockHeldBy: number | null;
@@ -65,6 +70,8 @@ type MachineWorld = {
 function machine(): { opts: EnsureServerOpts; world: MachineWorld } {
     const world: MachineWorld = {
         file: null,
+        activity: IDLE,
+        stops: [],
         listening: new Map<number, { state: ServerState; status?: number }>(),
         live: new Set<number>(),
         lockHeldBy: null,
@@ -83,9 +90,19 @@ function machine(): { opts: EnsureServerOpts; world: MachineWorld } {
         readDiscovery: () => ok(world.file),
         isProcessAlive: (process) => world.live.has(process.pid),
         fetch: (url) => {
-            const port = Number(new URL(url).port);
+            const { port: portText, pathname } = new URL(url);
+            const port = Number(portText);
             const listener = world.listening.get(port);
             if (listener === undefined) return Promise.reject(new Error("ECONNREFUSED"));
+            if (pathname === "/api/v1/server/activity") return Promise.resolve(Response.json(world.activity));
+            if (pathname === "/api/v1/server/shutdown") {
+                const pid = world.file?.pid ?? -1;
+                world.stops.push(pid);
+                world.listening.delete(port);
+                world.live.delete(pid);
+                world.file = null;
+                return Promise.resolve(Response.json({ mode: "drain", activeTurns: 0 }, { status: 202 }));
+            }
             const body = listener.status === undefined ? listener.state : { error: "unauthorized", message: "wrong token" };
             return Promise.resolve(Response.json(body, { status: listener.status ?? 200 }));
         },
@@ -103,6 +120,8 @@ function machine(): { opts: EnsureServerOpts; world: MachineWorld } {
         now: () => clock,
         pollMs: 200,
         startWaitMs: 30_000,
+        exitPollMs: 250,
+        stopWaitMs: { now: 60_000, drain: 120_000 },
         logPath: "/test/logs/server.dev.log",
         autoStart: true,
         acquireSpawnLock: () => {
@@ -162,10 +181,39 @@ describe("ensureServer: version skew", () => {
         expect(world.starts).toBe(0);
     });
 
-    test("a server whose package version alone differs is used", async () => {
+    test("an older server with no active work is stopped, and the server of this version starts", async () => {
+        const { opts, world } = machine();
+        runServer(world, { ...DISCOVERY, pid: 7000, version: "0.0.1" }, { ...STARTING, version: "0.0.1" });
+        world.onStart = () => {
+            runServer(world);
+            return ok(undefined);
+        };
+        expect((await ensureServer(opts))._unsafeUnwrap().state.version).toBe(pkg.version);
+        expect([world.stops, world.starts]).toEqual([[7000], 1]);
+        expect(world.notices.join("\n")).toContain(`is inflexa 0.0.1, and this command is inflexa ${pkg.version}`);
+    });
+
+    test("an older server with active work stays, and the client warns", async () => {
         const { opts, world } = machine();
         runServer(world, { ...DISCOVERY, version: "0.0.1" }, { ...STARTING, version: "0.0.1" });
+        world.activity = BUSY;
+        expect((await ensureServer(opts))._unsafeUnwrap().state.version).toBe("0.0.1");
+        expect([world.stops, world.starts]).toEqual([[], 0]);
+        expect(world.notices.join("\n")).toContain("It has active work (1 chat turn), thus it keeps running.");
+    });
+
+    test("a newer server is used, and nothing stops", async () => {
+        const { opts, world } = machine();
+        runServer(world, { ...DISCOVERY, version: "999.0.0" }, { ...STARTING, version: "999.0.0" });
         expect((await ensureServer(opts)).isOk()).toBe(true);
+        expect([world.stops, world.starts]).toEqual([[], 0]);
+    });
+
+    test("with auto start off, an older server is used and never stopped", async () => {
+        const { opts, world } = machine();
+        runServer(world, { ...DISCOVERY, version: "0.0.1" }, { ...STARTING, version: "0.0.1" });
+        expect((await ensureServer({ ...opts, autoStart: false })).isOk()).toBe(true);
+        expect(world.stops).toEqual([]);
     });
 });
 
@@ -183,14 +231,42 @@ describe("ensureServer: start", () => {
         expect(world.notices.join("\n")).toContain(opts.logPath);
     });
 
-    test("a live pid whose port is silent keeps its file, and a start is tried", async () => {
+    test("a live pid whose port stays silent is a busy server: the client waits to the limit, and starts nothing", async () => {
         const { opts, world } = machine();
         world.file = DISCOVERY;
         world.live.add(DISCOVERY.pid);
-        world.onStart = () => err("`inflexa server start` exited with code 1");
-        expect((await ensureServer(opts))._unsafeUnwrapErr().type).toBe("start_failed");
-        expect(world.removed).toEqual([]);
-        expect(world.starts).toBe(1);
+        const e = (await ensureServer(opts))._unsafeUnwrapErr();
+        expect(e).toMatchObject({ type: "not_answering", discovery: DISCOVERY, logPath: opts.logPath });
+        if (e.type === "not_answering") expect(e.waitedMs).toBeGreaterThanOrEqual(opts.startWaitMs);
+        expect(describeServerError(e)).toContain(`pid ${DISCOVERY.pid}, port ${DISCOVERY.port}) runs but did not answer`);
+        expect([world.removed, world.lockTaken, world.starts]).toEqual([[], 0, 0]);
+        expect(world.notices.join("\n")).toContain("It can be busy.");
+    });
+
+    test("a busy server that answers within the limit is used, and nothing starts", async () => {
+        const { opts, world } = machine();
+        world.file = DISCOVERY;
+        world.live.add(DISCOVERY.pid);
+        world.onSleep = (sleeps) => {
+            if (sleeps === 5) world.listening.set(DISCOVERY.port, { state: STARTING });
+        };
+        expect((await ensureServer(opts))._unsafeUnwrap().discovery).toEqual(DISCOVERY);
+        expect([world.lockTaken, world.starts]).toEqual([0, 0]);
+    });
+
+    test("a busy server whose process ends in the wait is stale: the client starts one server", async () => {
+        const { opts, world } = machine();
+        world.file = DISCOVERY;
+        world.live.add(DISCOVERY.pid);
+        world.onSleep = (sleeps) => {
+            if (sleeps === 2) world.live.delete(DISCOVERY.pid);
+        };
+        world.onStart = () => {
+            runServer(world);
+            return ok(undefined);
+        };
+        expect((await ensureServer(opts)).isOk()).toBe(true);
+        expect([world.removed, world.starts]).toEqual([[DISCOVERY.pid], 1]);
     });
 
     test("the read under the lock finds the server that a racing client started, and starts none", async () => {
