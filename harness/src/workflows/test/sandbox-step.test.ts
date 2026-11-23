@@ -1059,6 +1059,32 @@ function expectOnePauseResumed(statements: ReadonlyArray<{ text: string; values:
     expect(dbosState.cancelled).toEqual([]);
 }
 
+describe("sandbox-step failure class", () => {
+    it("names the class of a failed model request in the failure of the step, and keeps the text of the provider out", async () => {
+        const { pool, statements } = statementPool();
+        const script = scriptedModel([
+            {
+                fail: new APICallError({
+                    message: "prompt is too long: 250000 tokens > 200000 maximum (/home/u/secret.txt)",
+                    url: "https://model.test/v1/messages",
+                    requestBodyValues: {},
+                    statusCode: 400,
+                    isRetryable: false,
+                }),
+            },
+        ]);
+        const deps: SandboxStepDeps = { ...usageStepDeps(undefined), pool, provider: script.provider };
+        await runInWorkflow();
+
+        const expected = "Step failed: the model refused the request (context too long).";
+        await expect(runSandboxStepBody(usageStepInput(), deps)).rejects.toThrow(expected);
+
+        const failed = statements.find((q) => STEP_EXECUTIONS_UPDATE.test(q.text) && q.values.includes("failed"));
+        expect(failed?.values).toContain(expected);
+        expect(JSON.stringify(failed?.values)).not.toContain("secret");
+    });
+});
+
 describe("sandbox-step pause", () => {
     it("a failed model request with a cause pauses the step in place, and the step sends the request again after the resume", async () => {
         const { pool, statements } = statementPool();

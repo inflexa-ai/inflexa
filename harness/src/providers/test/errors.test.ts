@@ -2,7 +2,16 @@ import { describe, expect, it } from "bun:test";
 
 import { APICallError } from "@ai-sdk/provider";
 
-import { classifyProviderError, extractStatus, findSuspendError, isProviderError, modelFailureOf, RequestTimeoutError, toProviderError } from "../errors.js";
+import {
+    classifyProviderError,
+    extractStatus,
+    findSuspendError,
+    isProviderError,
+    modelFailureClass,
+    modelFailureOf,
+    RequestTimeoutError,
+    toProviderError,
+} from "../errors.js";
 import { presentAt } from "../../lib/present.js";
 
 /** Build a synthetic API error carrying an HTTP status, SDK-shaped. */
@@ -383,5 +392,37 @@ describe("toProviderError — the suspend arm", () => {
         const found: unknown = findSuspendError(rethrown);
         expect(found).toBe(failure);
         expect(findSuspendError(new Error("x", { cause: toProviderError(apiError(403), "analysis:abc") }))).toBeUndefined();
+    });
+});
+
+describe("modelFailureClass", () => {
+    it("names a context that is too long, and keeps the text of the provider out", () => {
+        const body = '{"error":{"message":"prompt is too long: 250000 tokens > 200000 maximum at /home/u/secret.txt sk-ant-api03-abc"}}';
+        const failure = toProviderError(nonConformingApiError(400, "Bad Request", body), "the step");
+
+        const label = modelFailureClass(failure);
+
+        expect(label).toBe("the model refused the request (context too long)");
+    });
+
+    it("gives each other class from the status and the kind of the error", () => {
+        expect(modelFailureClass(toProviderError(apiError(401), "w"))).toBe("the model endpoint refused the credential");
+        expect(modelFailureClass(toProviderError(apiError(402), "w"))).toBe("the model endpoint refused the request (payment_required)");
+        expect(modelFailureClass(toProviderError(apiError(413), "w"))).toBe("the model refused the request (request too large)");
+        expect(modelFailureClass(toProviderError(apiError(429), "w"))).toBe("the model endpoint limited the rate of the requests");
+        expect(modelFailureClass(toProviderError(apiError(503), "w"))).toBe("the model endpoint failed (HTTP 503)");
+        expect(modelFailureClass(toProviderError(apiError(404), "w"))).toBe("the model refused the request (HTTP 404)");
+        expect(modelFailureClass(toProviderError(new RequestTimeoutError(1000), "w"))).toBe("the model request timed out");
+        expect(modelFailureClass(toProviderError(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }), "w"))).toBe(
+            "the model endpoint could not be reached",
+        );
+        expect(modelFailureClass(toProviderError(new Error("Unexpected token"), "w"))).toBe("the reply of the model could not be read");
+    });
+
+    it("finds the provider error on the cause chain, and gives nothing for a failure that holds none", () => {
+        const wrapped = new Error("step failed", { cause: toProviderError(apiError(400), "w") });
+
+        expect(modelFailureClass(wrapped)).toBe("the model refused the request (HTTP 400)");
+        expect(modelFailureClass(new Error("ENOENT: /home/u/data.csv"))).toBeUndefined();
     });
 });

@@ -146,6 +146,39 @@ export function modelFailureOf(err: unknown): ModelFailure {
 }
 
 /**
+ * Words of a provider message that say the request was longer than the context of the model. They only pick a
+ * label: the retry and the pause of a failure key on the status alone.
+ */
+const CONTEXT_TOO_LONG_PHRASES = ["prompt is too long", "context length", "context_length_exceeded", "context window", "maximum context", "too many tokens"];
+
+/**
+ * A short, user-safe class of a failed model call, or `undefined` when the failure holds no provider error. Each
+ * text comes from a fixed set, thus no path, secret, or text of the provider reaches a surface that a person reads.
+ */
+export function modelFailureClass(err: unknown): string | undefined {
+    const error = findProviderError(err);
+    if (error === undefined) return undefined;
+    switch (error.type) {
+        case "auth":
+            return "the model endpoint refused the credential";
+        case "suspend":
+            return `the model endpoint refused the request (${error.reason})`;
+        case "provider":
+            break;
+    }
+    const origin = error.cause ?? err;
+    if (findRequestTimeout(origin) !== undefined || hasSdkTimeout(origin)) return "the model request timed out";
+    const status = extractStatus(origin);
+    const message = error.message.toLowerCase();
+    if (CONTEXT_TOO_LONG_PHRASES.some((phrase) => message.includes(phrase))) return "the model refused the request (context too long)";
+    if (status === 413) return "the model refused the request (request too large)";
+    if (status === 429) return "the model endpoint limited the rate of the requests";
+    if (status !== undefined && status >= 500) return `the model endpoint failed (HTTP ${status})`;
+    if (status !== undefined && status >= 400) return `the model refused the request (HTTP ${status})`;
+    return error.retryable ? "the model endpoint could not be reached" : "the reply of the model could not be read";
+}
+
+/**
  * Turn a caught SDK throwable into a `ProviderError` value. Routes through
  * `classifyProviderError` with the `suspendOn` map of the provider, so the
  * `provider` variant's `retryable` keeps the transient (429 / 5xx / connection)
