@@ -103,6 +103,7 @@ export async function resolveNewTarget(
     );
     console.log(`\n  Created analysis "${created.name}"`);
     if (created.outputDir !== null) console.log(`  Workspace: ${created.outputDir}\n`);
+    if (created.copyWarning !== undefined) console.log(`  Warning: ${created.copyWarning}\n`);
     return openTarget(created.id, opts);
 }
 
@@ -356,6 +357,7 @@ export async function inputsAdd(flags: ContextFlags, paths: string[], opts: Clie
             ? `  Nothing new to add — those paths are already inputs of "${analysis.name}".`
             : `  Added ${change.added.length} input(s) to "${analysis.name}": ${change.added.map((i) => i.path).join(", ")}`,
     );
+    if (change.copyWarning !== undefined) console.log(`  Warning: ${change.copyWarning}`);
     if (change.added.length > 0) console.log(REPROFILE_HINT);
 }
 

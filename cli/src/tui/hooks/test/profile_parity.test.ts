@@ -317,7 +317,7 @@ function profileState(over: Partial<DataProfileState>): DataProfileState {
         completedAt: null,
         result: null,
         workflowId: null,
-        seedInputFileIds: null,
+        seedInputCount: null,
         ...over,
     };
 }

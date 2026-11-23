@@ -196,8 +196,14 @@ export type DataProfileState = {
      * workflow body records it.
      */
     workflowId: string | null;
-    /** The input files that the profile must cover, or `null` when the seed was not recorded. */
-    seedInputFileIds: string[] | null;
+    /** The count of the input files that the profile must cover, or `null` when the seed was not recorded. */
+    seedInputCount: number | null;
+};
+
+/** The progress of a staging pass: the files placed under the workspace, of the total. */
+export type StagingProgress = {
+    done: number;
+    total: number;
 };
 
 /**
@@ -210,20 +216,26 @@ export type DataProfileView = ({ status: null } | (DataProfileState & { usage?: 
      * for its re-profile, or a drive that is queued or runs. A client reads the row again until it is absent.
      */
     workPending?: true;
+    /** Present while a drive stages the inputs into the workspace. A drive that stages also sets `workPending`. */
+    staging?: StagingProgress;
 };
 
 /**
  * What one profile drive did. `kind` is the profile decision. `materialized` is true when the current input
  * set is on disk under the workspace at the end of the drive, whether or not this drive wrote it.
  */
-export type ProfileOutcome =
+export type ProfileOutcome = (
     | { kind: "triggered"; restarted: boolean; materialized: true }
     | { kind: "already_profiled"; materialized: true }
     | { kind: "already_running"; materialized: boolean }
     | { kind: "cleared"; materialized: false }
     | { kind: "skipped_failed"; materialized: true }
     | { kind: "no_inputs"; materialized: false }
-    | { kind: "failed"; reason: string; materialized: boolean };
+    | { kind: "failed"; reason: string; materialized: boolean }
+) & {
+    /** One line for each source that the drive could not read or reach. Staging kept its earlier staged files, and the profile stays. */
+    warnings?: readonly string[];
+};
 
 /**
  * The body of `GET {A}/chat-context`: the agent of the conversation, and the profile state after the parity

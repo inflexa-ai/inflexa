@@ -216,7 +216,7 @@ function planRecord(overrides: Partial<PlanRecord> = {}): PlanRecord {
 }
 
 function profileRow(overrides: Partial<DataProfileStatus> = {}): DataProfileStatus {
-    return { status: "completed", error: null, startedAt: null, completedAt: null, result: null, workflowId: null, seedInputFileIds: null, ...overrides };
+    return { status: "completed", error: null, startedAt: null, completedAt: null, result: null, workflowId: null, seedInputCount: null, ...overrides };
 }
 
 /** A new analysis row in the test database. */
@@ -1362,7 +1362,7 @@ describe("GET {A}/data-profile", () => {
     test("the ledger row, with the usage of the profile calls", async () => {
         const analysisId = seedAnalysis();
         seedUsage(analysisId, { runId: DATA_PROFILE_RUN_LITERAL }, 42);
-        const app = appWith({ loadProfile: () => okAsync(profileRow({ status: "failed", error: "no files", seedInputFileIds: ["f1"] })) });
+        const app = appWith({ loadProfile: () => okAsync(profileRow({ status: "failed", error: "no files", seedInputCount: 1 })) });
         const view = await jsonBody(app.request(`/api/v1/analyses/${analysisId}/data-profile`));
         expect(view).toEqual({
             status: "failed",
@@ -1371,7 +1371,7 @@ describe("GET {A}/data-profile", () => {
             completedAt: null,
             result: null,
             workflowId: null,
-            seedInputFileIds: ["f1"],
+            seedInputCount: 1,
             usage: { calls: 1, inputTokens: 42 },
         });
     });

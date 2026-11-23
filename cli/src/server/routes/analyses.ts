@@ -1,4 +1,4 @@
-import { basename, isAbsolute } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 
 import {
     queryDataProfileStatusByAnalyses,
@@ -25,8 +25,10 @@ import {
     type BusyReason,
     type DeleteAnalysisResponse,
     type DeleteExportOutcome,
+    type CreateAnalysisResponse,
     type InputsChange,
     type InputView,
+    type LinkProbeResult,
     type OutputDirView,
     type ResolvedContextView,
     type UpdateAnalysisResponse,
@@ -49,10 +51,11 @@ import { getLogger } from "../../lib/log.ts";
 import { pathsExistAsync, statResultAsync } from "../../lib/fs.ts";
 import { canonicalPathAsync } from "../../lib/paths.ts";
 import { str256, type Str256 } from "../../lib/types.ts";
-import { addInputs, applyInputsDiff, createAnalysis, removeInput, renameAnalysisAndMoveWorkspace } from "../../modules/analysis/analysis.ts";
+import { addInputs, applyInputsDiff, createAnalysis, findAnalysis, removeInput, renameAnalysisAndMoveWorkspace } from "../../modules/analysis/analysis.ts";
 import { describeContext, resolveContext, type ResolvedContext } from "../../modules/analysis/context.ts";
 import { inputAbsolutePaths, matchInputRefs } from "../../modules/analysis/input.ts";
-import { defaultOutputSubdir, disposeWorkspace, locateExistingOutputDir, locateOrEnsureOutputDir, resolveOutputDir } from "../../modules/analysis/output.ts";
+import { defaultOutputSubdir, disposeWorkspace, locateExistingOutputDir, locateOrEnsureOutputDir, resolveOutputDir, workspaceDataDir } from "../../modules/analysis/output.ts";
+import { probeHardlinks } from "../../modules/staging/staging.ts";
 import { recoverAnchors, resolveAnchor } from "../../modules/anchor/anchor.ts";
 import { fileKindOf } from "../../modules/fs/file_kind.ts";
 import { analysisPurgeFor } from "../../modules/harness/purge.ts";
@@ -196,6 +199,8 @@ const patchBody = z.object({
 
 const addPathsBody = z.object({ paths: z.array(absolutePath) });
 
+const linkProbeBody = z.object({ folder: absolutePath, paths: z.array(absolutePath) });
+
 /** A removal also matches the stored, anchor-relative `path` of an input, thus an input whose folder is gone stays removable. */
 const removePathsBody = z.object({ paths: z.array(z.string().min(1)) });
 
@@ -235,6 +240,15 @@ export function analysisCollectionRoutes<R extends PoolRuntime>(boot: ServerBoot
             (view) => c.json(view),
             (e) => internalError(c, e, "resolve the context"),
         );
+    });
+
+    // Before a create with inputs: will staging copy them? The workspace of the new analysis will be under
+    // `<folder>/.inflexa/analyses`, and the probe links into the nearest folder of that path that exists.
+    routes.post("/link-probe", async (c) => {
+        const body = await readBody(c, linkProbeBody);
+        if (body.isErr()) return body.error;
+        const copyWarning = await probeHardlinks(body.value.paths, join(body.value.folder, ".inflexa", "analyses"));
+        return c.json({ copyWarning } satisfies LinkProbeResult);
     });
 
     routes.get("/", async (c) => {
@@ -301,8 +315,9 @@ export function analysisCollectionRoutes<R extends PoolRuntime>(boot: ServerBoot
                 ? apiError(c, "validation_error", e.message, { fieldErrors: { folder: [e.message] } })
                 : internalError(c, e, "create an analysis");
         }
+        const copyWarning = await copyWarningOf(created.value.id, inputs);
         return (await analysisDetail(created.value, null, DEFAULT_ANALYSIS_ROUTE_OPTS, { touch: false })).match(
-            (detail) => c.json(detail, 201),
+            (detail) => c.json({ ...detail, ...copyWarning } satisfies CreateAnalysisResponse, 201),
             (e) => internalError(c, e, "read the new analysis"),
         );
     });
@@ -521,7 +536,15 @@ export function analysisRoutes<R extends PoolRuntime>(boot: ServerBoot<R>, opts:
         // Each path is absolute, thus the folder that `addInputs` resolves a relative path against is never read.
         const added = await addInputs(analysisId, body.value.paths, "/");
         if (added.isErr()) return internalError(c, added.error, "add the inputs");
-        return c.json({ added: await inputViews(added.value), removed: [], notInputs: [] } satisfies InputsChange);
+        const copyWarning = await copyWarningOf(analysisId, body.value.paths);
+        return c.json({ added: await inputViews(added.value), removed: [], notInputs: [], ...copyWarning } satisfies InputsChange);
+    });
+
+    routes.post("/inputs/link-probe", async (c) => {
+        const body = await readBody(c, addPathsBody);
+        if (body.isErr()) return body.error;
+        const copyWarning = await copyWarningOf(c.req.param("analysisId") ?? "", body.value.paths);
+        return c.json({ copyWarning: copyWarning.copyWarning ?? null } satisfies LinkProbeResult);
     });
 
     routes.put("/inputs", async (c) => {
@@ -562,7 +585,8 @@ export function analysisRoutes<R extends PoolRuntime>(boot: ServerBoot<R>, opts:
             const already = landed.length > 0 ? ` (${landed.join("; ")})` : "";
             return apiError(c, "internal_error", `Failed to remove ${failedRemovals.map((i) => i.path).join(", ")}${already}.`);
         }
-        return c.json({ added: await inputViews(outcome.added), removed: await inputViews(outcome.removed), notInputs: [] } satisfies InputsChange);
+        const copyWarning = await copyWarningOf(analysisId, toAdd);
+        return c.json({ added: await inputViews(outcome.added), removed: await inputViews(outcome.removed), notInputs: [], ...copyWarning } satisfies InputsChange);
     });
 
     routes.post("/inputs/remove", async (c) => {
@@ -654,6 +678,21 @@ function validName(c: Context, raw: string): Result<Str256, Response> {
 }
 
 /** The 400 `validation_error` response for the paths that do not exist, or `null` when each one exists. */
+/**
+ * The copy warning of `paths` for the analysis: a real hardlink from the volume of each path into the `data/` folder
+ * of its workspace (see `probeHardlinks`). Empty when each link works, or when the analysis or its workspace does
+ * not resolve: the probe advises, and the add does not depend on it.
+ */
+async function copyWarningOf(analysisId: string, paths: readonly string[]): Promise<{ copyWarning?: string }> {
+    if (paths.length === 0) return {};
+    const analysis = findAnalysis(analysisId).unwrapOr(null);
+    if (analysis === null) return {};
+    const dataDir = await workspaceDataDir(analysis).unwrapOr(null);
+    if (dataDir === null) return {};
+    const warning = await probeHardlinks(paths, dataDir);
+    return warning === null ? {} : { copyWarning: warning };
+}
+
 async function refuseMissing(c: Context, paths: readonly string[]): Promise<Response | null> {
     const exists = await pathsExistAsync(paths, DISK_READ_WIDTH);
     const missing = paths.filter((_, i) => !exists[i]);

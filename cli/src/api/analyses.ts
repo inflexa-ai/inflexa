@@ -136,6 +136,12 @@ export type CreateAnalysisRequest = {
     inputs?: string[];
 };
 
+/** The body of a `POST /api/v1/analyses` response (201). */
+export type CreateAnalysisResponse = AnalysisDetail & {
+    /** Present when staging will copy a first input: a hardlink from its volume into the analysis folder failed. */
+    copyWarning?: string;
+};
+
 /** The body of `PATCH {A}`. A rename gives 409 `busy` while work holds the workspace folder. */
 export type UpdateAnalysisRequest = {
     name?: string;
@@ -258,4 +264,22 @@ export type InputsChange = {
     removed: InputView[];
     /** The paths of a removal that match no input. */
     notInputs: string[];
+    /** Present when staging will copy an added input: a hardlink from its volume into the analysis folder failed. */
+    copyWarning?: string;
+};
+
+/** The body of `POST /api/v1/analyses/link-probe`: the folder that will hold a new analysis, and its first inputs. */
+export type LinkProbeRequest = {
+    /** The absolute path of the folder that becomes the anchor of the analysis. */
+    folder: string;
+    /** Absolute paths of the inputs. */
+    paths: string[];
+};
+
+/**
+ * The body of `POST /api/v1/analyses/link-probe` and `POST {A}/inputs/link-probe`. `copyWarning` is present when a
+ * real hardlink from the volume of an input into the analysis folder failed, thus staging will copy its files.
+ */
+export type LinkProbeResult = {
+    copyWarning: string | null;
 };

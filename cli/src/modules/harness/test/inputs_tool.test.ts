@@ -40,7 +40,7 @@ function recordingAsk(): { fn: (r: AskRequest) => Promise<void>; calls: AskReque
 /** Run one call the way the loop runs it: the approval hook, then the decision of the user on a request, then `execute`. */
 async function runCall(
     tool: ReturnType<typeof createManageInputsTool>,
-    input: { action: "add" | "remove" | "list"; paths?: string[] },
+    input: { action: "add" | "remove" | "list"; paths?: string[]; allowCopy?: boolean },
     analysisId: string,
     approve: (request: AskRequest) => Promise<void>,
 ): ReturnType<ReturnType<typeof createManageInputsTool>["execute"]> {
@@ -119,6 +119,20 @@ describe("manage_inputs tool", () => {
         rmSync(outside, { recursive: true, force: true });
 
         expect(ask.calls.map((call) => call.command)).toEqual([`add inputs: ${join(outside, "secret.csv")}`, "add inputs: linked.csv"]);
+    });
+
+    test("an add that staging must copy returns the copy warning and adds nothing, until the agent allows the copy", async () => {
+        // A root-owned system binary refuses a hardlink on both platforms, thus staging would copy it.
+        acquireInstanceLock(inputs.analysisId);
+        const ask = recordingAsk();
+        const warned = (await runCall(inputs.tool, { action: "add", paths: ["/bin/ls"] }, inputs.analysisId, ask.fn))._unsafeUnwrap();
+
+        expect(warned.status).toBe("copy_warning");
+        if (warned.status === "copy_warning") expect(warned.warning).toContain("put the analysis folder on the same volume as the data");
+        expect(listAnalysisInputs(inputs.analysisId)._unsafeUnwrap()).toEqual([]);
+
+        const added = (await runCall(inputs.tool, { action: "add", paths: ["/bin/ls"], allowCopy: true }, inputs.analysisId, ask.fn))._unsafeUnwrap();
+        expect(added.status).toBe("added");
     });
 
     test("add rejects a non-existent path before asking or mutating", async () => {

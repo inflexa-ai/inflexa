@@ -243,7 +243,7 @@ const runningProfile: DataProfileState = {
     completedAt: null,
     result: null,
     workflowId: "wf-profile-panel",
-    seedInputFileIds: ["input-1"],
+    seedInputCount: 1,
 };
 
 const ABORT_DESC = "Abort the active run";

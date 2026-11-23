@@ -78,7 +78,7 @@ describe("inflexa profile --status", () => {
             completedAt: "2026-10-01T10:01:00.000Z",
             result: null,
             workflowId: "wf",
-            seedInputFileIds: ["f1"],
+            seedInputCount: 1,
         };
         const { opts } = serverOf({ "GET /api/v1/analyses/a1/data-profile": failed });
         await profileStatus(ANALYSIS, opts);
@@ -154,7 +154,7 @@ describe("inflexa profile", () => {
         completedAt: status === "completed" ? "2026-10-01T10:02:00.000Z" : null,
         result: null,
         workflowId: status === "pending" ? null : "wf",
-        seedInputFileIds: ["f1", "f2"],
+        seedInputCount: 2,
     });
 
     test("asks the server for the re-profile, then reads the profile until it completes", async () => {

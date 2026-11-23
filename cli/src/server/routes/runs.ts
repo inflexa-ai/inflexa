@@ -109,6 +109,7 @@ import {
     type ServerEnv,
 } from "../http.ts";
 import { profileWorkPending, serializeProfileWork } from "../profile_queue.ts";
+import { stagingProgress } from "../../modules/staging/staging.ts";
 import { readSandboxReadiness, sandboxRefusal } from "../sandbox_gate.ts";
 import { newTurnsRefused, runningTurnsByThread } from "../turns.ts";
 import { workspaceRoot } from "./conversation.ts";
@@ -588,7 +589,10 @@ async function queuedDrive(analysisId: string, drive: () => Promise<ProfileParit
  */
 function loadProfileView(pool: Querier, analysisId: string, opts: RunReads): ResultAsync<DataProfileView, DbError> {
     return opts.loadProfile(pool, analysisId).map((row): DataProfileView => {
-        const work = profileWorkPending(analysisId) ? { workPending: true as const } : {};
+        const work: Pick<DataProfileView, "workPending" | "staging"> = {};
+        if (profileWorkPending(analysisId)) work.workPending = true;
+        const staging = stagingProgress(analysisId);
+        if (staging !== null) work.staging = staging;
         if (row === null) {
             noteDataProfileState(analysisId, false);
             return { status: null, ...work };
@@ -602,7 +606,7 @@ function loadProfileView(pool: Querier, analysisId: string, opts: RunReads): Res
             completedAt: row.completedAt,
             result: row.result,
             workflowId: row.workflowId,
-            seedInputFileIds: row.seedInputFileIds,
+            seedInputCount: row.seedInputCount,
             usage: usage ?? undefined,
             ...work,
         };

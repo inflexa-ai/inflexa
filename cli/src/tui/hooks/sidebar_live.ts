@@ -4,7 +4,7 @@ import type { DataProfileGroup, DataProfilePartition, DataProfileResult } from "
 import { profileCaveats, profileDimensions, type ProfileDimensionView } from "@inflexa-ai/harness/app/data-profile-view";
 
 import type { PausedWork } from "../../api/paused_work.ts";
-import type { DataProfileState, DataProfileView, RunDetail, RunList, RunStatus, RunSummary, StepExecutionStatus } from "../../api/runs.ts";
+import type { DataProfileState, DataProfileView, RunDetail, RunList, RunStatus, RunSummary, StagingProgress, StepExecutionStatus } from "../../api/runs.ts";
 import type { UsageTotals } from "../../api/usage.ts";
 import type { ClientError } from "../../client/api.ts";
 import { fetchDataProfile, fetchRun, fetchRuns } from "../../client/runs.ts";
@@ -44,12 +44,16 @@ export type ProfileSnapshot =
           kind: "absent";
           /** Profile work that the server holds and the row does not show yet. It keeps the poll armed, and no surface renders it. */
           workPending?: true;
+          /** The staging pass that runs, which the DATA PROFILE line shows in place of the row. */
+          staging?: StagingProgress;
       }
     | {
           kind: "loaded";
           profile: DataProfileState;
           /** Profile work that the server holds and the row does not show yet. It keeps the poll armed, and no surface renders it. */
           workPending?: true;
+          /** The staging pass that runs, which the DATA PROFILE line shows in place of the row. */
+          staging?: StagingProgress;
           /**
            * What the profile's own calls consumed, from the local token ledger of the server.
            *
@@ -400,9 +404,9 @@ export function profileDetailLines(snap: ProfileSnapshot, paused?: PausedWork): 
                     if (caveats.length > CAVEAT_LINE_CAP) lines.push(`  ${GLYPHS.ellipsis} and ${caveats.length - CAVEAT_LINE_CAP} more`);
                 }
             }
-            // `seedInputFileIds` is the desired-parity set; fall back to the count the profile itself
-            // covered when the seed set was not recorded (older rows) — the input signature — else 0.
-            const seedCount = p.seedInputFileIds?.length ?? p.result?.inputSignature?.count ?? 0;
+            // `seedInputCount` counts the desired-parity set; fall back to the count the profile itself
+            // covered when the seed was not recorded — the input signature — else 0.
+            const seedCount = p.seedInputCount ?? p.result?.inputSignature?.count ?? 0;
             lines.push("");
             lines.push(`${seedCount} seed input${seedCount === 1 ? "" : "s"}`);
             return lines;
@@ -708,14 +712,16 @@ export async function refreshSidebarData(analysisId: string, opts: RefreshOpts =
 
     profileRes.match(
         (view) => {
-            const work = view.workPending === true ? { workPending: true as const } : {};
+            const work: Pick<DataProfileView, "workPending" | "staging"> = {};
+            if (view.workPending === true) work.workPending = true;
+            if (view.staging !== undefined) work.staging = view.staging;
             if (view.status === null) {
                 setProfile({ kind: "absent", ...work });
                 return;
             }
             // The figure rides beside the row, never inside it: the row is the ledger truth, the figure a
             // decoration that an absent read leaves off.
-            const { usage, workPending: _workPending, ...profile } = view;
+            const { usage, workPending: _workPending, staging: _staging, ...profile } = view;
             setProfile(usage === undefined ? { kind: "loaded", profile, ...work } : { kind: "loaded", profile, usage, ...work });
         },
         () => setProfile({ kind: "unavailable" }),

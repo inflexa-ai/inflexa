@@ -14,11 +14,12 @@ import {
     forceReprofile,
     reprofileForInputChange,
     seedProfileLedger,
+    summarizeStagedInputs,
     type ProfileParitySeams,
     type ProfileRuntime,
 } from "../profile_trigger.ts";
 import { __resetGaugeForTest } from "../agent_switch.ts";
-import { type StagedInput } from "../../staging/staging.ts";
+import { type InputEnumeration, type StagedInput } from "../../staging/staging.ts";
 import { asStr256 } from "../../../lib/types.ts";
 import { buildAnalysis } from "../../../test_support/builders.ts";
 import { fakePool, type FakeQuery } from "../../../test_support/fake_pool.ts";
@@ -39,13 +40,13 @@ const ANALYSIS = buildAnalysis({ id: "a1", name: asStr256("My analysis") });
 
 /** A staged manifest with two files, used for the (re-)trigger paths. */
 const STAGED: StagedInput[] = [
-    { fileId: "f1", mountName: "local", key: "a.csv", fileName: "a.csv", hash: "h1", size: 1, mtimeMs: 1000, relativePath: "inputs/local/a.csv" },
-    { fileId: "f2", mountName: "local", key: "b.csv", fileName: "b.csv", hash: "h2", size: 2, mtimeMs: 2000, relativePath: "inputs/local/b.csv" },
+    { fileId: "f1", mountName: "local", key: "a.csv", fileName: "a.csv", size: 1, mtimeMs: 1000, relativePath: "inputs/local/a.csv" },
+    { fileId: "f2", mountName: "local", key: "b.csv", fileName: "b.csv", size: 2, mtimeMs: 2000, relativePath: "inputs/local/b.csv" },
 ];
 
 /** A `DataProfileStatus` at the given lifecycle state with a null `result` (the drift-triggering shape). */
 function statusOf(status: DataProfileStatus["status"]): DataProfileStatus {
-    return { status, error: null, startedAt: null, completedAt: null, result: null, workflowId: null, seedInputFileIds: null };
+    return { status, error: null, startedAt: null, completedAt: null, result: null, workflowId: null, seedInputCount: null };
 }
 
 /**
@@ -57,9 +58,14 @@ function file(fileId: string, size = 10, mtimeMs = 1000): SignableInput {
     return { fileId, size, mtimeMs };
 }
 
-/** The path set a fresh enumerate would return for `files` — the ladder's "are there inputs" gate. */
-function enumerated(files: SignableInput[]): ReadonlySet<string> {
-    return new Set(files.map((f) => `inputs/local/${f.fileId}`));
+/** The enumeration of `paths`: no source is unreachable unless the test says so. */
+function found(paths: Iterable<string>, unreachable = 0, warnings: readonly string[] = []): InputEnumeration {
+    return { paths: new Set(paths), warnings, unreachable };
+}
+
+/** The enumeration a fresh enumerate would return for `files` — the ladder's "are there inputs" gate. */
+function enumerated(files: SignableInput[]): InputEnumeration {
+    return found(files.map((f) => `inputs/local/${f.fileId}`));
 }
 
 /** A `completed` status of the pre-signature era — a result carrying no drift comparand. */
@@ -71,7 +77,7 @@ function completedWith(): DataProfileStatus {
         completedAt: null,
         result: { summary: "s", files: [], profiledAt: "2026-01-01T00:00:00Z" },
         workflowId: null,
-        seedInputFileIds: null,
+        seedInputCount: null,
     };
 }
 
@@ -84,7 +90,7 @@ function completedWithSignature(files: SignableInput[]): DataProfileStatus {
         completedAt: null,
         result: { summary: "s", files: [], inputSignature: computeInputSignature(files), profiledAt: "2026-01-01T00:00:00Z" },
         workflowId: null,
-        seedInputFileIds: null,
+        seedInputCount: null,
     };
 }
 
@@ -106,7 +112,7 @@ function trackingSeams(over: Partial<ProfileParitySeams>): { seams: ProfileParit
         // Default: no orphaned row (the common case) — `false` = nothing reset.
         reconcile: () => okAsync(false),
         // Default: a non-empty set equal to STAGED's file ids — the common (re-)trigger left-hand side.
-        enumerate: () => okAsync(new Set(["f1", "f2"])),
+        enumerate: () => okAsync(found(["f1", "f2"])),
         loadStatus: () => okAsync(null),
         clear: () => okAsync(true),
         // A fixed workspace data dir — no real anchor exists offline, and the fake `stage` ignores it.
@@ -116,11 +122,11 @@ function trackingSeams(over: Partial<ProfileParitySeams>): { seams: ProfileParit
         materialized: () => okAsync(false),
         stage: () => {
             ran.stage = true;
-            return Promise.resolve(ok(STAGED));
+            return Promise.resolve(ok({ staged: STAGED, warnings: [] }));
         },
         seed: () => {
             ran.seed = true;
-            return okAsync({ auth: makeLocalAuth(), analysisId: ANALYSIS.id, stagedInputs: STAGED });
+            return okAsync({ auth: makeLocalAuth(), analysisId: ANALYSIS.id, inputSummary: summarizeStagedInputs(STAGED) });
         },
         trigger: () => {
             ran.trigger = true;
@@ -135,7 +141,7 @@ function trackingSeams(over: Partial<ProfileParitySeams>): { seams: ProfileParit
 
 describe("ensureProfileAtParity — empty input set", () => {
     test("a settled profile over an emptied input set is cleared", async () => {
-        const { seams, ran } = trackingSeams({ enumerate: () => okAsync(new Set<string>()), loadStatus: () => okAsync(completedWith()) });
+        const { seams, ran } = trackingSeams({ enumerate: () => okAsync(found([])), loadStatus: () => okAsync(completedWith()) });
         const outcome = await ensureProfileAtParity(stubRuntime, ANALYSIS, seams);
         expect(outcome).toEqual({ kind: "cleared", materialized: false });
         expect(ran).toEqual({ stage: false, seed: false, trigger: false });
@@ -143,7 +149,7 @@ describe("ensureProfileAtParity — empty input set", () => {
 
     test("a clear skipped by the running guard (raced a live run) is already_running", async () => {
         const { seams } = trackingSeams({
-            enumerate: () => okAsync(new Set<string>()),
+            enumerate: () => okAsync(found([])),
             loadStatus: () => okAsync(completedWith()),
             clear: () => okAsync(false),
         });
@@ -152,7 +158,7 @@ describe("ensureProfileAtParity — empty input set", () => {
 
     test("a clear fault is failed", async () => {
         const { seams } = trackingSeams({
-            enumerate: () => okAsync(new Set<string>()),
+            enumerate: () => okAsync(found([])),
             loadStatus: () => okAsync(completedWith()),
             clear: () => errAsync({ type: "query_failed", op: "clearDataProfile", cause: new Error("db down") }),
         });
@@ -162,7 +168,7 @@ describe("ensureProfileAtParity — empty input set", () => {
     test("an emptied set that was never profiled is no_inputs (no clear)", async () => {
         let clearCalled = false;
         const { seams } = trackingSeams({
-            enumerate: () => okAsync(new Set<string>()),
+            enumerate: () => okAsync(found([])),
             loadStatus: () => okAsync(null),
             clear: () => {
                 clearCalled = true;
@@ -176,7 +182,7 @@ describe("ensureProfileAtParity — empty input set", () => {
     test("an emptied set never clears while a profile runs — already_running (no clear)", async () => {
         let clearCalled = false;
         const { seams } = trackingSeams({
-            enumerate: () => okAsync(new Set<string>()),
+            enumerate: () => okAsync(found([])),
             loadStatus: () => okAsync(statusOf("running")),
             clear: () => {
                 clearCalled = true;
@@ -185,6 +191,38 @@ describe("ensureProfileAtParity — empty input set", () => {
         });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", materialized: false });
         expect(clearCalled).toBe(false);
+    });
+});
+
+describe("a source that is not reachable now", () => {
+    test("an input set that is empty only because a source is unreachable keeps its profile", async () => {
+        let clearCalled = false;
+        const { seams } = trackingSeams({
+            enumerate: () => okAsync(found([], 1, ["/Volumes/lab is not reachable now; its staged files stay"])),
+            loadStatus: () => okAsync(completedWith()),
+            clear: () => {
+                clearCalled = true;
+                return okAsync(true);
+            },
+        });
+        expect(await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).toEqual({
+            kind: "no_inputs",
+            materialized: false,
+            warnings: ["/Volumes/lab is not reachable now; its staged files stay"],
+        });
+        expect(clearCalled).toBe(false);
+    });
+
+    test("the warnings of staging ride on the outcome of the drive", async () => {
+        const { seams } = trackingSeams({
+            stage: () => Promise.resolve(ok({ staged: STAGED, warnings: ["could not read /data/locked.csv; staging skipped it"] })),
+        });
+        expect(await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).toEqual({
+            kind: "triggered",
+            restarted: false,
+            materialized: true,
+            warnings: ["could not read /data/locked.csv; staging skipped it"],
+        });
     });
 });
 
@@ -249,7 +287,7 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
         // reports the materialization STATE the check finished in — the predicate just confirmed the
         // files are on disk — never whether this drive did the writing.
         const { seams, ran } = trackingSeams({
-            enumerate: () => okAsync(new Set(["f1", "f2"])),
+            enumerate: () => okAsync(found(["f1", "f2"])),
             loadStatus: () => okAsync(statusOf("failed")),
             materialized: () => okAsync(true),
         });
@@ -265,7 +303,7 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
         let claimed = false;
         let ranRun = false;
         const { seams, ran } = trackingSeams({
-            enumerate: () => okAsync(new Set(["f1", "f2", "f3"])),
+            enumerate: () => okAsync(found(["f1", "f2", "f3"])),
             loadStatus: () => okAsync(statusOf("failed")),
             materialized: () => okAsync(false),
             retryClaim: () => {
@@ -335,13 +373,13 @@ describe("ensureProfileAtParity — a completed row on a chat open", () => {
     });
 
     test("a pending / never-profiled analysis triggers (not restarted)", async () => {
-        const { seams, ran } = trackingSeams({ enumerate: () => okAsync(new Set(["f1", "f2"])), loadStatus: () => okAsync(null) });
+        const { seams, ran } = trackingSeams({ enumerate: () => okAsync(found(["f1", "f2"])), loadStatus: () => okAsync(null) });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "triggered", restarted: false, materialized: true });
         expect(ran.stage).toBe(true);
     });
 
     test("a running profile skips without staging", async () => {
-        const { seams, ran } = trackingSeams({ enumerate: () => okAsync(new Set(["f1", "f2"])), loadStatus: () => okAsync(statusOf("running")) });
+        const { seams, ran } = trackingSeams({ enumerate: () => okAsync(found(["f1", "f2"])), loadStatus: () => okAsync(statusOf("running")) });
         expect(await ensureProfileAtParity(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "already_running", materialized: false });
         expect(ran.stage).toBe(false);
     });
@@ -392,7 +430,7 @@ describe("reprofileForInputChange", () => {
 
     test("an emptied input set clears the profile rather than re-profiling nothing", async () => {
         const { seams, ran } = trackingSeams({
-            enumerate: () => okAsync(new Set<string>()),
+            enumerate: () => okAsync(found([])),
             loadStatus: () => okAsync(completedWith()),
         });
         expect(await reprofileForInputChange(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "cleared", materialized: false });
@@ -480,12 +518,12 @@ describe("ensureProfileAtParity — trigger path (real seed)", () => {
         };
         const seams: ProfileParitySeams = {
             reconcile: () => okAsync(false),
-            enumerate: () => okAsync(new Set(["f1", "f2"])),
+            enumerate: () => okAsync(found(["f1", "f2"])),
             loadStatus: () => okAsync(null),
             clear: () => okAsync(true),
             dataDir: () => okAsync("/tmp/parity-data"),
             materialized: () => okAsync(false),
-            stage: () => Promise.resolve(ok(STAGED)),
+            stage: () => Promise.resolve(ok({ staged: STAGED, warnings: [] })),
             // The real shared core — this is the whole point of the assertion below.
             seed: seedProfileLedger,
             trigger: (_deps, params) => {
@@ -500,14 +538,14 @@ describe("ensureProfileAtParity — trigger path (real seed)", () => {
 
         expect(outcome).toEqual({ kind: "triggered", restarted: false, materialized: true });
         expect(capturedParams).toBeDefined();
-        // The params profile.ts builds: local auth, the cli analysis id, the manifest verbatim.
+        // The params profile.ts builds: local auth, the cli analysis id, and the summary of the manifest.
         expect(present(capturedParams).analysisId).toBe(ANALYSIS.id);
-        expect(present(capturedParams).stagedInputs).toBe(STAGED);
+        expect(present(capturedParams).inputSummary).toEqual({ count: 2, totalBytes: 3, signature: computeInputSignature(STAGED) });
         expect(present(capturedParams).auth).toEqual(makeLocalAuth());
-        // The seed upserted with exactly the staged file ids (the ledger contract's inputFileIds).
+        // The seed upserted the count of the staged set, not one id for each file.
         const seedQuery = queries.find((q) => q.text.includes("cortex_analysis_state"));
         expect(seedQuery).toBeDefined();
-        expect(present(seedQuery).values).toContain(JSON.stringify(["f1", "f2"]));
+        expect(present(seedQuery).values).toContain(2);
     });
 });
 
@@ -539,7 +577,7 @@ describe("ensureProfileAtParity — orphaned-profile reconcile (S2)", () => {
 describe("forceReprofile", () => {
     test("a completed profile at parity still re-profiles (force ignores the drift gate)", async () => {
         const { seams, ran } = trackingSeams({
-            enumerate: () => okAsync(new Set(["f1", "f2"])),
+            enumerate: () => okAsync(found(["f1", "f2"])),
             loadStatus: () => okAsync(completedWith()),
             trigger: () => okAsync("restarted"),
         });
@@ -564,7 +602,7 @@ describe("forceReprofile", () => {
     });
 
     test("an empty input set is no_inputs — nothing staged", async () => {
-        const { seams, ran } = trackingSeams({ enumerate: () => okAsync(new Set<string>()) });
+        const { seams, ran } = trackingSeams({ enumerate: () => okAsync(found([])) });
         expect(await forceReprofile(stubRuntime, ANALYSIS, seams)).toEqual({ kind: "no_inputs", materialized: false });
         expect(ran.stage).toBe(false);
     });

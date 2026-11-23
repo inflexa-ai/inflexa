@@ -62,7 +62,7 @@ function profileRow(over: Partial<DataProfileState> = {}): DataProfileState {
         completedAt: null,
         result: null,
         workflowId: PROFILE_WORKFLOW_ID,
-        seedInputFileIds: ["input-1"],
+        seedInputCount: 1,
         ...over,
     };
 }

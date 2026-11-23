@@ -6,6 +6,7 @@ import { errAsync, okAsync, ResultAsync, type Result } from "neverthrow";
 import type { BuiltinProvFormat } from "@inflexa-ai/tsprov";
 import type { VerifyResult } from "../types/prov.ts";
 
+import { ConfirmDialog } from "./components/dialog/confirm_dialog.tsx";
 import { PromptDialog } from "./components/dialog/prompt_dialog.tsx";
 import { ResultsDialog } from "./components/dialog/results_dialog.tsx";
 import { SelectDialog } from "./components/dialog/select_dialog.tsx";
@@ -61,6 +62,8 @@ import {
     fetchAnalyses,
     fetchAnalysis,
     fetchInputs,
+    probeInputs,
+    probeNewAnalysisInputs,
     removeInputs,
     replaceInputs,
     resolveAnalysisContext,
@@ -745,6 +748,30 @@ function NewAnalysisDialog(): JSX.Element {
     );
 }
 
+/**
+ * Run `proceed` at once when `copyWarning` is `null`. Otherwise ask first: staging will copy the inputs, which for a
+ * large data set takes long and doubles the disk use, and the user can still move the analysis folder instead. A
+ * probe that failed proceeds without a question, because the probe only advises.
+ */
+function confirmCopy(ws: Workspace, copyWarning: string | null, proceed: () => void): void {
+    if (copyWarning === null) {
+        proceed();
+        return;
+    }
+    ws.openDialog(() => (
+        <ConfirmDialog
+            title="Staging will copy the inputs"
+            message={`${copyWarning} Continue?`}
+            confirmLabel="continue"
+            onCancel={() => ws.closeDialog()}
+            onConfirm={() => {
+                ws.closeDialog();
+                proceed();
+            }}
+        />
+    ));
+}
+
 function NewAnalysisInputsDialog(props: { name: Str256 }): JSX.Element {
     const ws = useWorkspace();
     return (
@@ -760,12 +787,20 @@ function NewAnalysisInputsDialog(props: { name: Str256 }): JSX.Element {
                 // exactly the files the user chose — the server enrolls nothing on its own.
                 // Awaited off the handler: the creation makes the farm, and a farm
                 // failure surfaces its own message here.
-                void createAnalysis({ name: props.name, folder: ws.workingDir, inputs: paths }).match(
-                    (a) => {
-                        void openAnalysis(ws, toAnalysis(a));
-                        notify({ kind: "info", text: `Created analysis "${a.name}"` });
-                    },
-                    (e) => notify({ kind: "error", text: clientErrorText(e) }),
+                const name = props.name;
+                const folder = ws.workingDir;
+                const create = (): void => {
+                    void createAnalysis({ name, folder, inputs: paths }).match(
+                        (a) => {
+                            void openAnalysis(ws, toAnalysis(a));
+                            notify({ kind: "info", text: `Created analysis "${a.name}"` });
+                        },
+                        (e) => notify({ kind: "error", text: clientErrorText(e) }),
+                    );
+                };
+                void probeNewAnalysisInputs({ folder, paths }).match(
+                    (probe) => confirmCopy(ws, probe.copyWarning, create),
+                    () => create(),
                 );
             }}
             onCancel={() => ws.closeDialog()}
@@ -1823,15 +1858,26 @@ function AddInputDialog(props: { inputs: InputView[] }): JSX.Element {
                 // The picker's final set replaces the inputs: the server adds the paths the user picked and
                 // removes the recorded inputs whose rows came back unchecked. Clearing everything is a
                 // legitimate outcome here (unlike new-analysis).
-                void replaceInputs(a.id, paths).match(
-                    (change) => {
-                        if (change.added.length === 0 && change.removed.length === 0) notify({ kind: "info", text: "Inputs unchanged" });
-                        else notify({ kind: "info", text: `Inputs updated: +${change.added.length} -${change.removed.length}` });
-                        ws.refreshScope();
-                        // The server re-profiles the new set, and the read arms the poll of the sidebar until the row shows it.
-                        void refreshSidebarData(a.id);
-                    },
-                    (e) => notify({ kind: "error", text: `Input update failed (${clientErrorText(e)})` }),
+                const apply = (): void => {
+                    void replaceInputs(a.id, paths).match(
+                        (change) => {
+                            if (change.added.length === 0 && change.removed.length === 0) notify({ kind: "info", text: "Inputs unchanged" });
+                            else notify({ kind: "info", text: `Inputs updated: +${change.added.length} -${change.removed.length}` });
+                            ws.refreshScope();
+                            // The server re-profiles the new set, and the read arms the poll of the sidebar until the row shows it.
+                            void refreshSidebarData(a.id);
+                        },
+                        (e) => notify({ kind: "error", text: `Input update failed (${clientErrorText(e)})` }),
+                    );
+                };
+                const added = paths.filter((path) => !seed.has(path));
+                if (added.length === 0) {
+                    apply();
+                    return;
+                }
+                void probeInputs(a.id, added).match(
+                    (probe) => confirmCopy(ws, probe.copyWarning, apply),
+                    () => apply(),
                 );
             }}
             onCancel={() => ws.closeDialog()}

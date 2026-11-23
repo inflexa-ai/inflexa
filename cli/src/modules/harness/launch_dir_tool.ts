@@ -8,9 +8,9 @@
  * (`{anchor}/.inflexa/analyses/<slug>/`); the launch folder is its parent and
  * resolves out of scope there. Listing it is a host concept — the harness has no
  * notion of a launch directory — so the CLI injects this tool through the
- * `hostTools` seam. It reuses the staging walk's noise-directory exclusions
- * ({@link IGNORED_WALK_DIRS}) so `.git`/`.inflexa`/tooling noise is never
- * enumerated, and it writes nothing.
+ * `hostTools` seam. It reuses the staging walk's filter
+ * ({@link STAGING_WALK_FILTER}) so `.git`/`.inflexa`/tooling noise and quarantined
+ * junk are never enumerated, and it writes nothing.
  */
 
 import { join, sep } from "node:path";
@@ -24,7 +24,7 @@ import { listAnalysisInputs } from "../../db/primary_query.ts";
 import { resolveAnchor, resolvedPathOrCached } from "../anchor/anchor.ts";
 import { findAnalysis } from "../analysis/analysis.ts";
 import { resolveInputPath } from "../analysis/input.ts";
-import { IGNORED_WALK_DIRS, walkFiles } from "../staging/staging.ts";
+import { STAGING_WALK_FILTER, walkFiles } from "../staging/staging.ts";
 import { statResultAsync } from "../../lib/fs.ts";
 
 /** How many `stat` calls the listing keeps in flight for the sizes. A large launch folder must not fill the thread pool of the server. */
@@ -105,13 +105,13 @@ export function createLaunchDirTool(): Tool<Record<string, never>, LaunchDirResu
             const folder = await resolveAnchor(found.value.anchorId).map(resolvedPathOrCached).unwrapOr(null);
             if (folder === null) return ok({ status: "no_anchor" as const });
 
-            const walked = await walkFiles(folder, IGNORED_WALK_DIRS);
-            if (walked.isErr()) return ok({ status: "error" as const, message: `could not read the launch folder: ${walked.error.op}` });
+            const walked = await walkFiles(folder, STAGING_WALK_FILTER);
+            if (walked.skipped.includes("")) return ok({ status: "error" as const, message: "could not read the launch folder" });
 
             const index = await registrationIndex(analysisId);
             const queue = new PQueue({ concurrency: SIZE_STAT_WIDTH });
             const entries: LaunchDirEntry[] = await Promise.all(
-                walked.value.map((rel) =>
+                walked.files.map((rel) =>
                     queue.add(async (): Promise<LaunchDirEntry> => {
                         const abs = join(folder, rel);
                         const size = await statResultAsync(abs, "list_launch_dir:size")

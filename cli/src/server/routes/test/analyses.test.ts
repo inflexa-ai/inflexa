@@ -835,6 +835,27 @@ describe("the inputs of an analysis", () => {
         expect((await errorBody(missing)).details).toEqual({ missing: [join(dir, "gone.csv")] });
     });
 
+    test("the link probe of an analysis warns for a source that refuses a hardlink, and an add names the same warning", async () => {
+        const dir = tmp();
+        const a = await seedAnalysis(dir);
+        writeFileSync(join(dir, "near.csv"), "n");
+        const app = appWith(idleBoot());
+        const probe = z.object({ copyWarning: z.string().nullable() });
+
+        const near = probe.parse(await jsonBody(app.request(`/api/v1/analyses/${a.id}/inputs/link-probe`, json("POST", { paths: [join(dir, "near.csv")] }))));
+        expect(near.copyWarning).toBeNull();
+        // A root-owned system binary refuses a hardlink on both platforms, thus staging would copy it.
+        const far = probe.parse(await jsonBody(app.request(`/api/v1/analyses/${a.id}/inputs/link-probe`, json("POST", { paths: ["/bin/ls"] }))));
+        expect(far.copyWarning).toContain("put the analysis folder on the same volume as the data");
+        const fresh = probe.parse(await jsonBody(app.request("/api/v1/analyses/link-probe", json("POST", { folder: dir, paths: ["/bin/ls"] }))));
+        expect(fresh.copyWarning).toContain("Staging will copy /bin/ls");
+
+        const added = z
+            .looseObject({ copyWarning: z.string().optional() })
+            .parse(await jsonBody(app.request(`/api/v1/analyses/${a.id}/inputs`, json("POST", { paths: ["/bin/ls"] }))));
+        expect(added.copyWarning).toBe(far.copyWarning ?? "");
+    });
+
     test("GET gives the size and the kind of a file, a file with no mapped extension, a folder, and a missing path", async () => {
         const dir = tmp();
         const a = await seedAnalysis(dir);
