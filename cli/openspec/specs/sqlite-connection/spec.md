@@ -23,15 +23,29 @@ The system SHALL open a SQLite database connection lazily on first access and re
 - **THEN** the system retries initialization and returns `ok(database)` on success
 
 ### Requirement: Database path configuration
-The system MUST use `inflexa/agent.db` under the data directory as the database path. `src/lib/env.ts` reads the data directory from `XDG_DATA_HOME`, or from `LOCALAPPDATA` on Windows. When that variable is not set, the data directory is `~/.local/share`, or `~/AppData/Local` on Windows. No variable overrides the database path alone. The system MUST make the parent directory if it does not exist.
+The system MUST use `agent.db` in the data root as the database path. `src/lib/env.ts` resolves the data root one time, at import, from these sources, in this order:
+
+1. The `INFLEXA_DATA_DIR` variable.
+2. The `dataDir` key of the config file.
+3. `inflexa` under the data home of the platform. The data home is `XDG_DATA_HOME`, or `LOCALAPPDATA` on Windows. When that variable is not set, the data home is `~/.local/share`, or `~/AppData/Local` on Windows.
+
+The value of `INFLEXA_DATA_DIR` and of `dataDir` is the data root itself, not a base directory. The system MUST ignore an empty value and a relative value, and then use the next source. No variable overrides the database path alone. The system MUST make the parent directory if it does not exist.
 
 #### Scenario: Default path
-- **WHEN** `XDG_DATA_HOME` is not set on Linux or macOS
+- **WHEN** `XDG_DATA_HOME`, `INFLEXA_DATA_DIR`, and `dataDir` are not set on Linux or macOS
 - **THEN** the system opens the database at `~/.local/share/inflexa/agent.db`
 
 #### Scenario: Data directory from the environment
 - **WHEN** `XDG_DATA_HOME` is set to `/tmp/data`
 - **THEN** the system opens the database at `/tmp/data/inflexa/agent.db`
+
+#### Scenario: Data root from the variable
+- **WHEN** `INFLEXA_DATA_DIR` is set to `/scratch/u/inflexa`, and the config file sets `dataDir` to `/data/u/inflexa`
+- **THEN** the system opens the database at `/scratch/u/inflexa/agent.db`
+
+#### Scenario: Data root from the config file
+- **WHEN** `INFLEXA_DATA_DIR` is not set, and the config file sets `dataDir` to `/data/u/inflexa`
+- **THEN** the system opens the database at `/data/u/inflexa/agent.db`
 
 #### Scenario: Parent directory creation
 - **WHEN** the database path's parent directory does not exist

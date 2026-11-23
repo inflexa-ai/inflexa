@@ -38,7 +38,7 @@ The build MUST refuse a specifier that does not resolve, thus a binary that miss
 
 ### Requirement: First run materializes bundled content under the data directory
 
-On a release-build boot, before the skills pre-flight existence gate, the system SHALL ensure the embedded archive is extracted to `join(env.contentDir, <contentHash>, {"skills","assets"})` — where `env.contentDir` is `join(dataDir(), "inflexa", "content")`, a peer of `refs/` and `models/` — and SHALL resolve `skillsDir` to that directory when no config override is set. Extraction SHALL be atomic (extract into a temporary sibling directory, then `rename` onto the hash-named directory) and idempotent (an already-present hash directory is reused without re-extracting).
+On a release-build boot, before the skills pre-flight existence gate, the system SHALL ensure the embedded archive is extracted to `join(env.contentDir, <contentHash>, {"skills","assets"})` — where `env.contentDir` is `content` in the data root, a peer of `refs/` and `models/` — and SHALL resolve `skillsDir` to that directory when no config override is set. Extraction SHALL be atomic (extract into a temporary sibling directory, then `rename` onto the hash-named directory) and idempotent (an already-present hash directory is reused without re-extracting).
 
 The materialization MUST give back the assets directory beside the skills tree. The warm-path check MUST cover each of the two, thus a hash directory that holds one of them is not reused as complete.
 

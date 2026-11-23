@@ -28,7 +28,14 @@ import { runEvery } from "../../../lib/timer.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import type { TransferRow } from "../../../types/store.ts";
-import { downloadPackageStore, inspectStoreContent, runCatalogTransfer, storeDownloadPaths, type StoreDownloadOutcome } from "../store_download.ts";
+import {
+    describeTransferFailure,
+    downloadPackageStore,
+    inspectStoreContent,
+    runCatalogTransfer,
+    storeDownloadPaths,
+    type StoreDownloadOutcome,
+} from "../store_download.ts";
 import { transferLockKey } from "../transfers.ts";
 import { present } from "../../../lib/present.ts";
 import { parsedJson } from "../../../test_support/json.ts";
@@ -485,6 +492,33 @@ describe("the tolerant readers of a registry answer", () => {
             expect(await inspectStoreContent(storeRoot)).toBe("invalid_receipt");
             expect(existsSync(join(storeRoot, "store", ALPHA))).toBe(true);
         });
+    });
+});
+
+describe("describeTransferFailure", () => {
+    /** A download failure whose cause wraps an errno `code` one level down, as a stream error does. */
+    function failure(code: string): { type: "download_failed"; message: string; cause: unknown } {
+        return {
+            type: "download_failed",
+            message: "The blob GET failed.",
+            cause: new Error("write failed", { cause: Object.assign(new Error(code), { code }) }),
+        };
+    }
+
+    test("a full disk names the space that the transfer still needs", async () => {
+        const message = await describeTransferFailure(failure("ENOSPC"), tmpdir(), 2 * 1024 ** 3);
+        expect(message).toStartWith("The disk ran out while the package store downloaded. The transfer needs 2.0 GiB more");
+    });
+
+    test("a full quota is a full disk, and the message names the quota and the data root variable", async () => {
+        const message = await describeTransferFailure(failure("EDQUOT"), "/home/u/inflexa/package-store", 2 * 1024 ** 3);
+        expect(message).toBe(
+            "The disk quota ran out while the package store downloaded. The transfer needs 2.0 GiB more under /home/u/inflexa/package-store. Free that much of the quota, or set INFLEXA_DATA_DIR to a local disk, then run `inflexa store download`.",
+        );
+    });
+
+    test("a different fault keeps its own message", async () => {
+        expect(await describeTransferFailure(failure("ECONNRESET"), tmpdir(), null)).toBe("The blob GET failed. Run `inflexa store download` to try again.");
     });
 });
 

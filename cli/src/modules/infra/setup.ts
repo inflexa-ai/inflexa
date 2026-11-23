@@ -1,5 +1,5 @@
-import { readdir, readFile } from "node:fs/promises";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readdir, readFile, realpath, statfs } from "node:fs/promises";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Writable } from "node:stream";
@@ -7,7 +7,7 @@ import type { Writable } from "node:stream";
 import pkg from "../../../package.json";
 
 import { intro, outro, log, note, spinner as clackSpinner } from "@clack/prompts";
-import { Result, ok, err } from "neverthrow";
+import { Result, ResultAsync, ok, err } from "neverthrow";
 import { z } from "zod";
 import type { BootPullProgress, BootStepId } from "../../api/server.ts";
 import {
@@ -33,14 +33,17 @@ import {
 } from "../../lib/container.ts";
 import {
     anthropicAuthTokenSet,
+    dataRoot,
     detectProviderEnv,
     env,
     isReservedPostgresPort,
     providerApiKeyVar,
     resolveModelApiKey,
     terminalEnv,
+    type DataRoot,
     type ProviderEnvSnapshot,
 } from "../../lib/env.ts";
+import { formatIecBytes } from "../../lib/bytes.ts";
 import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialScheme } from "../../lib/credential.ts";
 import { select, promptText, promptTextOptional, confirm, stdinIsTTY } from "../../lib/cli.ts";
 import { recordOrEmpty, unknownRecordSchema } from "../../lib/json_record.ts";
@@ -148,6 +151,121 @@ type SetupOptions = {
      */
     flags?: SetupAnswerFlags;
 };
+
+// --- the data root ---------------------------------------------------------
+//
+// Setup shows where the data lives because a shared host often puts the home on a small NFS quota. The
+// data root holds the package store, the Postgres data, and the SQLite database: each of them wants a
+// local disk. Setup never moves data, thus it also names the data that an earlier root still holds.
+
+/** The network filesystems by the `f_type` magic of Linux `statfs(2)` (linux/magic.h, and the Lustre and GPFS sources). */
+const LINUX_NETWORK_FILESYSTEMS: ReadonlyMap<number, string> = new Map([
+    [0x6969, "NFS"],
+    [0x517b, "SMB"],
+    [0xff534d42, "SMB"],
+    [0xfe534d42, "SMB"],
+    [0x0bd00bd0, "Lustre"],
+    [0x47504653, "GPFS"],
+]);
+
+/**
+ * The network filesystems by their type name in the macOS `mount` table. macOS gives `statfs` a type number from
+ * the order in which the kernel registered each filesystem, thus only the name is stable.
+ */
+const MACOS_NETWORK_FILESYSTEMS: ReadonlyMap<string, string> = new Map([
+    ["nfs", "NFS"],
+    ["smbfs", "SMB"],
+]);
+
+/** The network filesystem that a Linux `statfs` type names, or `null` for a local or unknown one. */
+export function networkFilesystemOfType(type: number): string | null {
+    // A 32-bit kernel gives the magic as a signed long, thus the high magics of SMB arrive negative.
+    return LINUX_NETWORK_FILESYSTEMS.get(type >>> 0) ?? null;
+}
+
+/**
+ * The network filesystem that holds `path` in the output of the macOS `mount` command, or `null` for a local or unknown
+ * one. Each line is `<device> on <mount point> (<type>, <flags>)`, and the longest mount point that holds the path wins.
+ */
+export function networkFilesystemInMountTable(table: string, path: string): string | null {
+    let best: { point: string; type: string } | null = null;
+    for (const line of table.split("\n")) {
+        const on = line.indexOf(" on ");
+        const open = line.lastIndexOf(" (");
+        if (on < 0 || open < on) continue;
+        const point = line.slice(on + " on ".length, open);
+        const type = (line.slice(open + " (".length).split(",")[0] ?? "").replace(")", "").trim();
+        const holds = point === "/" || path === point || path.startsWith(`${point}/`);
+        if (holds && (best === null || point.length > best.point.length)) best = { point, type };
+    }
+    return best === null ? null : (MACOS_NETWORK_FILESYSTEMS.get(best.type) ?? null);
+}
+
+/** What setup reads from the filesystem of the data root. `null` is "unknown": the readout is advice, never a gate. */
+export type DataRootFacts = {
+    readonly freeBytes: number | null;
+    /** The name of the network filesystem that holds the root, or `null` for a local or unknown one. */
+    readonly networkFilesystem: string | null;
+    /** True when the default root holds data and a different root is active. */
+    readonly earlierData: boolean;
+};
+
+/** The nearest folder of `path` that exists: the root itself after the first run, an ancestor before it. */
+function nearestExistingFolder(path: string): string {
+    let current = path;
+    while (!existsSync(current) && dirname(current) !== current) current = dirname(current);
+    return current;
+}
+
+/** The type name of the filesystem that holds `path`, from the platform source that names it, or `null`. */
+async function networkFilesystemOf(path: string, type: number): Promise<string | null> {
+    if (process.platform === "linux") return networkFilesystemOfType(type);
+    if (process.platform !== "darwin") return null;
+    const real = await ResultAsync.fromPromise(realpath(path), (cause) => cause);
+    const run = Result.fromThrowable(
+        () => Bun.spawnSync(["/sbin/mount"]),
+        (cause) => cause,
+    )();
+    if (real.isErr() || run.isErr() || run.value.exitCode !== 0) return null;
+    return networkFilesystemInMountTable(run.value.stdout.toString(), real.value);
+}
+
+/** Read the {@link DataRootFacts} of `root`. Each read that fails gives "unknown", because setup continues without it. */
+export async function inspectDataRoot(root: DataRoot): Promise<DataRootFacts> {
+    const existing = nearestExistingFolder(root.path);
+    const stats = await ResultAsync.fromPromise(statfs(existing), (cause) => cause);
+    const freeBytes = stats.isOk() ? stats.value.bavail * stats.value.bsize : null;
+    const networkFilesystem = stats.isOk() ? await networkFilesystemOf(existing, stats.value.type) : null;
+    const earlier = root.path === root.defaultPath ? null : await ResultAsync.fromPromise(readdir(root.defaultPath), (cause) => cause);
+    return { freeBytes, networkFilesystem, earlierData: earlier !== null && earlier.isOk() && earlier.value.length > 0 };
+}
+
+/** The lines that setup shows for the data root, with the level of each. */
+export function dataRootNotes(root: DataRoot, facts: DataRootFacts): { level: "info" | "warn"; text: string }[] {
+    const origin = root.source === "env" ? "from INFLEXA_DATA_DIR" : root.source === "config" ? `from "dataDir" in ${env.configPath}` : "the default";
+    const free = facts.freeBytes === null ? "free space unknown" : `${formatIecBytes(facts.freeBytes)} free`;
+    const notes: { level: "info" | "warn"; text: string }[] = [{ level: "info", text: `Data root: ${root.path} (${origin}, ${free}).` }];
+    if (root.ignored !== null) {
+        const named = root.ignored.source === "env" ? "INFLEXA_DATA_DIR" : `"dataDir" in ${env.configPath}`;
+        notes.push({ level: "warn", text: `${named} is "${root.ignored.value}", which is not an absolute path. Inflexa ignores it.` });
+    }
+    if (facts.networkFilesystem !== null) {
+        notes.push({
+            level: "warn",
+            text:
+                `The data root is on a network filesystem (${facts.networkFilesystem}). SQLite is not safe there, a container engine cannot bind-mount ` +
+                `from an NFS home that squashes root, and a home quota is too small for the package store and the Postgres data. ` +
+                `Set INFLEXA_DATA_DIR, or the "dataDir" key of ${env.configPath}, to a folder on a local disk, for example /scratch/$USER/inflexa. Then run \`inflexa setup\` again.`,
+        });
+    }
+    if (facts.earlierData) {
+        notes.push({
+            level: "info",
+            text: `The default data root ${root.defaultPath} still holds data. Inflexa does not move data between roots: copy what you want to keep, or delete the old folder.`,
+        });
+    }
+    return notes;
+}
 
 // --- the setup checkpoint --------------------------------------------------
 //
@@ -348,6 +466,7 @@ export async function setup(options: SetupOptions): Promise<void> {
     const asks = (step: SetupStep): boolean => canPrompt && !done(step);
 
     intro("inflexa setup");
+    for (const line of dataRootNotes(dataRoot, await inspectDataRoot(dataRoot))) log[line.level](line.text);
 
     // The try below leaves through many error returns and one throw. One variable set at the head of each
     // step, plus one write in the `finally`, covers all of them, so a new return needs no new mark.

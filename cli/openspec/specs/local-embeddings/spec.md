@@ -164,12 +164,12 @@ For api-key or off, no model SHALL be acquired. An embedding-mode answer (`--emb
 
 ### Requirement: Embedding model path is env-managed
 
-`cli/src/lib/env.ts` SHALL expose `env.modelDir` (`<dataDir>/inflexa/models/`) and `env.embeddingModelPath` (`<modelDir>/bge-small-en-v1.5-q8_0.gguf`). These SHALL be included in `envDoc` for `--help` visibility.
+`cli/src/lib/env.ts` SHALL expose `env.modelDir` (`<data root>/models/`) and `env.embeddingModelPath` (`<modelDir>/bge-small-en-v1.5-q8_0.gguf`). These SHALL be included in `envDoc` for `--help` visibility.
 
 #### Scenario: Model path resolves under the data dir
 
 - **WHEN** `env.embeddingModelPath` is read
-- **THEN** it SHALL be `<dataDir>/inflexa/models/bge-small-en-v1.5-q8_0.gguf`
+- **THEN** it SHALL be `<data root>/models/bge-small-en-v1.5-q8_0.gguf`
 
 #### Scenario: Model dir appears in help
 

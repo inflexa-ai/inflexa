@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
 import { availableParallelism, cpus, homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
+
+import { z } from "zod";
 
 import { isAsciiDigits } from "./text.ts";
 
@@ -168,10 +171,71 @@ function dataDir(): string {
     return process.platform === "win32" ? join(homedir(), "AppData", "Local") : join(homedir(), ".local", "share");
 }
 
+/**
+ * The variable that names the data root. It wins over the `dataDir` key of the config file, because a variable is the
+ * choice of one shell and the file is the choice of the machine. Its value is the data root itself, not a base folder,
+ * thus `/scratch/$USER/inflexa` holds the database directly.
+ */
+const dataRootVar = "INFLEXA_DATA_DIR";
+
+/** The key of the config file that names the data root. The schema of `lib/config.ts` declares the same key, thus a write of the config keeps it. */
+const dataRootConfigKey = "dataDir";
+
+/** Where the data root came from: {@link dataRootVar}, the config file, or the platform data home. */
+export type DataRootSource = "env" | "config" | "default";
+
+/** The resolved data root of Inflexa, with its origin. See {@link resolveDataRoot}. */
+export type DataRoot = {
+    /** The absolute data root. Each data path of {@link env} is under it. */
+    readonly path: string;
+    readonly source: DataRootSource;
+    /** `<data home>/inflexa`: the root when nothing names a different one. Setup reads it to find data that an earlier root holds. */
+    readonly defaultPath: string;
+    /** A value that named the root but was not absolute, thus ignored. `null` when no value was ignored. */
+    readonly ignored: { readonly source: Exclude<DataRootSource, "default">; readonly value: string } | null;
+};
+
+/**
+ * The data root from the variable, the config value, and the default, in that order. A relative value is ignored for
+ * the same reason as a relative `XDG_DATA_HOME`: a client and the detached server have different working folders. An
+ * empty value counts as unset. Pure, thus a test can drive it: {@link dataRoot} freezes the real inputs at import.
+ */
+export function resolveDataRoot(envValue: string | undefined, configValue: string | undefined, defaultPath: string): DataRoot {
+    let ignored: DataRoot["ignored"] = null;
+    for (const [source, value] of [
+        ["env", envValue],
+        ["config", configValue],
+    ] as const) {
+        if (!value) continue;
+        if (isAbsolute(value)) return { path: value, source, defaultPath, ignored };
+        ignored ??= { source, value };
+    }
+    return { path: defaultPath, source: "default", defaultPath, ignored };
+}
+
 function configDir(): string {
     const base = process.env[configVar];
     if (base && isAbsolute(base)) return base;
     return process.platform === "win32" ? join(homedir(), "AppData", "Roaming") : join(homedir(), ".config");
+}
+
+/** The one key of the config file that this module reads. A malformed value names no root, the same as an absent one. */
+const configDataRootSchema = z.object({ [dataRootConfigKey]: z.string().optional().catch(undefined) });
+
+/**
+ * The `dataDir` string of the config file at `configPath`, or `undefined`. This module cannot import `lib/config.ts`,
+ * because that module imports this one, thus it reads the one key from the raw file. A missing, unreadable, or
+ * malformed file names no root, the same as a missing key.
+ */
+function configuredDataRoot(configPath: string): string | undefined {
+    try {
+        // oxlint-disable-next-line eslint-js/no-restricted-syntax -- a script or a test can import this module before src/extensions installs `JSON.parseWith`; the schema parses the value
+        const parsed = configDataRootSchema.safeParse(JSON.parse(readFileSync(configPath, "utf8")));
+        return parsed.success ? parsed.data[dataRootConfigKey] : undefined;
+    } catch {
+        // TODO(slop): neverthrow — module evaluation has no error channel, and each fault means "no value".
+        return undefined;
+    }
 }
 
 /**
@@ -361,11 +425,11 @@ export type StackPaths = {
 };
 
 /**
- * Channel-aware stack paths under `<dataDirBase>/inflexa/…`. Dev derives sibling names so a dev stack
- * never shares a mount source or compose file with an installed production stack (see {@link StackPorts}
- * for the collision surface). Production names are byte-identical to their pre-change form.
+ * Channel-aware stack paths under the data root. Dev derives sibling names so a dev stack never shares a mount
+ * source or compose file with an installed production stack (see {@link StackPorts} for the collision surface).
+ * Production names are byte-identical to their pre-change form.
  */
-export function stackPaths(dataDirBase: string, channel: string | undefined): StackPaths {
+export function stackPaths(root: string, channel: string | undefined): StackPaths {
     const dev = isDevelopmentBuild(channel);
     const proxyDir = dev ? "cliproxy-dev" : "cliproxy";
     const postgresDir = dev ? "postgres-dev" : "postgres";
@@ -375,34 +439,44 @@ export function stackPaths(dataDirBase: string, channel: string | undefined): St
     const serverFile = dev ? "server.dev.json" : "server.json";
     const serverLogFile = dev ? "server.dev.log" : "server.log";
     return {
-        cliproxyConfigPath: join(dataDirBase, "inflexa", proxyDir, "config.yaml"),
-        cliproxyAuthDir: join(dataDirBase, "inflexa", proxyDir, "auth"),
-        postgresDataDir: join(dataDirBase, "inflexa", postgresDir),
-        searxngSettingsPath: join(dataDirBase, "inflexa", searxngDir, "settings.yml"),
-        composeFilePath: join(dataDirBase, "inflexa", composeFile),
-        setupStatePath: join(dataDirBase, "inflexa", setupStateFile),
-        serverFilePath: join(dataDirBase, "inflexa", serverFile),
-        serverLogPath: join(dataDirBase, "inflexa", "logs", serverLogFile),
+        cliproxyConfigPath: join(root, proxyDir, "config.yaml"),
+        cliproxyAuthDir: join(root, proxyDir, "auth"),
+        postgresDataDir: join(root, postgresDir),
+        searxngSettingsPath: join(root, searxngDir, "settings.yml"),
+        composeFilePath: join(root, composeFile),
+        setupStatePath: join(root, setupStateFile),
+        serverFilePath: join(root, serverFile),
+        serverLogPath: join(root, "logs", serverLogFile),
     };
 }
 
+// The config file stays under the config home: it can name the data root, thus it cannot live under that root.
+const configPath = join(configDir(), "inflexa", "config.json");
+
+/**
+ * The data root of this process, resolved ONCE at import from {@link dataRootVar}, the config file, and the platform
+ * data home. Each data path of {@link env} derives from it, thus no path can stay behind when the root moves.
+ * Setup reads the source and the ignored value to report them.
+ */
+export const dataRoot: DataRoot = Object.freeze(resolveDataRoot(process.env[dataRootVar], configuredDataRoot(configPath), join(dataDir(), "inflexa")));
+
 // The stack's ports and paths, each derived ONCE from the baked channel for the frozen env below.
 const stack = stackPorts(bakedEnv.buildChannel);
-const stackDirs = stackPaths(dataDir(), bakedEnv.buildChannel);
+const stackDirs = stackPaths(dataRoot.path, bakedEnv.buildChannel);
 
 export const env = Object.freeze({
-    /** The data folder of Inflexa: the database, the logs, the package store, and the server files are in it. */
-    dataDir: join(dataDir(), "inflexa"),
-    dbPath: join(dataDir(), "inflexa", "agent.db"),
-    logDir: join(dataDir(), "inflexa", "logs"),
+    /** The data root of Inflexa (see {@link dataRoot}): the database, the logs, the package store, and the server files are in it. */
+    dataDir: dataRoot.path,
+    dbPath: join(dataRoot.path, "agent.db"),
+    logDir: join(dataRoot.path, "logs"),
     /** The OAuth tokens of the MCP servers when the macOS Keychain is not available: a `0600` file, keyed by endpoint. */
-    mcpTokensPath: join(dataDir(), "inflexa", "mcp-tokens.json"),
-    credentialsPath: join(dataDir(), "inflexa", "credentials.json"),
+    mcpTokensPath: join(dataRoot.path, "mcp-tokens.json"),
+    credentialsPath: join(dataRoot.path, "credentials.json"),
     /**
      * Public reference-data store. Deliberate setup/download actions create this path; passive
      * runtime composition only checks whether it exists before offering it to the harness.
      */
-    refsDir: join(dataDir(), "inflexa", "refs"),
+    refsDir: join(dataRoot.path, "refs"),
     /**
      * Host package-store root: `<dataDir>/inflexa/package-store`. The ONE location, a CLI-owned path,
      * the peer of `refsDir`, with no config key and no user override. The store commands make the store
@@ -410,7 +484,7 @@ export const env = Object.freeze({
      * The harness bind-mounts this root read-only at the sandbox's `/mnt/libs` for every sandbox,
      * because the runtime image bakes no R library and no Python library.
      */
-    packageStoreDir: join(dataDir(), "inflexa", "package-store"),
+    packageStoreDir: join(dataRoot.path, "package-store"),
     /**
      * Materialized skills/templates content: `<dataDir>/inflexa/content/<contentHash>/{skills,templates}`.
      * A peer of `refsDir`/`modelDir` — a runtime asset tree, not config — but sourced from the binary's
@@ -419,16 +493,16 @@ export const env = Object.freeze({
      * tree on first run, so updates ride the install. Only ever written/read in a release build; a dev
      * run points skills/templates at the repo checkout and never touches this path.
      */
-    contentDir: join(dataDir(), "inflexa", "content"),
+    contentDir: join(dataRoot.path, "content"),
     /**
      * Advisory instance locks: `<dataDir>/inflexa/locks/<key>.lock`, keyed by an analysis id (one
      * inflexa process may have an analysis open at a time) or a fixed sentinel for the embedded harness
      * runtime (one DBOS engine per machine). The lock files coordinate that across instances.
      * See src/lib/lock.ts.
      */
-    locksDir: join(dataDir(), "inflexa", "locks"),
+    locksDir: join(dataRoot.path, "locks"),
     /** The last copy of each custom agent and skill that an import with `--replace` overwrote. An import of the copy restores it. */
-    replacedDir: join(dataDir(), "inflexa", "replaced"),
+    replacedDir: join(dataRoot.path, "replaced"),
     /**
      * The record of the last shown update ask: when it showed, and the release it named. See
      * src/modules/update/notice.ts, which reads it to hold the ask to one time a day.
@@ -438,15 +512,15 @@ export const env = Object.freeze({
      * cannot collide here. Losing it costs one extra ask, so nothing downstream treats an unreadable
      * file as an error.
      */
-    updateStatePath: join(dataDir(), "inflexa", "update-state.json"),
+    updateStatePath: join(dataRoot.path, "update-state.json"),
     /**
      * Local embedding model storage: `<dataDir>/inflexa/models/`. The GGUF for
      * `bge-small-en-v1.5` (q8_0, 384-dim) is downloaded here on `inflexa setup --embeddings`
      * opt-in. See src/modules/embedding/setup.ts.
      */
-    modelDir: join(dataDir(), "inflexa", "models"),
+    modelDir: join(dataRoot.path, "models"),
     /** The local embedding GGUF path — `<modelDir>/bge-small-en-v1.5-q8_0.gguf`. */
-    embeddingModelPath: join(dataDir(), "inflexa", "models", "bge-small-en-v1.5-q8_0.gguf"),
+    embeddingModelPath: join(dataRoot.path, "models", "bge-small-en-v1.5-q8_0.gguf"),
     /**
      * Local embedding sidecar runtime: `<dataDir>/inflexa/llama-server/`. The pinned `llama.cpp`
      * release (the `llama-server` binary + its shared libraries) is materialized into a tag-named
@@ -454,7 +528,7 @@ export const env = Object.freeze({
      * embedded asset in the compiled binary, downloaded from source. See
      * src/modules/embedding/llama_runtime.ts.
      */
-    llamaServerDir: join(dataDir(), "inflexa", "llama-server"),
+    llamaServerDir: join(dataRoot.path, "llama-server"),
     /**
      * CLIProxyAPI runs in a container (Docker or Podman, see
      * src/modules/infra/setup.ts). The config and the provider-credential dir are
@@ -500,7 +574,7 @@ export const env = Object.freeze({
     serverAutoStart: !process.env[serverFileVar],
     /** The output of a background server. See {@link StackPaths.serverLogPath}. */
     serverLogPath: stackDirs.serverLogPath,
-    configPath: join(configDir(), "inflexa", "config.json"),
+    configPath,
     authPath: join(configDir(), "inflexa", "auth.json"),
     provKeyPath: join(configDir(), "inflexa", "prov_key.json"),
     /** The custom agents of the user: one `<id>.md` file for each agent. A release never writes here. */
@@ -694,66 +768,66 @@ export const envDoc: Readonly<
         EnvDocEntry
     >
 > = Object.freeze({
-    dbPath: { kind: "path", label: "database", description: "anchors, analyses, projects, and their input refs (SQLite)", baseVar: dataVar },
-    logDir: { kind: "path", label: "logs", description: "one file per local day, 7-day retention", baseVar: dataVar },
+    dbPath: { kind: "path", label: "database", description: "anchors, analyses, projects, and their input refs (SQLite)", baseVar: dataRootVar },
+    logDir: { kind: "path", label: "logs", description: "one file per local day, 7-day retention", baseVar: dataRootVar },
     mcpTokensPath: {
         kind: "path",
         label: "MCP sign-ins",
         description: "MCP OAuth tokens when the macOS Keychain is not available (mode 0600)",
-        baseVar: dataVar,
+        baseVar: dataRootVar,
     },
     credentialsPath: {
         kind: "path",
         label: "stored credentials",
         description: "the values of stored credentials when the macOS Keychain is not available (mode 0600)",
-        baseVar: dataVar,
+        baseVar: dataRootVar,
     },
     refsDir: {
         kind: "path",
         label: "references",
         description: "reference data mounted read-only in sandboxes at /mnt/refs",
-        baseVar: dataVar,
+        baseVar: dataRootVar,
     },
     packageStoreDir: {
         kind: "path",
         label: "package store",
         description: "the host package store mounted read-only in sandboxes at /mnt/libs",
-        baseVar: dataVar,
+        baseVar: dataRootVar,
     },
     contentDir: {
         kind: "path",
         label: "content",
         description: "skills/templates extracted from the binary on first run, keyed by content hash",
-        baseVar: dataVar,
+        baseVar: dataRootVar,
     },
-    locksDir: { kind: "path", label: "locks", description: "advisory per-analysis instance locks", baseVar: dataVar },
+    locksDir: { kind: "path", label: "locks", description: "advisory per-analysis instance locks", baseVar: dataRootVar },
     replacedDir: {
         kind: "path",
         label: "replaced",
         description: "the last copy of each custom agent and skill that an import with --replace overwrote",
-        baseVar: dataVar,
+        baseVar: dataRootVar,
     },
     updateStatePath: {
         kind: "path",
         label: "update state",
         description: "when inflexa last showed the update ask, and the release it named",
-        baseVar: dataVar,
+        baseVar: dataRootVar,
     },
-    modelDir: { kind: "path", label: "models", description: "local embedding GGUF models, downloaded by `inflexa setup --embeddings`", baseVar: dataVar },
+    modelDir: { kind: "path", label: "models", description: "local embedding GGUF models, downloaded by `inflexa setup --embeddings`", baseVar: dataRootVar },
     embeddingModelPath: {
         kind: "path",
         label: "embedding model",
         description: "the bge-small-en-v1.5 GGUF used by the local embedding provider",
-        baseVar: dataVar,
+        baseVar: dataRootVar,
     },
     llamaServerDir: {
         kind: "path",
         label: "llama runtime",
         description: "pinned llama-server runtime for local embeddings, materialized by `inflexa setup --embeddings local`",
-        baseVar: dataVar,
+        baseVar: dataRootVar,
     },
-    cliproxyConfigPath: { kind: "path", label: "proxy config", description: "CLIProxyAPI config, mounted into the proxy container", baseVar: dataVar },
-    cliproxyAuthDir: { kind: "path", label: "proxy auth", description: "CLIProxyAPI provider credentials, created by `inflexa setup`", baseVar: dataVar },
+    cliproxyConfigPath: { kind: "path", label: "proxy config", description: "CLIProxyAPI config, mounted into the proxy container", baseVar: dataRootVar },
+    cliproxyAuthDir: { kind: "path", label: "proxy auth", description: "CLIProxyAPI provider credentials, created by `inflexa setup`", baseVar: dataRootVar },
     postgresDataDir: {
         kind: "path",
         label: "postgres data",
@@ -765,31 +839,31 @@ export const envDoc: Readonly<
             process.platform === "win32"
                 ? "not used on Windows: a named volume of the container engine holds the Postgres data"
                 : "Postgres data dir, bind-mounted into the inflexa-postgres container",
-        baseVar: dataVar,
+        baseVar: dataRootVar,
     },
     searxngSettingsPath: {
         kind: "path",
         label: "searxng settings",
         description: "SearXNG settings, written by `inflexa setup` and mounted read-only into the searxng container",
-        baseVar: dataVar,
+        baseVar: dataRootVar,
     },
     composeFilePath: {
         kind: "path",
         label: "compose file",
         description: "Docker Compose file orchestrating the proxy and Postgres containers",
-        baseVar: dataVar,
+        baseVar: dataRootVar,
     },
     setupStatePath: {
         kind: "path",
         label: "setup checkpoint",
         description: "the step a failed `inflexa setup` stopped at; deleted when a run completes",
-        baseVar: dataVar,
+        baseVar: dataRootVar,
     },
     serverLogPath: {
         kind: "path",
         label: "server log",
         description: "output of the background local server; it rotates at 10 MiB and keeps one old file (.1)",
-        baseVar: dataVar,
+        baseVar: dataRootVar,
     },
     configPath: { kind: "path", label: "config", description: "settings (telemetry consent)", baseVar: configVar },
     authPath: { kind: "path", label: "auth", description: "Auth0 session tokens, created by `inflexa auth login`", baseVar: configVar },

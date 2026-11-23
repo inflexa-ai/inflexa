@@ -16,6 +16,9 @@ import "../extensions/index.ts";
 const sandbox = mkdtempSync(join(tmpdir(), "inflexa-test-"));
 process.env.XDG_DATA_HOME = join(sandbox, "data");
 process.env.XDG_CONFIG_HOME = join(sandbox, "config");
+// The data root variable wins over XDG_DATA_HOME (lib/env.ts), thus a value from the shell of the developer would
+// point each data path back at a real root.
+delete process.env.INFLEXA_DATA_DIR;
 
 // The destructive-reset authorization for src/test_support/db.ts's resetDb(). It stamps the sandbox
 // root so resetDb can prove env.dbPath lives INSIDE it before rmSync'ing the DB + WAL sidecars. XDG

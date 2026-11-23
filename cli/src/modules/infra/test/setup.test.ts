@@ -13,6 +13,7 @@ import {
     askProxy,
     classifyModelResolution,
     credentialHelperDetected,
+    dataRootNotes,
     detectCredentialHelperFrom,
     detectedAdoptable,
     collectDirectModel,
@@ -23,7 +24,10 @@ import {
     ensureProxyReady,
     explicitPostgresFields,
     hasProviderCredential,
+    inspectDataRoot,
     launchProgress,
+    networkFilesystemInMountTable,
+    networkFilesystemOfType,
     normalizeAdoptedBaseURL,
     pingMessagesEndpoint,
     probeCredentialSource,
@@ -65,7 +69,7 @@ import { requestedModel } from "../../../test_support/request_body.ts";
 import * as envModule from "../../../lib/env.ts";
 import { recordOrEmpty, unknownRecordSchema } from "../../../lib/json_record.ts";
 import { keysOf } from "../../../lib/types.ts";
-import { EMBEDDING_API_KEY_VAR, env, type ProviderEnvSnapshot } from "../../../lib/env.ts";
+import { EMBEDDING_API_KEY_VAR, env, type DataRoot, type ProviderEnvSnapshot } from "../../../lib/env.ts";
 import { unsetEnvVar } from "../../../test_support/env_vars.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import { present } from "../../../lib/present.ts";
@@ -2932,5 +2936,80 @@ describe("describeLoginFailure", () => {
         expect(message).not.toContain("is in use");
         expect(message).toContain("line 59");
         expect(message).not.toContain("line 19\n");
+    });
+});
+
+describe("the data root", () => {
+    const local = { freeBytes: 5 * 1024 ** 3, networkFilesystem: null, earlierData: false };
+
+    function root(overrides: Partial<DataRoot>): DataRoot {
+        return { path: "/scratch/u/inflexa", source: "env", defaultPath: "/home/u/.local/share/inflexa", ignored: null, ...overrides };
+    }
+
+    test("a Linux statfs type names NFS, SMB, Lustre, and GPFS, and a local type names none", () => {
+        expect(networkFilesystemOfType(0x6969)).toBe("NFS");
+        expect(networkFilesystemOfType(0xfe534d42)).toBe("SMB");
+        // A 32-bit kernel gives the CIFS magic as a negative signed long.
+        expect(networkFilesystemOfType(0xff534d42 | 0)).toBe("SMB");
+        expect(networkFilesystemOfType(0x0bd00bd0)).toBe("Lustre");
+        expect(networkFilesystemOfType(0x47504653)).toBe("GPFS");
+        expect(networkFilesystemOfType(0xef53)).toBeNull();
+    });
+
+    test("the macOS mount table gives the type of the longest mount point that holds the path", () => {
+        const table = [
+            "/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)",
+            "server:/export/home on /Volumes/home (nfs, nodev, nosuid, mounted by u)",
+            "//u@files/share on /Volumes/share (smbfs, nodev, nosuid, mounted by u)",
+            "/dev/disk5s1 on /Volumes/home/local (apfs, local, journaled)",
+        ].join("\n");
+        expect(networkFilesystemInMountTable(table, "/Volumes/home/u/inflexa")).toBe("NFS");
+        expect(networkFilesystemInMountTable(table, "/Volumes/share")).toBe("SMB");
+        expect(networkFilesystemInMountTable(table, "/Volumes/home/local/inflexa")).toBeNull();
+        expect(networkFilesystemInMountTable(table, "/Volumes/homework")).toBeNull();
+        expect(networkFilesystemInMountTable(table, "/Users/u/.local/share/inflexa")).toBeNull();
+    });
+
+    test("setup shows the root, its origin, and its free space", () => {
+        expect(dataRootNotes(root({}), local)).toEqual([{ level: "info", text: "Data root: /scratch/u/inflexa (from INFLEXA_DATA_DIR, 5.0 GiB free)." }]);
+        expect(dataRootNotes(root({ source: "config" }), { ...local, freeBytes: null })[0]?.text).toBe(
+            `Data root: /scratch/u/inflexa (from "dataDir" in ${env.configPath}, free space unknown).`,
+        );
+    });
+
+    test("a root on a network filesystem gets a warning that says how to move it", () => {
+        const notes = dataRootNotes(root({}), { ...local, networkFilesystem: "NFS" });
+        expect(notes[1]?.level).toBe("warn");
+        expect(notes[1]?.text).toStartWith("The data root is on a network filesystem (NFS). SQLite is not safe there");
+        expect(notes[1]?.text).toContain(`Set INFLEXA_DATA_DIR, or the "dataDir" key of ${env.configPath}, to a folder on a local disk`);
+    });
+
+    test("an ignored relative value gets a warning", () => {
+        const notes = dataRootNotes(root({ source: "default", path: "/home/u/.local/share/inflexa", ignored: { source: "env", value: "scratch" } }), local);
+        expect(notes[1]).toEqual({ level: "warn", text: 'INFLEXA_DATA_DIR is "scratch", which is not an absolute path. Inflexa ignores it.' });
+    });
+
+    test("data in the default root stays there, and setup says where it is", async () => {
+        const home = mkdtempSync(join(tmpdir(), "inflexa-data-root-"));
+        try {
+            const defaultPath = join(home, "default");
+            mkdirSync(defaultPath);
+            const moved = root({ path: join(home, "scratch", "inflexa"), defaultPath });
+            expect((await inspectDataRoot(moved)).earlierData).toBe(false);
+
+            writeFileSync(join(defaultPath, "agent.db"), "");
+            const facts = await inspectDataRoot(moved);
+            expect(facts.earlierData).toBe(true);
+            // The root does not exist yet, thus the free space comes from its nearest folder.
+            expect(facts.freeBytes).toBeGreaterThan(0);
+            expect(dataRootNotes(moved, facts).at(-1)?.text).toBe(
+                `The default data root ${defaultPath} still holds data. Inflexa does not move data between roots: copy what you want to keep, or delete the old folder.`,
+            );
+            expect(existsSync(join(defaultPath, "agent.db"))).toBe(true);
+
+            expect((await inspectDataRoot(root({ path: defaultPath, defaultPath, source: "default" }))).earlierData).toBe(false);
+        } finally {
+            rmSync(home, { recursive: true, force: true });
+        }
     });
 });

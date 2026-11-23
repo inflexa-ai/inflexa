@@ -6,7 +6,7 @@ File-only structured NDJSON logging via a single Pino root logger — module-sco
 ## Requirements
 
 ### Requirement: File-only structured logging
-The system SHALL write all runtime logs as structured NDJSON via a single Pino root logger to a log file under the data directory (`<data>/inflexa/logs/`), creating the directory if missing. The logger SHALL NOT write to stdout or stderr, and SHALL NOT use worker-thread transports (`pino.transport`).
+The system SHALL write all runtime logs as structured NDJSON via a single Pino root logger to a log file in the data root (`<data root>/logs/`), creating the directory if missing. The logger SHALL NOT write to stdout or stderr, and SHALL NOT use worker-thread transports (`pino.transport`).
 
 #### Scenario: Logs land in the log file
 - **WHEN** any module logs through the logger while the TUI is running
