@@ -1,7 +1,7 @@
 import type { ArtifactError } from "../../api/artifacts.ts";
 import { describeClientError, DEFAULT_CLIENT_OPTS, type ClientOpts } from "../../client/api.ts";
 import { resolveArtifacts } from "../../client/artifacts.ts";
-import { openExternal } from "../../lib/open_external.ts";
+import { openByHandHint, openExternal } from "../../lib/open_external.ts";
 import type { OpenableEntry, OpenTarget } from "../../types/session.ts";
 import { notify } from "./notice.ts";
 import type { Notice } from "../theme.ts";
@@ -47,7 +47,7 @@ async function openTarget(analysisId: string, target: OpenTarget, opts: ClientOp
             }
             openExternal(path).match(
                 () => notify({ kind: "info", text: `Opened ${path}` }),
-                () => notify({ kind: "warn", text: `Could not launch an opener — open it manually: ${path}` }),
+                (e) => notify({ kind: "warn", text: openByHandHint(e, path) }),
             );
         },
         (e) => notify({ kind: "warn", text: `Could not open the artifact: ${describeClientError(e)}` }),

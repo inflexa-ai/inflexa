@@ -77,7 +77,7 @@ import { DEFAULT_PER_PAGE, MAX_PER_PAGE } from "../api/common.ts";
 import type { PurgedThread, ReportPageFate, ReportSessionAccess, ThreadList, ThreadSummary } from "../api/conversation.ts";
 import { deleteThread, fetchThread, fetchThreads, mintReportSessionAccess, purgeThread, restoreThread, updateThread } from "../client/conversation.ts";
 import type { ProjectSummary } from "../api/projects.ts";
-import { openExternal, type OpenExternalError } from "../lib/open_external.ts";
+import { openByHandHint, openExternal, type OpenExternalError } from "../lib/open_external.ts";
 import type { AgentEffort, AgentName, AgentSelection, ListedModelView as ListedModel, MeView, ModelList } from "../api/machine.ts";
 import { fetchAgents, fetchMe, fetchModels, fetchSettings, updateAgent } from "../client/machine.ts";
 import { createTransfer } from "../client/store.ts";
@@ -1464,7 +1464,7 @@ export async function openReportPage(ctx: Workspace, opts: SessionOpts = DEFAULT
         (access) =>
             opts.openUrl(access.url).match(
                 () => opts.notify({ kind: "info", text: "Opened the report page in the browser." }),
-                () => opts.notify({ kind: "warn", text: `Could not launch a browser — open it manually: ${access.url}` }),
+                (e) => opts.notify({ kind: "warn", text: openByHandHint(e, access.url) }),
             ),
         (e) =>
             opts.notify(
@@ -2875,12 +2875,11 @@ export const commands: Command[] = [
             // The server makes the folder when it does not exist yet; this process opens it.
             (await createOutputDir(a.id)).match(
                 ({ path }) => {
-                    // Fire-and-forget reveal: a missing opener is not worth an error — the toast names the folder.
+                    // A missing opener is not worth an error — the toast names the folder.
                     openExternal(path).match(
-                        () => undefined,
-                        () => undefined,
+                        () => notify({ kind: "info", text: `Opened ${path}` }),
+                        (e) => notify({ kind: "info", text: openByHandHint(e, path) }),
                     );
-                    notify({ kind: "info", text: `Opened ${path}` });
                 },
                 // An unusable folder carries the folder and the remedy — print it verbatim.
                 (e) => notify({ kind: "error", text: clientErrorText(e) }),

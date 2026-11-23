@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
+import { userInfo } from "node:os";
 import { err, ok, type Result } from "neverthrow";
 
+import { terminalEnv } from "./env.ts";
 import { errnoCode } from "./fs.ts";
 
 // The single shared "open this in the default OS application" helper: every caller (auth login, analysis
@@ -13,7 +15,41 @@ import { errnoCode } from "./fs.ts";
  * missing opener binary — a headless box without `xdg-open`) so a caller can distinguish "no opener" from
  * a transient spawn fault, though every caller degrades the same way: a notice with the path.
  */
-export type OpenExternalError = { type: "open_failed"; code: string | null; cause: unknown };
+export type OpenExternalError =
+    | { type: "open_failed"; code: string | null; cause: unknown }
+    /** No opener ran, because no browser or file manager can show on this machine (see {@link noDisplayReason}). */
+    | { type: "no_display"; reason: NoDisplayReason };
+
+/** Why this session has no display: it runs through SSH, or it is Linux with no X11 and no Wayland display. */
+export type NoDisplayReason = "ssh" | "headless";
+
+/** The facts of the session that decide if an opener can show a window. Tests give their own. */
+export type DisplayFacts = {
+    readonly sshConnection: string | null;
+    readonly display: boolean;
+    readonly platform: NodeJS.Platform;
+    readonly wsl: boolean;
+};
+
+/**
+ * Why an opener cannot show a window in this session, or `null` when it can. Over SSH, `xdg-open` can start and
+ * exit 0 with no browser on the screen of the person, thus a success of the spawn proves nothing. WSL opens
+ * through Windows, and it needs no Linux display.
+ */
+export function noDisplayReason(facts: DisplayFacts): NoDisplayReason | null {
+    if (facts.sshConnection !== null) return "ssh";
+    if (facts.platform === "linux" && !facts.wsl && !facts.display) return "headless";
+    return null;
+}
+
+/**
+ * The `ssh -L` command that forwards `port` of this machine to the same port of the machine of the person. The
+ * user and the host come from this session: `SSH_CONNECTION` names the address that the person connected to.
+ */
+export function sshForwardCommand(port: number, sshConnection: string | null = terminalEnv.sshConnection): string {
+    const host = sshConnection?.split(" ")[2] ?? "<this-host>";
+    return `ssh -N -L ${port}:127.0.0.1:${port} ${userInfo().username}@${host}`;
+}
 
 /**
  * The primary OS argv that opens `target` (a file, directory, or URL) in the default application.
@@ -64,6 +100,10 @@ export type OpenSeams = {
     readonly platform: NodeJS.Platform;
     /** Whether the host is WSL (overridable for tests). */
     readonly wsl: boolean;
+    /** `SSH_CONNECTION`, or `null` (overridable for tests). */
+    readonly sshConnection: string | null;
+    /** Whether an X11 or a Wayland display is set (overridable for tests). */
+    readonly display: boolean;
 };
 
 /** Detached spawn: the opener must not keep the CLI's event loop alive (`.unref()`), and its output is discarded. */
@@ -81,15 +121,25 @@ function wslpathWindows(path: string): string | null {
     }
 }
 
-const realSeams: OpenSeams = { spawn: spawnDetached, toWindowsPath: wslpathWindows, platform: process.platform, wsl: isWsl };
+const realSeams: OpenSeams = {
+    spawn: spawnDetached,
+    toWindowsPath: wslpathWindows,
+    platform: process.platform,
+    wsl: isWsl,
+    sshConnection: terminalEnv.sshConnection,
+    display: terminalEnv.display,
+};
 
 /**
  * Open `target` (file, directory, or URL) in the default OS application, detached. Returns `ok` once the
  * opener is spawned and `err` (never a throw) when the opener binary is missing or the spawn fails, so the
  * caller can show the path for manual opening. Under WSL, a missing `wslview` falls back to `explorer.exe`
- * with a `wslpath -w` translated path before giving up.
+ * with a `wslpath -w` translated path before giving up. A session with no display runs no opener, and gives
+ * `no_display`.
  */
 export function openExternal(target: string, seams: OpenSeams = realSeams): Result<void, OpenExternalError> {
+    const noDisplay = noDisplayReason(seams);
+    if (noDisplay !== null) return err({ type: "no_display", reason: noDisplay });
     try {
         seams.spawn(openerArgv(target, seams.platform, seams.wsl));
         return ok(undefined);
@@ -109,4 +159,33 @@ export function openExternal(target: string, seams: OpenSeams = realSeams): Resu
         }
         return err({ type: "open_failed", code: errnoCode(cause) ?? null, cause });
     }
+}
+
+/**
+ * One line that tells the person how to open `target` by hand, after {@link openExternal} gave `e`. Over SSH, a
+ * URL of a loopback port of this machine needs a port-forward first, thus the line gives the `ssh -L` command.
+ */
+export function openByHandHint(e: OpenExternalError, target: string): string {
+    switch (e.type) {
+        case "open_failed":
+            return `Could not start an opener. Open it by hand: ${target}`;
+        case "no_display": {
+            if (e.reason === "headless") return `This machine has no display, thus no window opens here. Open it by hand: ${target}`;
+            const port = loopbackPort(target);
+            const forward = port === null ? "" : ` On your computer, forward the port first: ${sshForwardCommand(port)}`;
+            return `This session runs through SSH, thus no window opens here. Open it by hand: ${target}${forward}`;
+        }
+        default: {
+            const exhaustive: never = e;
+            throw new Error(`unhandled open error: ${JSON.stringify(exhaustive)}`);
+        }
+    }
+}
+
+/** The port of an `http` URL of a loopback address, or `null` for each other target. */
+function loopbackPort(target: string): number | null {
+    if (!URL.canParse(target)) return null;
+    const url = new URL(target);
+    if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) return null;
+    return url.port === "" ? 80 : Number(url.port);
 }
