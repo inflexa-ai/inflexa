@@ -144,6 +144,8 @@ describe("refreshPolledAsks", () => {
                 analysisId: "A",
                 userId: "u",
                 threadId: null,
+                runId: null,
+                stepId: null,
                 title: `title ${id}`,
                 command: `command ${id}`,
                 detail: null,

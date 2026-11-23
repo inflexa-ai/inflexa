@@ -27,7 +27,7 @@ beforeAll(async () => {
         hits.set(key, (hits.get(key) ?? 0) + 1);
         if (typeof req.headers.range === "string") ranges.push(req.headers.range);
         const route = routes.get(key);
-        if (route === undefined) {
+        if (typeof route !== "function") {
             res.writeHead(404).end();
             return;
         }
