@@ -407,7 +407,7 @@ describe("modelFailureClass", () => {
 
     it("gives each other class from the status and the kind of the error", () => {
         expect(modelFailureClass(toProviderError(apiError(401), "w"))).toBe("the model endpoint refused the credential");
-        expect(modelFailureClass(toProviderError(apiError(402), "w"))).toBe("the model endpoint refused the request (payment_required)");
+        expect(modelFailureClass(toProviderError(apiError(402), "w"))).toBe("the host refused the model request");
         expect(modelFailureClass(toProviderError(apiError(413), "w"))).toBe("the model refused the request (request too large)");
         expect(modelFailureClass(toProviderError(apiError(429), "w"))).toBe("the model endpoint limited the rate of the requests");
         expect(modelFailureClass(toProviderError(apiError(503), "w"))).toBe("the model endpoint failed (HTTP 503)");
@@ -417,6 +417,12 @@ describe("modelFailureClass", () => {
             "the model endpoint could not be reached",
         );
         expect(modelFailureClass(toProviderError(new Error("Unexpected token"), "w"))).toBe("the reply of the model could not be read");
+    });
+
+    it("keeps the free text of a host reason out of a suspend class", () => {
+        const suspend = toProviderError(apiError(402), "w", { 402: "quota of /home/u/team.json is used up" });
+
+        expect(modelFailureClass(suspend)).toBe("the host refused the model request");
     });
 
     it("finds the provider error on the cause chain, and gives nothing for a failure that holds none", () => {
