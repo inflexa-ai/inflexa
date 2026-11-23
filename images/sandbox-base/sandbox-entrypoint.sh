@@ -6,9 +6,9 @@
 # workload runs, then drop to the workload uid with no capabilities — so the
 # sandboxed process can neither open a new outbound connection nor alter the
 # rules. The reply path to the host's inbound poll is ESTABLISHED, so polling
-# still works; loopback survives for local tooling. The server's endpoints
-# carry no credential: because each sandbox denies its own egress, a sibling
-# sandbox on the same bridge cannot reach this server's port either.
+# still works; loopback survives for local tooling. The exec endpoints need the
+# exec token of this machine, and because each sandbox denies its own egress, a
+# sibling sandbox on the same bridge cannot reach this server's port either.
 #
 # The workload user comes from the env of the harness, the executor fact:
 #

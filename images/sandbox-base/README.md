@@ -75,7 +75,9 @@ command ends, thus no exec keeps state for a later exec outside the mounts.
 
 ## Confinement
 
-The endpoints carry no credential. The network is the boundary:
+Each endpoint but `/health` needs `Authorization: Bearer` and the exec token
+that the harness gives in `SANDBOX_EXEC_TOKEN`. The server removes the token
+from the env of each command. The network is the second boundary:
 
 - Docker publishes the port on `127.0.0.1` only. The entrypoint of each sandbox
   always installs the egress firewall. Thus a sibling sandbox on the same bridge

@@ -6,9 +6,11 @@
 // bounded per-exec ring, and the host polls both the events and the terminal
 // result from GET /exec/{execId}?since={cursor}. The server never dials out.
 //
-// The endpoints carry no credential. The network is the boundary: Docker
-// publishes the port on 127.0.0.1 only and the entrypoint denies egress
-// (SANDBOX_EGRESS_FIREWALL=1); K8s admits the host through a NetworkPolicy.
+// Each endpoint but /health needs `Authorization: Bearer <SANDBOX_EXEC_TOKEN>`.
+// The harness mints the token for each machine. The network is a second
+// boundary: Docker publishes the port on 127.0.0.1 only and the entrypoint
+// denies egress (SANDBOX_EGRESS_FIREWALL=1); K8s admits the host through a
+// NetworkPolicy.
 //
 // The exec table is the live source of the exec records. The server writes
 // each record to EXEC_RECORD_DIR too, and it reads them again at start. A
@@ -27,6 +29,8 @@
 // Env:
 //
 //	EXEC_RECORD_DIR                directory of the exec records (required)
+//	SANDBOX_EXEC_TOKEN             the exec token (required); the server removes
+//	                               it from its env, thus no command inherits it
 //	SANDBOX_SERVER_PORT            listen port (default 8765)
 //	SANDBOX_EGRESS_FIREWALL        `1` when the entrypoint installed the egress
 //	                               firewall; the server then refuses to run as root
@@ -442,6 +446,23 @@ func writeBody(w http.ResponseWriter, body []byte) {
 
 // ── Main ────────────────────────────────────────────────────────────
 
+// newMux gives the routes of the server. Each route but /health needs the
+// exec token: /health tells only that the server runs and how many execs run.
+// /preview/ needs the token too. No caller of the harness reads it, and a
+// route that serves files must not open to each local process.
+func newMux(table *execTable, exe *executor, token, previewRoot string) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.Handle("/health", healthHandler(table))
+	mux.Handle("/exec", requireExecToken(token, http.HandlerFunc(exe.handle)))
+	mux.Handle("/exec/", requireExecToken(token, execResultHandler(table)))
+	if previewRoot != "" {
+		mux.Handle("/preview/", requireExecToken(token, previewHandler(previewRoot)))
+	} else {
+		mux.Handle("/preview/", requireExecToken(token, http.HandlerFunc(previewNotConfiguredHandler)))
+	}
+	return mux
+}
+
 func main() {
 	initLogLevel()
 
@@ -450,6 +471,10 @@ func main() {
 		log.Fatalf("startup confinement error: read the groups: %v", err)
 	}
 	if err := verifyPrivilegeDrop(os.Getenv(envEgressFirewall), os.Geteuid(), os.Getegid(), groups); err != nil {
+		log.Fatalf("startup confinement error: %v", err)
+	}
+	token, err := takeExecToken()
+	if err != nil {
 		log.Fatalf("startup confinement error: %v", err)
 	}
 
@@ -472,19 +497,8 @@ func main() {
 	table.restore(restored)
 	exe := newExecutor(table, pt, records)
 
-	mux := http.NewServeMux()
-	mux.Handle("/health", healthHandler(table))
-	mux.Handle("/exec", http.HandlerFunc(exe.handle))
-	mux.Handle("/exec/", execResultHandler(table))
-
 	previewRoot := os.Getenv("PREVIEW_ROOT")
-	if previewRoot != "" {
-		mux.Handle("/preview/", previewHandler(previewRoot))
-	} else {
-		mux.HandleFunc("/preview/", previewNotConfiguredHandler)
-	}
-
-	handler := loggingMiddleware(mux)
+	handler := loggingMiddleware(newMux(table, exe, token, previewRoot))
 
 	srv := &http.Server{Addr: "0.0.0.0:" + port, Handler: handler, ReadHeaderTimeout: readHeaderTimeout}
 
