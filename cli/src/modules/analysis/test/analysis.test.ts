@@ -5,6 +5,7 @@ import { join, sep } from "node:path";
 import { z } from "zod";
 
 import { makeBaseSlug, matchOutputPrefix, detectSourceAnalysis, createAnalysis, applyInputsDiff, renameAnalysisAndMoveWorkspace } from "../analysis.ts";
+import { readMarker } from "../../anchor/marker.ts";
 import { archivedOutputSubdir, defaultOutputSubdir, disposeWorkspace, invalidateWorkspaceRoot, resolveOutputDir } from "../output.ts";
 import { env } from "../../../lib/env.ts";
 import { freshDb } from "../../../test_support/db.ts";
@@ -332,6 +333,37 @@ describe("renameAnalysisAndMoveWorkspace", () => {
 
         const outcome = (await renameAnalysisAndMoveWorkspace(a, str256("Left")._unsafeUnwrap()))._unsafeUnwrap();
         expect(outcome.analysis.slug).toBe("left-2");
+    });
+});
+
+describe("a new analysis in a folder whose own marker cannot be used", () => {
+    let dir = "";
+
+    beforeEach(() => {
+        freshDb();
+        dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-badmarker-")));
+        mkdirSync(join(dir, ".inflexa"));
+    });
+
+    afterEach(() => {
+        chmodSync(join(dir, ".inflexa", "id"), 0o644);
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("a corrupt marker is replaced with a new identity", async () => {
+        writeFileSync(join(dir, ".inflexa", "id"), "{ trunc");
+        const created = (await createAnalysis({ cwd: dir, name: str256("Fresh")._unsafeUnwrap() }))._unsafeUnwrap();
+        expect((await readMarker(dir))._unsafeUnwrap()?.anchorId).toBe(created.anchorId);
+    });
+
+    test("a marker that cannot be read fails with workspace_unavailable, and the message names the file", async () => {
+        const path = join(dir, ".inflexa", "id");
+        writeFileSync(path, JSON.stringify({ schemaVersion: 1, anchorId: "theirs" }));
+        chmodSync(path, 0o000);
+        const e = (await createAnalysis({ cwd: dir, name: str256("Blocked")._unsafeUnwrap() }))._unsafeUnwrapErr();
+        expect(e.type).toBe("workspace_unavailable");
+        expect(e.type === "workspace_unavailable" ? e.message : "").toContain(path);
+        expect(listAnalyses()._unsafeUnwrap()).toEqual([]);
     });
 });
 

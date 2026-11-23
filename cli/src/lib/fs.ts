@@ -1,5 +1,5 @@
 import { constants, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
-import { access, mkdir, readFile, readlink, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, open, readFile, readlink, rename, rm, stat, writeFile } from "node:fs/promises";
 import { type Result, ResultAsync, ok, err } from "neverthrow";
 import PQueue from "p-queue";
 
@@ -37,6 +37,25 @@ export function writeFileResult(path: string, data: string, op: string, opts?: P
 /** {@link writeFileResult} off the event loop, for a caller that must not stop on a hung mount. */
 export function writeFileResultAsync(path: string, data: string, op: string): ResultAsync<void, FsError> {
     return ResultAsync.fromPromise(writeFile(path, data), (cause): FsError => ({ type: "io_failed", op, cause }));
+}
+
+/**
+ * {@link writeFileResultAsync}, then a flush of the file to the disk before the result. A caller that renames the
+ * file over an old one needs the data on disk first: else a crash after the rename can leave an empty file.
+ */
+export function writeFileDurableResultAsync(path: string, data: string, op: string): ResultAsync<void, FsError> {
+    return ResultAsync.fromPromise(
+        (async () => {
+            const handle = await open(path, "w");
+            try {
+                await handle.writeFile(data);
+                await handle.sync();
+            } finally {
+                await handle.close();
+            }
+        })(),
+        (cause): FsError => ({ type: "io_failed", op, cause }),
+    );
 }
 
 /** Create directories recursively, wrapping `mkdirSync` throws into `Result`. */
@@ -119,6 +138,14 @@ export function pathExistsAsync(path: string): Promise<boolean> {
  */
 export function isDirWritable(dir: string): Promise<boolean> {
     return access(dir, constants.W_OK).then(
+        () => true,
+        () => false,
+    );
+}
+
+/** True when the process can read the file at `path`. Each error (missing, foreign ownership) reads as not readable. */
+export function isFileReadable(path: string): Promise<boolean> {
+    return access(path, constants.R_OK).then(
         () => true,
         () => false,
     );

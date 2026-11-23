@@ -49,10 +49,19 @@ async function classify(analysisId: string, rawPath: string, cwd: string): Promi
             // ensured id is the one row that really exists.
             const ensured = await getOrCreateAnchorForCwd(found.dir);
             if (ensured.isErr()) {
-                // A copy must not take the identity of its original, thus its input degrades to an absolute
-                // path until the user gives the copy its own identity.
-                if (ensured.error.type === "folder_is_copy") return ok({ path: abs, isDir, analysisId, anchorId: null });
-                return err(ensured.error);
+                // A copy must not take the identity of its original, and an original that does not answer can
+                // make this folder a copy, thus its input degrades to an absolute path. The marker was readable
+                // in the walk above, thus an unreadable one is a change between the two reads.
+                const e = ensured.error;
+                switch (e.type) {
+                    case "folder_is_copy":
+                    case "original_unverified":
+                        return ok({ path: abs, isDir, analysisId, anchorId: null });
+                    case "marker_unreadable":
+                        return err({ type: "query_failed", op: "classifyInputPath:marker", cause: e });
+                    default:
+                        return err(e);
+                }
             }
             return ok({ path: rel === "" ? "." : rel, isDir, analysisId, anchorId: ensured.value.id });
         }

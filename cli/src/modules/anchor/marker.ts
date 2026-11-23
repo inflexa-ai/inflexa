@@ -2,19 +2,15 @@ import { dirname, join, resolve } from "node:path";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import type { AnchorMarker, AnchorId } from "../../types/anchor.ts";
-import { mkdirResultAsync, pathExistsAsync, readFileResultAsync, renameResultAsync, writeFileResultAsync } from "../../lib/fs.ts";
+import { mkdirResultAsync, pathExistsAsync, readFileResultAsync, renameResultAsync, writeFileDurableResultAsync, writeFileResultAsync } from "../../lib/fs.ts";
 import { getLogger } from "../../lib/log.ts";
+import { markerPath } from "../../lib/paths.ts";
 
 /** Marker-layer failure. Covers I/O (FS read/write) and data integrity (corrupt marker file). */
 export type MarkerError =
     | { type: "marker_read_failed"; path: string; cause: unknown }
     | { type: "marker_corrupt"; path: string; raw: string }
     | { type: "marker_write_failed"; path: string; cause: unknown };
-
-/** The on-disk marker for a folder: <dir>/.inflexa/id (write-once identity file). */
-export function markerPath(dir: string): string {
-    return join(dir, ".inflexa", "id");
-}
 
 /**
  * Shape of a valid on-disk marker. Kept beside the marker I/O (its only reader) and pinned
@@ -75,8 +71,8 @@ export function writeMarker(dir: string, anchorId: AnchorId): ResultAsync<Anchor
 
 /**
  * Give the folder a new identity: write `anchorId` over the marker that is there. The write goes to a
- * temporary file first and then a rename, thus a crash leaves the old marker or the new one, never a
- * truncated file. The only caller is the deliberate re-mint of a copied folder, where the copy carries the
+ * temporary file first, with a flush to the disk, and then a rename, thus a crash leaves the old marker or the
+ * new one, never a truncated file. The only caller is the deliberate re-mint of a copied folder, where the copy carries the
  * marker of its original.
  */
 export function replaceMarker(dir: string, anchorId: AnchorId): ResultAsync<AnchorMarker, MarkerError> {
@@ -84,7 +80,7 @@ export function replaceMarker(dir: string, anchorId: AnchorId): ResultAsync<Anch
     const path = markerPath(dir);
     const temporary = `${path}.${anchorId}.tmp`;
     return mkdirResultAsync(join(dir, ".inflexa"), "replaceMarker:mkdir")
-        .andThen(() => writeFileResultAsync(temporary, `${JSON.stringify(marker, null, 2)}\n`, "replaceMarker:write"))
+        .andThen(() => writeFileDurableResultAsync(temporary, `${JSON.stringify(marker, null, 2)}\n`, "replaceMarker:write"))
         .andThen(() => renameResultAsync(temporary, path, "replaceMarker:rename"))
         .mapErr((e): MarkerError => ({ type: "marker_write_failed", path, cause: e.cause }))
         .map(() => marker);
