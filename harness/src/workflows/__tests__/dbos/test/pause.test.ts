@@ -296,20 +296,19 @@ describe("the pause of a loop inside a workflow", () => {
         }
     });
 
-    it("retries an outage on its timer, and waits in paused after the last delay", async () => {
-        const { workId, current } = start([failure(503), failure(503), reply([text("back")])], { retryDelaysMs: [1_000] });
+    it("retries an outage on its timer, and keeps the last delay after the schedule ends", async () => {
+        const { workId, current } = start([failure(503), failure(503), failure(503), reply([text("back")])], { retryDelaysMs: [300] });
         const handle = await DBOS.startWorkflow(pausingLoop, { workflowID: workId })(workId);
 
-        const row = await waitForPause(workId, "paused");
-        expect(row).toMatchObject({ state: "paused", cause: { kind: "outage" }, attempt: 1 });
-        const retrying = current.parts.find((part) => part.state === "retrying");
-        expect(retrying).toMatchObject({ cause: { kind: "outage" }, attempt: 0 });
-        expect(typeof retrying?.retryAt).toBe("string");
-        expect(current.script.calls).toHaveLength(2);
-
-        await createWork({ pool, ...WORK_DEPS }).resume(session, workId);
         expect(await handle.getResult()).toEqual({ reason: "stop", text: "back" });
-        expect(current.script.calls).toHaveLength(3);
+        expect(current.script.calls).toHaveLength(4);
+        const waits = current.parts.filter((part) => part.state !== "running");
+        expect(waits.map((part) => ({ state: part.state, attempt: part.attempt }))).toEqual([
+            { state: "retrying", attempt: 0 },
+            { state: "retrying", attempt: 1 },
+            { state: "retrying", attempt: 2 },
+        ]);
+        expect(waits.every((part) => typeof part.retryAt === "string")).toBe(true);
     });
 
     it("ends a wait in retrying on its timer with the end retry, after the time of the next retry", async () => {
