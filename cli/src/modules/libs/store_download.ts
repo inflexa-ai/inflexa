@@ -947,6 +947,14 @@ async function mergeReplaceableRecord(name: string, staged: string, target: stri
  * the graph, the template, the image record, and the SBOM describe one build and must move together. Any other top-level entry
  * moves in only when it is absent.
  *
+ * A sandbox can run during the merge: the sandbox gate lets a profile start in the download phase. The merge is
+ * safe under it, because it changes no entry that a running sandbox reads. A sandbox reads its analysis farm, whose
+ * links name only `store/` directories, and the cache of the farm is a copy. The merge only adds `store/`
+ * directories, and a name that exists stays, because the name is the hash of the content. The entries that an
+ * update replaces are the catalog farm and the publisher records, and a compose reads them, never a running
+ * sandbox. Keep this true: a merge that changes or removes a `store/` directory must wait for each lease that
+ * mounts the store.
+ *
  * The merge keeps the crash safety of the receipt pattern. Each move is a `rename` inside one
  * filesystem, thus a child is complete or absent and never half-written. A crash part-way leaves the
  * receipt unwritten, so the store reads back as incomplete and the next run merges again — where
