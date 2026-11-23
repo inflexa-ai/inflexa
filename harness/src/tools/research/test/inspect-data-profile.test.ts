@@ -21,9 +21,9 @@ async function seedAnalysis(seed: string[] = ["file-aaa", "file-bbb"], status: s
     const now = new Date().toISOString();
     await pool.query({
         text: `INSERT INTO cortex_analysis_state
-           (analysis_id, status, context, data_profile_status, seed_input_file_ids, created_at, updated_at)
-           VALUES ($1, 'active', NULL, $2, $3::jsonb, $4, $5)`,
-        values: [ANALYSIS, status, JSON.stringify(seed), now, now],
+           (analysis_id, status, context, data_profile_status, seed_input_count, created_at, updated_at)
+           VALUES ($1, 'active', NULL, $2, $3, $4, $5)`,
+        values: [ANALYSIS, status, seed.length, now, now],
     });
 }
 

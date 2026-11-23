@@ -30,9 +30,9 @@ async function seedAnalysis(pool: Pool, analysisId: string, dpStatus: string | n
     const now = new Date().toISOString();
     await pool.query({
         text: `INSERT INTO cortex_analysis_state
-           (analysis_id, status, context, data_profile_status, seed_input_file_ids, created_at, updated_at)
-           VALUES ($1, 'active', NULL, $2, $3::jsonb, $4, $5)`,
-        values: [analysisId, dpStatus, seed === null ? null : JSON.stringify(seed), now, now],
+           (analysis_id, status, context, data_profile_status, seed_input_count, created_at, updated_at)
+           VALUES ($1, 'active', NULL, $2, $3, $4, $5)`,
+        values: [analysisId, dpStatus, seed === null ? null : seed.length, now, now],
     });
 }
 
@@ -54,11 +54,11 @@ async function rawWorkflowId(pool: Pool, analysisId: string): Promise<string | n
     return res.rows[0]?.data_profile_workflow_id ?? null;
 }
 
-/** Rewrite `seed_input_file_ids` directly — the column every claim's CAS conjunct reads. */
+/** Rewrite `seed_input_count` directly, as the count of `seed` — the column every claim's CAS conjunct reads. */
 async function setSeed(pool: Pool, analysisId: string, seed: string[] | null): Promise<void> {
     await pool.query({
-        text: `UPDATE cortex_analysis_state SET seed_input_file_ids = $1::jsonb WHERE analysis_id = $2`,
-        values: [seed === null ? null : JSON.stringify(seed), analysisId],
+        text: `UPDATE cortex_analysis_state SET seed_input_count = $1 WHERE analysis_id = $2`,
+        values: [seed === null ? null : seed.length, analysisId],
     });
 }
 
@@ -238,8 +238,8 @@ describe("data-profile state transitions", () => {
         (await completeDataProfile(pool, "a-clear-done", SAMPLE_RESULT))._unsafeUnwrap();
         // Seed the sixth column the clear must null — the seed helper leaves it null.
         await pool.query({
-            text: `UPDATE cortex_analysis_state SET seed_input_file_ids = $1::jsonb WHERE analysis_id = $2`,
-            values: [JSON.stringify(["file-aaa", "file-bbb"]), "a-clear-done"],
+            text: `UPDATE cortex_analysis_state SET seed_input_count = $1 WHERE analysis_id = $2`,
+            values: [2, "a-clear-done"],
         });
 
         const cleared = (await clearDataProfile(pool, "a-clear-done"))._unsafeUnwrap();
@@ -247,7 +247,7 @@ describe("data-profile state transitions", () => {
 
         const raw = await pool.query<Record<string, unknown>>({
             text: `SELECT data_profile_status, data_profile_error, data_profile_started_at,
-                   data_profile_completed_at, data_profile_result, seed_input_file_ids
+                   data_profile_completed_at, data_profile_result, seed_input_count
             FROM cortex_analysis_state WHERE analysis_id = $1`,
             values: ["a-clear-done"],
         });
@@ -258,7 +258,7 @@ describe("data-profile state transitions", () => {
         expect(row.data_profile_started_at).toBeNull();
         expect(row.data_profile_completed_at).toBeNull();
         expect(row.data_profile_result).toBeNull();
-        expect(row.seed_input_file_ids).toBeNull();
+        expect(row.seed_input_count).toBeNull();
 
         // A cleared profile reads back as "no profile" — the same null a
         // never-profiled analysis returns.
@@ -397,23 +397,18 @@ describe("the seed conjunct on every claim into running", () => {
         const seedless = await pool.query<{ analysis_id: string }>(
             `SELECT analysis_id FROM cortex_analysis_state
              WHERE data_profile_status = 'running'
-               AND (seed_input_file_ids IS NULL OR jsonb_array_length(seed_input_file_ids) = 0)`,
+               AND (seed_input_count IS NULL OR seed_input_count = 0)`,
         );
         expect(seedless.rows).toEqual([]);
     });
 });
 
-// A terminal write (`completeDataProfile` / `failDataProfile`) runs as plain workflow-body
-// code and can reach the ledger after the row it targets was cleared (emptied inputs) or
-// expired (stale-timeout) out from under it — including on a DBOS recovery replay. Both
-// writes CAS on `data_profile_status = 'running'` so a late write finds no running row and
-// no-ops, instead of resurrecting the seedless-`completed` state the seed CAS forbids.
-describe("a seed from an input signature", () => {
+describe("the seed count from upsertAnalysis", () => {
     let pool: Pool;
     let drop: () => Promise<void>;
 
     beforeAll(async () => {
-        const ctx = await withSchema("dp_seed_signature");
+        const ctx = await withSchema("dp_seed_count");
         pool = ctx.pool;
         drop = ctx.drop;
     });
@@ -422,22 +417,31 @@ describe("a seed from an input signature", () => {
         await drop();
     });
 
-    it("stores one entry for a set of many files, reads back its count, and admits the claim", async () => {
-        (await upsertAnalysis(pool, "a-sig", null, { count: 600_000, digest: "abc" }))._unsafeUnwrap();
-        const raw = await pool.query<{ seed: unknown }>("SELECT seed_input_file_ids AS seed FROM cortex_analysis_state WHERE analysis_id = 'a-sig'");
-        expect(raw.rows[0]?.seed).toEqual([{ count: 600_000, digest: "abc" }]);
-        expect((await loadSeedInputCount(pool, "a-sig"))._unsafeUnwrap()).toBe(600_000);
-        expect((await tryStartDataProfile(pool, "a-sig"))._unsafeUnwrap()).toBe(true);
-        expect((await loadDataProfileStatus(pool, "a-sig"))._unsafeUnwrap()?.seedInputCount).toBe(600_000);
+    it("stores the count of a large set, reads it back, and admits the claim", async () => {
+        (await upsertAnalysis(pool, "a-count", null, 600_000))._unsafeUnwrap();
+        expect((await loadSeedInputCount(pool, "a-count"))._unsafeUnwrap()).toBe(600_000);
+        expect((await tryStartDataProfile(pool, "a-count"))._unsafeUnwrap()).toBe(true);
+        expect((await loadDataProfileStatus(pool, "a-count"))._unsafeUnwrap()?.seedInputCount).toBe(600_000);
     });
 
-    it("stores an empty set as `[]`, which no claim admits", async () => {
-        (await upsertAnalysis(pool, "a-sig-empty", null, { count: 0, digest: "e" }))._unsafeUnwrap();
-        expect((await loadSeedInputCount(pool, "a-sig-empty"))._unsafeUnwrap()).toBe(0);
-        expect((await tryStartDataProfile(pool, "a-sig-empty"))._unsafeUnwrap()).toBe(false);
+    it("stores an empty set as 0, which no claim admits", async () => {
+        (await upsertAnalysis(pool, "a-count-empty", null, 0))._unsafeUnwrap();
+        expect((await loadSeedInputCount(pool, "a-count-empty"))._unsafeUnwrap()).toBe(0);
+        expect((await tryStartDataProfile(pool, "a-count-empty"))._unsafeUnwrap()).toBe(false);
+    });
+
+    it("an upsert with no count keeps the stored count", async () => {
+        (await upsertAnalysis(pool, "a-count-keep", null, 7))._unsafeUnwrap();
+        (await upsertAnalysis(pool, "a-count-keep", "context"))._unsafeUnwrap();
+        expect((await loadSeedInputCount(pool, "a-count-keep"))._unsafeUnwrap()).toBe(7);
     });
 });
 
+// A terminal write (`completeDataProfile` / `failDataProfile`) runs as plain workflow-body
+// code and can reach the ledger after the row it targets was cleared (emptied inputs) or
+// expired (stale-timeout) out from under it — including on a DBOS recovery replay. Both
+// writes CAS on `data_profile_status = 'running'` so a late write finds no running row and
+// no-ops, instead of resurrecting the seedless-`completed` state the seed CAS forbids.
 describe("terminal writes CAS on running — a cleared row is never resurrected", () => {
     let pool: Pool;
     let drop: () => Promise<void>;
@@ -477,13 +481,13 @@ describe("terminal writes CAS on running — a cleared row is never resurrected"
 
         // Reads back as "no profile"; nothing resurrected — status, result, and seed all NULL.
         expect((await loadDataProfileStatus(pool, "a-complete-after-clear"))._unsafeUnwrap()).toBeNull();
-        const raw = await pool.query<{ data_profile_status: string | null; data_profile_result: unknown; seed_input_file_ids: string[] | null }>({
-            text: "SELECT data_profile_status, data_profile_result, seed_input_file_ids FROM cortex_analysis_state WHERE analysis_id = $1",
+        const raw = await pool.query<{ data_profile_status: string | null; data_profile_result: unknown; seed_input_count: number | null }>({
+            text: "SELECT data_profile_status, data_profile_result, seed_input_count FROM cortex_analysis_state WHERE analysis_id = $1",
             values: ["a-complete-after-clear"],
         });
         expect(raw.rows[0]?.data_profile_status).toBeNull();
         expect(raw.rows[0]?.data_profile_result).toBeNull();
-        expect(raw.rows[0]?.seed_input_file_ids).toBeNull();
+        expect(raw.rows[0]?.seed_input_count).toBeNull();
     });
 
     it("failDataProfile no-ops after a clear and leaves the row cleared", async () => {

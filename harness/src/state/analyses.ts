@@ -5,9 +5,7 @@
 import type { ResultAsync } from "neverthrow";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
-import type { DataProfileInputSignature } from "../contracts/data-profile.js";
 import type { Querier } from "./db.js";
-import { seedOfSignature } from "./data-profile.js";
 
 /**
  * Upsert a cortex_analysis_state row.
@@ -19,23 +17,22 @@ import { seedOfSignature } from "./data-profile.js";
  * User identity is derived from the ambient credential's JWT `sub` claim
  * at request time — not persisted in this table.
  *
- * `seed` is the signature of the input set that the next profile must cover. The row stores
- * it in `seed_input_file_ids` as one entry, not one entry for each file (see
- * `seedOfSignature`). An absent seed leaves the stored seed unchanged.
+ * `seedInputCount` is the file count of the input set that the next profile must cover. An
+ * absent count leaves the stored seed unchanged.
  */
-export function upsertAnalysis(pool: Querier, resourceId: string, context: string | null, seed?: DataProfileInputSignature): ResultAsync<void, DbError> {
+export function upsertAnalysis(pool: Querier, resourceId: string, context: string | null, seedInputCount?: number): ResultAsync<void, DbError> {
     const now = new Date().toISOString();
     return tryMutation("analyses.upsertAnalysis", async () => {
         await pool.query({
             text: `INSERT INTO cortex_analysis_state
             (analysis_id, status, context, data_profile_status,
-             seed_input_file_ids, created_at, updated_at)
-            VALUES ($1, 'active', $2, 'pending', $3::jsonb, $4, $5)
+             seed_input_count, created_at, updated_at)
+            VALUES ($1, 'active', $2, 'pending', $3, $4, $5)
             ON CONFLICT (analysis_id) DO UPDATE SET
               context = EXCLUDED.context,
-              seed_input_file_ids = COALESCE(EXCLUDED.seed_input_file_ids, cortex_analysis_state.seed_input_file_ids),
+              seed_input_count = COALESCE(EXCLUDED.seed_input_count, cortex_analysis_state.seed_input_count),
               updated_at = EXCLUDED.updated_at`,
-            values: [resourceId, context ?? null, seed ? JSON.stringify(seedOfSignature(seed)) : null, now, now],
+            values: [resourceId, context ?? null, seedInputCount ?? null, now, now],
         });
     });
 }

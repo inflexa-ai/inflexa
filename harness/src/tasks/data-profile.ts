@@ -1054,7 +1054,7 @@ async function dispatchClaimedProfile(
  * fire-and-forget for whichever claim won. Safe to call from multiple sites
  * concurrently: the claims are CAS UPDATEs, so at most one caller dispatches.
  *
- * Every claim requires a non-empty `seed_input_file_ids` — a profile must always name
+ * Every claim requires a non-zero `seed_input_count` — a profile must always name
  * the input set it covers. The startable claim takes `'pending'` or a NULL status (NULL is
  * the cleared-then-reseeded state); the rerun claim takes `'completed'`. A `'failed'`
  * row is claimed by neither: retrying a failure is a deliberate act the caller drives

@@ -21,9 +21,9 @@ describe("reconcileOrphanedDataProfile", () => {
 
     async function seedRunning(analysisId: string): Promise<void> {
         // The seed set is what makes the row claimable: every claim into `running` requires
-        // a non-empty `seed_input_file_ids`, so an analysis upserted with no inputs stays
+        // a non-zero `seed_input_count`, so an analysis upserted with no inputs stays
         // at `pending` and there is no orphaned `running` row to reconcile.
-        (await upsertAnalysis(rig.pool, analysisId, null, { count: 3, digest: "d" }))._unsafeUnwrap();
+        (await upsertAnalysis(rig.pool, analysisId, null, 3))._unsafeUnwrap();
         const claimed = (await tryStartDataProfile(rig.pool, analysisId))._unsafeUnwrap();
         expect(claimed).toBe(true);
     }

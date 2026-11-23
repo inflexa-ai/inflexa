@@ -55,7 +55,7 @@ const noEngineLauncher: RunLauncher = { launch: () => Promise.reject(new Error("
 /**
  * Seed a `cortex_analysis_state` row at the given `data_profile_status` (pass `null`
  * for the cleared/never-profiled state). Mirrors the helper in
- * `state/test/data-profile.test.ts`: it leaves `seed_input_file_ids` NULL, which is
+ * `state/test/data-profile.test.ts`: it leaves `seed_input_count` NULL, which is
  * exactly the unseeded state that the claim CAS refuses, and that the trigger's guard
  * refuses when the manifest names files.
  */
@@ -69,11 +69,11 @@ async function seedAnalysis(pool: Querier, analysisId: string, dpStatus: string 
     });
 }
 
-/** Write `seed_input_file_ids` directly — the column the guard and the CAS both read. */
+/** Write `seed_input_count` directly, as the count of `seed` — the column the guard and the CAS both read. */
 async function setSeed(pool: Querier, analysisId: string, seed: string[] | null): Promise<void> {
     await pool.query({
-        text: `UPDATE cortex_analysis_state SET seed_input_file_ids = $1::jsonb WHERE analysis_id = $2`,
-        values: [seed === null ? null : JSON.stringify(seed), analysisId],
+        text: `UPDATE cortex_analysis_state SET seed_input_count = $1 WHERE analysis_id = $2`,
+        values: [seed === null ? null : seed.length, analysisId],
     });
 }
 
@@ -147,7 +147,7 @@ describe("triggerDataProfile seed-first guard", () => {
     });
 
     it("refuses a NULL-seed row dispatched a manifest that names files, and leaves it unclaimed", async () => {
-        // `seedAnalysis` leaves `seed_input_file_ids` NULL. The manifest names a file, so
+        // `seedAnalysis` leaves `seed_input_count` NULL. The manifest names a file, so
         // the caller skipped the seed: the trigger refuses before any claim.
         await seedAnalysis(pool, "a-noseed", "pending");
 
@@ -353,7 +353,7 @@ describe("triggerDataProfile seed-first guard", () => {
                     const res = await pool.query(...args);
                     const first = args[0];
                     const text = typeof first === "string" ? first : first.text;
-                    if (text.includes("SELECT seed_input_file_ids")) await setSeed(pool, "a-raced", null);
+                    if (text.includes("SELECT seed_input_count")) await setSeed(pool, "a-raced", null);
                     return res;
                 },
             },

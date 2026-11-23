@@ -5,10 +5,9 @@
  */
 
 import type { ResultAsync } from "neverthrow";
-import { z } from "zod";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
-import type { DataProfileInputSignature, DataProfileLifecycleStatus, DataProfileResult } from "../contracts/data-profile.js";
+import type { DataProfileLifecycleStatus, DataProfileResult } from "../contracts/data-profile.js";
 import type { Querier } from "./db.js";
 
 /**
@@ -54,58 +53,32 @@ export type DataProfileStatus = {
      * {@link recordDataProfileWorkflowId}).
      */
     workflowId: string | null;
-    /** The count of input files of the seeded set, or `null` when the row holds no seed (see {@link seedCountOf}). */
+    /** The count of input files of the seeded set, or `null` when the row holds no seed. */
     seedInputCount: number | null;
 };
 
 /**
- * The `seed_input_file_ids` value that names an input set: one entry, the signature of the set,
- * or `[]` for an empty set. One entry for each set and not one for each file, thus the row does
- * not grow with the file count, and the {@link SEEDED} conjunct reads it unchanged.
- */
-export function seedOfSignature(signature: DataProfileInputSignature): DataProfileInputSignature[] {
-    return signature.count > 0 ? [signature] : [];
-}
-
-/** A seed that {@link seedOfSignature} wrote for a non-empty set. */
-const SignatureSeedSchema = z.tuple([z.object({ count: z.number().int().nonnegative() })]);
-
-/**
- * The file count of a stored seed. A signature entry (see {@link seedOfSignature}) carries its count.
- * An array of file ids, which an embedder can also write, counts its entries. `null` is no seed, or a shape neither of the two.
- */
-export function seedCountOf(seed: unknown): number | null {
-    const signature = SignatureSeedSchema.safeParse(seed);
-    if (signature.success) return signature.data[0].count;
-    const fileIds = z.array(z.string()).safeParse(seed);
-    return fileIds.success ? fileIds.data.length : null;
-}
-
-/**
  * The conjunct every claim into `running` carries: the row names a non-empty set
- * of seeded input files. A seed holds one entry for a non-empty set (see
- * {@link seedOfSignature}), thus a non-empty array is a non-empty set.
+ * of seeded input files.
  *
  * It rides in the CAS rather than in a caller's pre-read because "a `running` row
  * records the input set it is profiling" is an invariant of the LEDGER, not of any
  * one orchestration — and `clearDataProfile` can null the seed of any non-`running`
  * row at any moment, so a pre-read followed by a claim is a race, not an enforcement.
  *
- * An empty array is not a seed. `upsertAnalysis` writes NULL to mean "leave the
- * stored seed alone" (its `COALESCE` conflict branch), so `[]` is a real value that
- * names zero files — a set no profile may run against. `jsonb_array_length` raises on
- * a non-array jsonb; the column is only ever written from `JSON.stringify(string[])`,
- * and surfacing a hand-corrupted row as a `DbError` beats silently claiming it.
+ * A count of zero is not a seed. `upsertAnalysis` writes NULL to mean "leave the
+ * stored seed alone" (its `COALESCE` conflict branch), so `0` is a real value that
+ * names zero files — a set no profile may run against.
  */
-const SEEDED = "seed_input_file_ids IS NOT NULL AND jsonb_array_length(seed_input_file_ids) > 0";
+const SEEDED = "seed_input_count > 0";
 
 /**
- * The negation of {@link SEEDED}: the row names no input file. A NULL seed and `[]`
+ * The negation of {@link SEEDED}: the row names no input file. A NULL seed and `0`
  * both name zero files, and {@link completeEmptyDataProfile} treats them the same.
  * The two predicates are disjoint, so a claim into `running` and an empty-set
  * completion can never both win on one row.
  */
-const UNSEEDED = "(seed_input_file_ids IS NULL OR jsonb_array_length(seed_input_file_ids) = 0)";
+const UNSEEDED = "(seed_input_count IS NULL OR seed_input_count = 0)";
 
 /**
  * Try to claim a startable row into `running`. Startable means `'pending'` (seeded,
@@ -115,7 +88,7 @@ const UNSEEDED = "(seed_input_file_ids IS NULL OR jsonb_array_length(seed_input_
  * profiled again: the seed upsert's ON CONFLICT deliberately never rewrites profile
  * status, so the row stays NULL — and NULL matches neither the rerun (`completed`)
  * nor retry (`failed`) claims. A cleared row is therefore claimable only once a later
- * seed upsert has repopulated `seed_input_file_ids` (see {@link SEEDED}).
+ * seed upsert has repopulated `seed_input_count` (see {@link SEEDED}).
  *
  * `ok(true)` when this call won the CAS; `ok(false)` when it lost or the row is
  * unseeded — neither is an error, both stay in the ok channel.
@@ -281,7 +254,7 @@ function terminalWriteOf(rows: ReadonlyArray<TerminalWriteRow>): DataProfileTerm
  * `expireStaleDataProfile` flips a slow run to `failed`, and DBOS recovery may replay
  * this body after either has landed. Without the guard a late completion re-stamps
  * `completed` + result over a since-cleared row, resurrecting exactly the seedless-
- * completed state the seed CAS forbids (`completed` with a NULL `seed_input_file_ids`).
+ * completed state the seed CAS forbids (`completed` with a NULL `seed_input_count`).
  * Every legitimate caller reaches here from a row it claimed into `running`, so the
  * guard only ever refuses a row another writer already moved on from.
  *
@@ -388,7 +361,7 @@ export function reconcileOrphanedDataProfile(pool: Querier, analysisId: string):
 
 /**
  * Clear an analysis's data profile back to the honest "no profile" state,
- * nulling every `data_profile_*` column plus the `seed_input_file_ids` the
+ * nulling every `data_profile_*` column plus the `seed_input_count` the
  * profile was taken against. `ok(true)` when a row was cleared, `ok(false)`
  * when the clear was skipped (no such analysis, or a live profile) — a skip
  * stays in the ok channel, exactly like the sibling CAS ops.
@@ -415,7 +388,7 @@ export function clearDataProfile(pool: Querier, analysisId: string): ResultAsync
             SET data_profile_status = NULL, data_profile_error = NULL,
                 data_profile_started_at = NULL, data_profile_completed_at = NULL,
                 data_profile_result = NULL, data_profile_workflow_id = NULL,
-                data_profile_user_id = NULL, seed_input_file_ids = NULL
+                data_profile_user_id = NULL, seed_input_count = NULL
             WHERE analysis_id = $1 AND data_profile_status IS DISTINCT FROM 'running'`,
             values: [analysisId],
         });
@@ -434,7 +407,7 @@ export function clearDataProfile(pool: Querier, analysisId: string): ResultAsync
  * `data_profile_workflow_id` stays NULL, because no stream is addressable (see
  * {@link recordDataProfileWorkflowId}).
  *
- * The seed is written as `[]`, so the completed row names the set that it covers: the
+ * The seed is written as `0`, so the completed row names the set that it covers: the
  * empty set. A `completed` row with a NULL seed stays forbidden (see
  * {@link completeDataProfile}). A prior `data_profile_result` is replaced with NULL,
  * because it describes files that the analysis no longer has. A prior `failed` row is
@@ -465,7 +438,7 @@ export function completeEmptyDataProfile(pool: Querier, analysisId: string): Res
             SET data_profile_status = 'completed', data_profile_error = NULL,
                 data_profile_started_at = $1, data_profile_completed_at = $1,
                 data_profile_result = NULL, data_profile_workflow_id = NULL, data_profile_user_id = NULL,
-                seed_input_file_ids = '[]'::jsonb
+                seed_input_count = 0
             WHERE analysis_id = $2 AND data_profile_status IS DISTINCT FROM 'running' AND ${UNSEEDED}`,
             values: [now, analysisId],
         });
@@ -487,7 +460,7 @@ export function completeEmptyDataProfile(pool: Querier, analysisId: string): Res
  * profile" — never assume "row exists ⇒ status non-null" — and never read
  * `seedInputCount` from a `null` return (it rides along only on the non-null
  * branch). The pre-clearance state to check seed is not exposed here; read
- * `seed_input_file_ids` directly when a caller needs that distinction
+ * `seed_input_count` directly when a caller needs that distinction
  * (e.g. the seed-first guard in `triggerDataProfile`).
  */
 export function loadDataProfileStatus(pool: Querier, analysisId: string): ResultAsync<DataProfileStatus | null, DbError> {
@@ -499,11 +472,11 @@ export function loadDataProfileStatus(pool: Querier, analysisId: string): Result
             data_profile_completed_at: string | null;
             data_profile_result: DataProfileStatus["result"];
             data_profile_workflow_id: string | null;
-            seed_input_file_ids: unknown;
+            seed_input_count: number | null;
         }>({
             text: `SELECT data_profile_status, data_profile_error,
                    data_profile_started_at, data_profile_completed_at,
-                   data_profile_result, data_profile_workflow_id, seed_input_file_ids
+                   data_profile_result, data_profile_workflow_id, seed_input_count
             FROM cortex_analysis_state WHERE analysis_id = $1`,
             values: [analysisId],
         });
@@ -516,7 +489,7 @@ export function loadDataProfileStatus(pool: Querier, analysisId: string): Result
             completedAt: row.data_profile_completed_at ?? null,
             result: row.data_profile_result ?? null,
             workflowId: row.data_profile_workflow_id ?? null,
-            seedInputCount: seedCountOf(row.seed_input_file_ids),
+            seedInputCount: row.seed_input_count ?? null,
         };
     });
 }
@@ -545,12 +518,12 @@ export function queryRunningProfiles(
 }
 
 /**
- * Read the file count of an analysis's `seed_input_file_ids`, without the NULL-status
+ * Read an analysis's `seed_input_count`, without the NULL-status
  * collapse {@link loadDataProfileStatus} applies (which hides the seed of any cleared row).
  * Returns the count, or `null` for BOTH "no such analysis row" AND "the row
  * exists but the column is NULL" — the two are deliberately indistinguishable here,
  * exactly as they are to the consumer: both mean "nothing to profile, no claim would
- * match". A stored `[]` returns 0 — a real value naming zero files,
+ * match". A stored `0` is a real value naming zero files,
  * which a caller refuses distinctly from a missing seed.
  *
  * Advisory only: this read never gates a claim. The seed conjunct that actually makes
@@ -560,10 +533,10 @@ export function queryRunningProfiles(
  */
 export function loadSeedInputCount(pool: Querier, analysisId: string): ResultAsync<number | null, DbError> {
     return tryQuery("dataProfile.loadSeedInputCount", async () => {
-        const result = await pool.query<{ seed: unknown }>({
-            text: "SELECT seed_input_file_ids AS seed FROM cortex_analysis_state WHERE analysis_id = $1",
+        const result = await pool.query<{ seed: number | null }>({
+            text: "SELECT seed_input_count AS seed FROM cortex_analysis_state WHERE analysis_id = $1",
             values: [analysisId],
         });
-        return seedCountOf(result.rows[0]?.seed ?? null);
+        return result.rows[0]?.seed ?? null;
     });
 }
