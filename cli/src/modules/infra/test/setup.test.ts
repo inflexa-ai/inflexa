@@ -1151,6 +1151,9 @@ describe("askProxy — 503 cooldown discrimination", () => {
 // container runtime is spawned and no real model is acquired. These assert that an ANSWERED
 // embedding mode is configured AHEAD of the runtime gate (so an air-gapped host with no ready runtime
 // still configures embeddings), and the in-flow embedding step does not run a second time.
+/** The executor of an engine in a VM: the stub of the engine probe for each setup run that reaches it. */
+const VM_EXECUTOR: container.DetectedExecutor = { executor: { kind: "vm", bindOwnership: "masked" }, ociRuntime: undefined };
+
 describe("setup() — an answered embedding mode runs ahead of the runtime gate", () => {
     const spies: { mockRestore: () => void }[] = [];
 
@@ -1214,6 +1217,7 @@ describe("setup() — an answered embedding mode runs ahead of the runtime gate"
         const embedSpy = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(() => Promise.resolve(ok(undefined)));
         spies.push(embedSpy);
         spies.push(spyOn(container, "firstReadyRuntime").mockImplementation(() => Promise.resolve(ok(container.runtimes.docker))));
+        spies.push(spyOn(container, "resolveSandboxExecutor").mockImplementation(() => Promise.resolve(ok(VM_EXECUTOR))));
         // Stub the reference-data step so the full non-interactive flow reaches (and skips) the in-flow
         // embedding site without doing real reference provisioning.
         spies.push(spyOn(refsCommands, "runReferenceSetup").mockImplementation(() => Promise.resolve(ok(undefined))));
@@ -1698,6 +1702,7 @@ describe("setup() — batch orchestration", () => {
         replaceProperty(DEFAULT_SESSION_FACTS_OPTS, "browser", () => ({ ...HEADLESS_SESSION, display: true }));
 
         firstReady = spyOn(container, "firstReadyRuntime").mockImplementation(() => Promise.resolve(ok(container.runtimes.docker)));
+        spies.push(spyOn(container, "resolveSandboxExecutor").mockImplementation(() => Promise.resolve(ok(VM_EXECUTOR))));
         embedStep = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(() => Promise.resolve(ok(undefined)));
         refsStep = spyOn(refsCommands, "runReferenceSetup").mockImplementation(() => Promise.resolve(ok(undefined)));
         // The real read runs `docker info`. No answer keeps the figures of the host, the same as an engine that does not answer.
@@ -2176,6 +2181,37 @@ describe("setup() — batch orchestration", () => {
         expect(process.exitCode).toBe(1);
         expect(firstReady).not.toHaveBeenCalled();
         expect(existsSync(env.configPath)).toBe(false);
+    });
+
+    test("rootless Docker is refused before setup writes anything, with the supported engines", async () => {
+        spies.push(
+            spyOn(container, "resolveSandboxExecutor").mockImplementation(() =>
+                Promise.resolve(
+                    err({
+                        type: "rootless_docker",
+                        message: "Rootless Docker cannot run the sandbox.\n  Use rootful Docker, Docker Desktop, or Podman, then re-run.",
+                    }),
+                ),
+            ),
+        );
+
+        const errors = await runCapturingStderr(batch({}));
+
+        expect(process.exitCode).toBe(1);
+        expect(errors).toContain("Use rootful Docker, Docker Desktop, or Podman");
+        expect(existsSync(env.configPath)).toBe(false);
+    });
+
+    test("an engine whose info setup cannot read does not stop setup: the boot reports it", async () => {
+        spies.push(
+            spyOn(container, "resolveSandboxExecutor").mockImplementation(() =>
+                Promise.resolve(err({ type: "engine_info_failed", message: "Could not read the Docker engine info." })),
+            ),
+        );
+
+        await runSetup(batch({}));
+
+        expect(process.exitCode).toBe(0);
     });
 
     test("an answered runtime that IS ready is persisted like a detected choice", async () => {

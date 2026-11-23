@@ -23,7 +23,7 @@ import {
 } from "@inflexa-ai/harness";
 import { inProcessChatTurns } from "@inflexa-ai/harness/testing";
 
-import { ContainerRuntimeError, runtimes } from "../../../lib/container.ts";
+import { ContainerRuntimeError, runtimes, type DetectedExecutor } from "../../../lib/container.ts";
 import { env } from "../../../lib/env.ts";
 import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../../lib/credential.ts";
 import { instanceLockPath, processIdentity } from "../../../lib/lock.ts";
@@ -44,6 +44,8 @@ import { agentProviderInner } from "../agent_switch.ts";
 import type { AgentEffort, AgentName, ResolvedHarnessConfig, ResolvedModelConnection } from "../config.ts";
 import { present } from "../../../lib/present.ts";
 import { awaitOk } from "../../../test_support/result.ts";
+
+const VM_DOCKER: DetectedExecutor = { executor: { kind: "vm", bindOwnership: "masked" }, ociRuntime: undefined };
 
 const backfillLogRecordSchema = z.looseObject({
     msg: z.string().optional(),
@@ -110,8 +112,8 @@ function recorded<T>(calls: string[], name: string, answer: () => T): () => Prom
 // path runs fully offline.
 function recordingSeams(calls: string[]): BootSeams {
     return {
-        // Default to a docker pin (today's behavior): no socket, no step-tree loosening.
-        resolveSandboxEngine: recorded(calls, "resolveSandboxEngine", () => ok({ runtime: runtimes.docker, socketPath: undefined })),
+        // Default to a docker pin on a VM engine: no socket, and the image user.
+        resolveSandboxEngine: recorded(calls, "resolveSandboxEngine", () => ok({ runtime: runtimes.docker, socketPath: undefined, detected: VM_DOCKER })),
         ensurePostgres: recorded(calls, "postgres", () => ok({ host: "localhost", port: 5, database: "d", user: "u", password: "p" })),
         // Real construction (pure, connects lazily) so the offline boot runs unchanged;
         // the engine-wiring tests below swap this for a capturing variant.
@@ -836,15 +838,16 @@ describe("bootHarnessRuntime", () => {
         }
     });
 
-    test("a podman pin threads the resolved socket and host-preserved bind ownership into the sandbox client", async () => {
+    test("a podman pin threads the resolved socket and the executor fact into the sandbox client", async () => {
         const calls: string[] = [];
         // Captured on an object property: a bare `let` assigned only inside the seam
         // closure gets narrowed back to `null` by control-flow analysis across the await.
         const captured: { config: CreateSandboxClientConfig | null } = { config: null };
+        const detected: DetectedExecutor = { executor: { kind: "rootless-podman", selinux: true }, ociRuntime: "crun" };
         const seams: BootSeams = {
             ...recordingSeams(calls),
             resolveSandboxEngine: recorded(calls, "resolveSandboxEngine", () =>
-                ok({ runtime: runtimes.podman, socketPath: "/var/folders/xy/podman-api.sock" }),
+                ok({ runtime: runtimes.podman, socketPath: "/run/user/1234/podman/podman.sock", detected }),
             ),
             createSandbox: (cfg) => {
                 captured.config = cfg;
@@ -854,19 +857,21 @@ describe("bootHarnessRuntime", () => {
         const result = await bootHarnessRuntime({ seams, config: testConfig() });
 
         expect(result.isOk()).toBe(true);
-        // A podman pin dials the resolved compat socket and declares the engine's
-        // honest bind ownership so the harness makes the step tree workload-writable.
         expect(captured.config).not.toBeNull();
-        expect(captured.config?.engineSocketPath).toBe("/var/folders/xy/podman-api.sock");
-        expect(captured.config?.engineBindOwnership).toBe("host-preserved");
+        expect(captured.config?.engineSocketPath).toBe("/run/user/1234/podman/podman.sock");
+        expect(captured.config?.executor).toEqual({ kind: "rootless-podman", selinux: true });
     });
 
-    test("a docker pin builds today's exact sandbox config — no engineSocketPath key, no engineBindOwnership", async () => {
+    test("a docker pin dials the default socket and gives the detected executor fact", async () => {
         const calls: string[] = [];
         const captured: { config: CreateSandboxClientConfig | null } = { config: null };
+        const detected: DetectedExecutor = {
+            executor: { kind: "rootful", user: { uid: 1234, gid: 1234, groups: [1234, 3000] }, selinux: false },
+            ociRuntime: undefined,
+        };
         const seams: BootSeams = {
             ...recordingSeams(calls),
-            resolveSandboxEngine: recorded(calls, "resolveSandboxEngine", () => ok({ runtime: runtimes.docker, socketPath: undefined })),
+            resolveSandboxEngine: recorded(calls, "resolveSandboxEngine", () => ok({ runtime: runtimes.docker, socketPath: undefined, detected })),
             createSandbox: (cfg) => {
                 captured.config = cfg;
                 return createSandboxClient(cfg);
@@ -876,10 +881,40 @@ describe("bootHarnessRuntime", () => {
 
         expect(result.isOk()).toBe(true);
         expect(captured.config).not.toBeNull();
-        // Byte-identical to today: the keys must be ABSENT (not present-and-undefined),
-        // so dockerode keeps its default resolution and the step tree keeps its modes.
+        // The key must be ABSENT (not present-and-undefined), so dockerode keeps its default resolution.
         expect(captured.config !== null && "engineSocketPath" in captured.config).toBe(false);
-        expect(captured.config !== null && "engineBindOwnership" in captured.config).toBe(false);
+        expect(captured.config?.executor).toEqual(detected.executor);
+    });
+
+    test("rootless Podman on an OCI runtime other than crun boots with a warning that names the cause and the fix", async () => {
+        const calls: string[] = [];
+        const records: { msg?: string; module?: string }[] = [];
+        let open = true;
+        addLogStream({
+            write(chunk: string): void {
+                if (!open) return;
+                const record = JSON.parseWith(chunk, backfillLogRecordSchema);
+                if (record?.msg?.includes("OCI runtime") === true) records.push(record);
+            },
+        });
+        const detected: DetectedExecutor = { executor: { kind: "rootless-podman", selinux: false }, ociRuntime: "runc" };
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            resolveSandboxEngine: recorded(calls, "resolveSandboxEngine", () =>
+                ok({ runtime: runtimes.podman, socketPath: "/run/user/1234/podman/podman.sock", detected }),
+            ),
+        };
+        try {
+            const result = await bootHarnessRuntime({ seams, config: testConfig() });
+            await flushLogs();
+
+            expect(result.isOk()).toBe(true);
+            expect(records).toHaveLength(1);
+            expect(records[0]?.msg).toContain("project group");
+            expect(records[0]?.msg).toContain("crun");
+        } finally {
+            open = false;
+        }
     });
 
     test("an engine smaller than the budget clamps the step ceilings of the sandbox client", async () => {

@@ -46,7 +46,15 @@ import {
 } from "@inflexa-ai/harness";
 
 import { ensureRuntime, readConfig } from "../../lib/config.ts";
-import { engineCapacity, resolveEngineSocket, type ContainerRuntime, type ContainerRuntimeError, type EngineCapacity } from "../../lib/container.ts";
+import {
+    ContainerRuntimeError,
+    engineCapacity,
+    resolveEngineSocket,
+    resolveSandboxExecutor,
+    type ContainerRuntime,
+    type DetectedExecutor,
+    type EngineCapacity,
+} from "../../lib/container.ts";
 import { env, KNOWLEDGE_API_KEY_VAR, providerApiKeyVar, resolveModelApiKey } from "../../lib/env.ts";
 import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialSource } from "../../lib/credential.ts";
 import { acquireInstanceLock, HARNESS_RUNTIME_LOCK_KEY, instanceLockPath, releaseInstanceLock } from "../../lib/lock.ts";
@@ -387,12 +395,14 @@ async function probeEmbeddingProvider(provider: EmbeddingProvider): Promise<Resu
  * The pinned container runtime plus the Docker-API socket the sandbox client dials
  * for it. `socketPath` is the socket of the current Docker context or the Podman
  * compat socket, and `undefined` when dockerode keeps its default resolution.
+ * `detected` is the executor fact of that engine.
  */
 export type ResolvedSandboxEngine = {
     readonly runtime: ContainerRuntime;
     readonly socketPath: string | undefined;
     /** The cores and the memory of the engine. Absent when the engine gave no figures: the budget then keeps the host. */
     readonly capacity?: EngineCapacity;
+    readonly detected: DetectedExecutor;
 };
 
 /**
@@ -409,7 +419,9 @@ async function resolveSandboxEngineOnce(): Promise<Result<ResolvedSandboxEngine,
     const runtime = rtResult.value;
     const socket = await resolveEngineSocket(runtime);
     if (socket.isErr()) return err(socket.error);
-    return ok({ runtime, socketPath: socket.value, capacity: await engineCapacity(runtime) });
+    const detected = await resolveSandboxExecutor(runtime);
+    if (detected.isErr()) return err(new ContainerRuntimeError(detected.error.message));
+    return ok({ runtime, socketPath: socket.value, capacity: await engineCapacity(runtime), detected: detected.value });
 }
 
 /**
@@ -928,8 +940,14 @@ async function bootHarnessRuntimeOnce(
     // ONE engine by construction.
     const engineResult = await seams.resolveSandboxEngine();
     if (engineResult.isErr()) return err({ type: "sandbox_engine_unresolved", message: engineResult.error.message });
-    const { runtime: pinnedRuntime, socketPath: engineSocketPath } = engineResult.value;
+    const { runtime: pinnedRuntime, socketPath: engineSocketPath, detected } = engineResult.value;
     const resourcePolicy = clampPolicyToEngine(cfg.resourcePolicy, engineResult.value.capacity);
+    if (detected.executor.kind === "rootless-podman" && detected.ociRuntime !== "crun") {
+        logger.warn(
+            'the OCI runtime of rootless Podman is not crun, thus a sandbox gets no supplementary group of the user and cannot read the data of a project group — set runtime = "crun" in containers.conf',
+            { ociRuntime: detected.ociRuntime },
+        );
+    }
 
     const pgResult = await seams.ensurePostgres();
     if (pgResult.isErr()) return err({ type: "postgres_unavailable", cause: pgResult.error });
@@ -1064,20 +1082,12 @@ async function bootHarnessRuntimeOnce(
         };
         const sandboxBackend: AgentBackend = { provider: sandboxProvider, model: sandboxModel };
         const utilityBackend: AgentBackend = { provider: utilityProvider, model: utilityModel };
-        // Docker resolves to no socket path and no ownership fact. For a docker pin each key stays absent,
-        // so dockerode keeps its default socket resolution (including any DOCKER_HOST the user relies on)
-        // and the harness leaves the modes of the step tree untouched.
-        const engineOptions: { engineSocketPath?: string; engineBindOwnership?: "host-preserved" } = {};
+        // Docker resolves to no socket path. For a docker pin the key stays absent, so dockerode keeps its
+        // default socket resolution (including any DOCKER_HOST the user relies on).
+        const engineOptions: { engineSocketPath?: string } = {};
         // Pull (`ensureSandboxImage`) and create must target the SAME engine, so dial the socket resolved
         // for the pinned runtime.
         if (engineSocketPath !== undefined) engineOptions.engineSocketPath = engineSocketPath;
-        // A podman pin declares an engine fact: its bind mounts expose honest host
-        // ownership — virtiofs on macOS, native binds / rootless userns uid-mapping
-        // on Linux — presenting a host uid the uid-1000 sandbox workload cannot
-        // write; the harness compensates (today by loosening each step's write
-        // tree). Docker Desktop's file-sharing layer masks that mismatch, so a
-        // docker pin leaves the field unset and the modes untouched.
-        if (pinnedRuntime.id === "podman") engineOptions.engineBindOwnership = "host-preserved";
         const sandboxClient = seams.createSandbox({
             // Podman speaks the Docker API, so the harness's dockerode-based `docker`
             // backend drives it unchanged — the only divergence is the *socket* it
@@ -1120,6 +1130,9 @@ async function bootHarnessRuntimeOnce(
             // adoption) are observable only through this seam — unset, they fall to
             // the harness's noop logger and vanish.
             logger,
+            // The engine runs on this machine, thus the CLI detects the executor fact here. The harness
+            // selects the workload user from it.
+            executor: detected.executor,
             ...engineOptions,
         });
         const workspaceFs = createWorkspaceFilesystem({ resolveWorkspaceRoot });

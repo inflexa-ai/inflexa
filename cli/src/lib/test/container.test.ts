@@ -15,12 +15,14 @@ import {
     resolveEngineApiSocket,
     resolveEngineSocket,
     resolveImageTotalBytes,
+    resolveSandboxExecutor,
     runtimes,
     splitImageRef,
     type CaptureResult,
     type ContainerRuntime,
     type EnginePullProgress,
     type EngineSocketProbes,
+    type SandboxExecutorProbes,
 } from "../container.ts";
 import { runAfter } from "../timer.ts";
 
@@ -191,6 +193,129 @@ describe("resolveEngineSocket", () => {
         });
 
         expect(result._unsafeUnwrapErr().message).toContain("systemctl --user enable --now podman.socket");
+    });
+});
+
+describe("resolveSandboxExecutor", () => {
+    const USER = { uid: 1234, gid: 1234, groups: [1234, 3000] };
+    function probes(over: Partial<SandboxExecutorProbes> & { result?: CaptureResult; spawned?: string[][] }): SandboxExecutorProbes {
+        return {
+            platform: "linux",
+            dockerHost: undefined,
+            exists: () => false,
+            homeDir: "/home/lab",
+            user: () => USER,
+            capture: (_rt, args) => {
+                over.spawned?.push(args);
+                return Promise.resolve(over.result ?? { code: 0, stdout: "{}", stderr: "" });
+            },
+            ...over,
+        };
+    }
+    const dockerInfo = (info: object): CaptureResult => ({ code: 0, stdout: JSON.stringify(info), stderr: "" });
+
+    test("docker on macOS is a VM engine that masks the owner, and spawns no probe", async () => {
+        const spawned: string[][] = [];
+        const result = await resolveSandboxExecutor(runtimes.docker, probes({ platform: "darwin", spawned }));
+        expect(result._unsafeUnwrap()).toEqual({ executor: { kind: "vm", bindOwnership: "masked" }, ociRuntime: undefined });
+        expect(spawned).toEqual([]);
+    });
+
+    test("podman on macOS is a VM engine that shows the host owner", async () => {
+        const result = await resolveSandboxExecutor(runtimes.podman, probes({ platform: "darwin" }));
+        expect(result._unsafeUnwrap().executor).toEqual({ kind: "vm", bindOwnership: "host-preserved" });
+    });
+
+    test("docker on Linux reads the default socket of dockerode, not the CLI context", async () => {
+        const spawned: string[][] = [];
+        (
+            await resolveSandboxExecutor(
+                runtimes.docker,
+                probes({ spawned, result: dockerInfo({ OperatingSystem: "Ubuntu 26.04.1 LTS", SecurityOptions: [] }) }),
+            )
+        )._unsafeUnwrap();
+        expect(spawned).toEqual([["-H", "unix:///var/run/docker.sock", "info", "--format", "{{json .}}"]]);
+    });
+
+    test("docker on Linux reads the Docker Desktop socket of the home directory when it exists, as dockerode does", async () => {
+        const spawned: string[][] = [];
+        (
+            await resolveSandboxExecutor(
+                runtimes.docker,
+                probes({ spawned, exists: (path) => path === "/home/lab/.docker/run/docker.sock", result: dockerInfo({ OperatingSystem: "Docker Desktop" }) }),
+            )
+        )._unsafeUnwrap();
+        expect(spawned).toEqual([["-H", "unix:///home/lab/.docker/run/docker.sock", "info", "--format", "{{json .}}"]]);
+    });
+
+    test("docker on Linux with a DOCKER_HOST reads that daemon, as the CLI and dockerode both do", async () => {
+        const spawned: string[][] = [];
+        (
+            await resolveSandboxExecutor(runtimes.docker, probes({ spawned, dockerHost: "tcp://10.0.0.5:2375", result: dockerInfo({ SecurityOptions: [] }) }))
+        )._unsafeUnwrap();
+        expect(spawned).toEqual([["info", "--format", "{{json .}}"]]);
+    });
+
+    test("Docker Desktop on Linux is a VM engine that masks the owner", async () => {
+        const result = await resolveSandboxExecutor(
+            runtimes.docker,
+            probes({ result: dockerInfo({ OperatingSystem: "Docker Desktop", SecurityOptions: ["name=seccomp,profile=builtin"] }) }),
+        );
+        expect(result._unsafeUnwrap().executor).toEqual({ kind: "vm", bindOwnership: "masked" });
+    });
+
+    test("rootful Docker on Linux gives the host user and the SELinux flag", async () => {
+        const result = await resolveSandboxExecutor(
+            runtimes.docker,
+            probes({
+                result: dockerInfo({ OperatingSystem: "Rocky Linux 9.9", SecurityOptions: ["name=seccomp,profile=builtin", "name=selinux", "name=cgroupns"] }),
+            }),
+        );
+        expect(result._unsafeUnwrap()).toEqual({ executor: { kind: "rootful", user: USER, selinux: true }, ociRuntime: undefined });
+    });
+
+    test("rootless Docker is refused with the supported engines", async () => {
+        const result = await resolveSandboxExecutor(
+            runtimes.docker,
+            probes({ result: dockerInfo({ OperatingSystem: "Ubuntu 24.04", SecurityOptions: ["name=seccomp,profile=builtin", "name=rootless"] }) }),
+        );
+        const error = result._unsafeUnwrapErr();
+        expect(error.type).toBe("rootless_docker");
+        expect(error.message).toContain("Use rootful Docker, Docker Desktop, or Podman");
+    });
+
+    test("an unreadable docker info names the socket that the sandbox dials", async () => {
+        const result = await resolveSandboxExecutor(
+            runtimes.docker,
+            probes({ result: { code: 1, stdout: "", stderr: "Cannot connect to the Docker daemon" } }),
+        );
+        const error = result._unsafeUnwrapErr();
+        expect(error.type).toBe("engine_info_failed");
+        expect(error.message).toContain("unix:///var/run/docker.sock");
+        expect(error.message).toContain("Cannot connect to the Docker daemon");
+    });
+
+    test("rootless Podman on Linux gives the rootless fact and the OCI runtime", async () => {
+        const spawned: string[][] = [];
+        const result = await resolveSandboxExecutor(
+            runtimes.podman,
+            probes({ spawned, result: dockerInfo({ host: { security: { rootless: true, selinuxEnabled: true }, ociRuntime: { name: "crun" } } }) }),
+        );
+        expect(result._unsafeUnwrap()).toEqual({ executor: { kind: "rootless-podman", selinux: true }, ociRuntime: "crun" });
+        expect(spawned).toEqual([["info", "--format", "json"]]);
+    });
+
+    test("rootful Podman on Linux gives the host user", async () => {
+        const result = await resolveSandboxExecutor(
+            runtimes.podman,
+            probes({ result: dockerInfo({ host: { security: { rootless: false, selinuxEnabled: false }, ociRuntime: { name: "runc" } } }) }),
+        );
+        expect(result._unsafeUnwrap()).toEqual({ executor: { kind: "rootful", user: USER, selinux: false }, ociRuntime: "runc" });
+    });
+
+    test("a rootful engine with no readable user ids fails, and gives no fact with a fake user", async () => {
+        const result = await resolveSandboxExecutor(runtimes.docker, probes({ user: () => undefined, result: dockerInfo({ SecurityOptions: [] }) }));
+        expect(result._unsafeUnwrapErr()).toEqual({ type: "engine_info_failed", message: "Could not read the uid and the gids of this user." });
     });
 });
 

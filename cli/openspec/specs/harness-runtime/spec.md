@@ -77,31 +77,62 @@ The CLI harness composition SHALL supply `refStorePath` to the harness sandbox c
 
 ### Requirement: Sandbox engine connection follows the pinned container runtime
 
-The harness boot SHALL resolve the pinned container runtime's sandbox-engine
-socket (via the container-runtime resolution) before constructing the sandbox
-client, and SHALL pass it to `createSandboxClient` as `engineSocketPath`. When
-the pinned runtime is podman, boot SHALL additionally declare
-`engineBindOwnership: "host-preserved"` — podman machine's virtiofs preserves
-host ownership honestly, which the harness compensates for on the pre-created
-step tree; a docker pin SHALL NOT pass it, keeping today's modes under Docker
-Desktop's permissive sharing layer. A docker pin SHALL pass the socket of the
-current Docker context. When the resolution gives no socket, a docker pin SHALL
-pass no socket path, and dockerode keeps its default resolution. Image
-pre-pull (`ensureSandboxImage`) and container create then target the same
-engine by construction. A failed socket resolution SHALL fail boot with a
-dedicated, user-actionable error variant before any side effect — never a
-dockerode connection error surfacing mid-run.
+The harness boot MUST resolve the sandbox-engine socket of the pinned container
+runtime before it makes the sandbox client. Then it MUST give the socket to
+`createSandboxClient` as `engineSocketPath`. A docker pin MUST give the socket
+of the current Docker context. When the resolution gives no socket, a docker pin
+MUST give no socket path, thus dockerode keeps its default resolution. Thus the
+image pre-pull (`ensureSandboxImage`) and the container create use the same
+engine.
 
-#### Scenario: Podman pin wires the compat socket and bind-ownership fact
+The boot MUST also detect the executor fact of that engine and give it to
+`createSandboxClient` as `executor`. The engine runs on this machine, thus the
+CLI detects the fact:
 
-- **WHEN** the runtime boots with `podman` pinned and a resolvable compat socket
-- **THEN** `createSandboxClient` receives that socket as `engineSocketPath` and `engineBindOwnership: "host-preserved"`
+| Platform | Runtime | Engine info | Fact |
+| --- | --- | --- | --- |
+| macOS, Windows | docker | none | `vm`, `bindOwnership: "masked"` |
+| macOS, Windows | podman | none | `vm`, `bindOwnership: "host-preserved"` |
+| Linux | docker | `OperatingSystem` is `Docker Desktop` | `vm`, `bindOwnership: "masked"` |
+| Linux | docker | `SecurityOptions` has `name=rootless` | refused |
+| Linux | docker | each other daemon | `rootful`, with the uid, the gid, and the groups of the user, and `selinux` from `name=selinux` |
+| Linux | podman | `host.security.rootless` is true | `rootless-podman`, with `selinux` from `host.security.selinuxEnabled` |
+| Linux | podman | each other engine | `rootful`, with the uid, the gid, and the groups of the user |
+
+The Docker info MUST come from the daemon that dockerode dials: the `DOCKER_HOST`
+of the user, else the default socket of dockerode. It MUST NOT come from the
+current context of the Docker CLI.
+
+When the fact is `rootless-podman` and the OCI runtime of Podman is not crun,
+the boot MUST log a warning. The warning names the cause: a sandbox gets no
+supplementary group of the user, thus it cannot read the data of a project
+group. The warning also names the fix: use crun.
+
+A failed socket resolution, a refused engine, or engine info that the CLI
+cannot read MUST fail the boot with the dedicated error variant, before a side
+effect. Setup MUST refuse rootless Docker with the same message, before it
+writes the configuration.
+
+#### Scenario: Podman pin wires the compat socket and the executor fact
+
+- **WHEN** the runtime boots with `podman` pinned, a resolvable compat socket, and rootless Podman on Linux
+- **THEN** `createSandboxClient` receives that socket as `engineSocketPath` and the `rootless-podman` fact as `executor`
 - **AND** sandbox containers are created on the same engine that pre-pulled the image
 
 #### Scenario: Docker pin with no resolved socket
 
-- **WHEN** the runtime boots with `docker` pinned, and the resolution gives no socket
-- **THEN** `createSandboxClient` receives no `engineSocketPath` and no `engineBindOwnership`
+- **WHEN** the runtime boots with `docker` pinned on rootful Docker on Linux, and the resolution gives no socket
+- **THEN** `createSandboxClient` receives no `engineSocketPath`, and it receives the `rootful` fact with the ids of the user
+
+#### Scenario: Rootless Docker is refused
+
+- **WHEN** setup or the boot runs with `docker` pinned, and the daemon reports `name=rootless`
+- **THEN** it fails with a message that names rootful Docker, Docker Desktop, and Podman as the supported engines
+
+#### Scenario: Rootless Podman without crun warns
+
+- **WHEN** the runtime boots on rootless Podman whose OCI runtime is not crun
+- **THEN** the boot completes and logs a warning that names the project-group data and crun
 
 #### Scenario: The budget obeys the engine
 
