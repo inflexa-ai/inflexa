@@ -90,6 +90,12 @@ genes in the panel. Keep the evidence: it becomes the `clusters` table of the pr
 Copy these modules into the scripts of the step and import them. `mdv_asset.py` makes the asset.
 `mdv_project.py` makes the project from it.
 
+`mdv_project.py` works with `inflexa-mdvtools` 1.3.0 and with newer builds of mdvtools from the MDV
+repository. If the caller does not give `table_handling="merge"`, the newer builds name the
+datasources of a spatial table after its region. The newer builds also give the tissue chart another
+type, and write more bookkeeping columns. The helper passes the option when the version has it, finds the tissue chart by its region,
+and labels the extra columns.
+
 ```python
 # file: mdv_asset.py
 """Build and write the curated AnnData that mdvtools converts into the cells and genes of the MDV project."""
@@ -234,10 +240,14 @@ import anndata as ad
 import numpy as np
 
 OBS, VAR = "cells", "genes"
-REGION_CHART = "VivMdvRegionReact"
 MDVTOOLS_LABELS = {"x": "Image x (px)", "y": "Image y (px)", "spatial_region": "Region",
                    "spatialdata_path": "SpatialData store", "table_name": "SpatialData table", "mdv_cell_id": "Cell name",
-                   "spatial_1": "Slide x", "spatial_2": "Slide y"}
+                   "spatial_1": "Slide x", "spatial_2": "Slide y",
+                   # newer mdvtools versions also write these; a label for an absent field is ignored
+                   "spatialdata_name": "SpatialData name", "spatialdata_table_id": "SpatialData table ID",
+                   "spatialdata_region": "SpatialData region name", "spatialdata_region_key": "SpatialData region key",
+                   "spatialdata_instance_key": "SpatialData instance key"}
+MDVTOOLS_GENE_LABELS = {"object_source": "SpatialData store", "table_source": "SpatialData table"}
 GENE_CHARTS = [
     {"type": "selection_dialog", "title": "Find genes", "legend": "", "param": ["name"], "filters": {"name": None},
      "order": {}, "noClearFilters": False, "size": [375, 293], "position": [5, 5]},
@@ -262,7 +272,7 @@ def label_columns(mdv, labels):
         if stub in groups:
             groups[stub]["label"] = str(label)
     mdv.set_datasource_metadata(meta)
-    mdv.set_datasource_metadata(_rename(mdv, VAR, {"object_source": "SpatialData store", **(labels.get(VAR) or {})}))
+    mdv.set_datasource_metadata(_rename(mdv, VAR, {**MDVTOOLS_GENE_LABELS, **(labels.get(VAR) or {})}))
 
 
 def write_project(asset, out_dir):
@@ -278,6 +288,7 @@ def write_project(asset, out_dir):
 
 def write_spatial_project(sdata_path, out_dir):
     """The project of one SpatialData store (put_table): its table, images, and regions. Replaces out_dir."""
+    import dataclasses
     import spatialdata as sd
     from mdvtools.spatial.conversion import SpatialDataConversionArgs, convert_spatialdata_to_mdv
     os.makedirs(os.path.dirname(os.path.abspath(out_dir)), exist_ok=True)
@@ -285,10 +296,16 @@ def write_spatial_project(sdata_path, out_dir):
     if len(tables) != 1:
         raise ValueError(f"the store has {len(tables)} tables: MDV merges them into one cells table; keep one (put_table)")
     labels = copy.deepcopy(dict(next(iter(tables.values())).uns.get("mdv_labels", {})))
+    options = {}
+    if "table_handling" in {f.name for f in dataclasses.fields(SpatialDataConversionArgs)}:
+        options["table_handling"] = "merge"    # newer mdvtools: one table keeps the names cells and genes
     with tempfile.TemporaryDirectory() as tmp:
         mdv = convert_spatialdata_to_mdv(SpatialDataConversionArgs(
             spatialdata_path=os.path.abspath(sdata_path), output_folder=os.path.abspath(out_dir), temp_folder=tmp,
-            output_geojson=True, link=False))
+            output_geojson=True, link=False, **options))
+    names = {d["name"] for d in mdv.datasources}
+    if not {OBS, VAR} <= names:
+        raise ValueError(f"the conversion wrote the datasources {sorted(names)}, not {OBS!r} and {VAR!r}")
     label_columns(mdv, labels)
     return mdv
 
@@ -359,8 +376,9 @@ def add_views(mdv, cell_type, embedding, qc, spatial, readme_md):
     views, state = mdv.views, mdv.state
     template = None
     if spatial:
+        regions = (mdv.get_datasource_metadata(OBS).get("regions") or {}).get("all_regions", {})
         template = next((c for v in views.values() for c in v.get("initialCharts", {}).get(OBS, [])
-                         if c.get("type") == REGION_CHART), None)
+                         if c.get("region") in regions), None)    # the tissue chart; its type differs between versions
         if template is None:
             raise ValueError("the conversion made no tissue chart: the store has no image region for the table")
         radius = _cell_radius(mdv)
