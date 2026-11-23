@@ -1,5 +1,9 @@
-/** The version of the HTTP API. It is also the `v1` segment of each path. */
-export const API_VERSION = 1;
+/**
+ * The version of the wire contract of the HTTP API. Raise it when a route changes the shape of a request or an
+ * answer, thus a client and a server of different shapes refuse each other with a clear message. The `v1` segment
+ * of each path is a separate, stable name: it does not follow this number.
+ */
+export const API_VERSION = 2;
 
 /** The phase of the harness runtime boot inside the server. A route that needs the runtime gives 503 `unavailable` until `ready`. */
 export type ServerPhase = "starting" | "ready" | "failed";
