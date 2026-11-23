@@ -107,24 +107,32 @@ export const DEFAULT_SANDBOX_GATE_OPTS: SandboxGateOpts = {
  */
 export const INPUT_DRIFT_SANDBOX_GATE_OPTS: SandboxGateOpts = { ...DEFAULT_SANDBOX_GATE_OPTS, readFarmFailure: peekFarmCompositionFailure };
 
+const TRANSFER_IN_FLIGHT = "A sandbox download is in flight. Run `inflexa sandbox status` to watch it, then try again when it ends.";
+
+/** True for the transfer of `kind` while a child holds it. */
+function liveTransfer(transfers: readonly TransferReport[], kind: TransferKind): boolean {
+    return transfers.some((report) => report.kind === kind && report.live);
+}
+
 /**
  * Why a profile of the analysis cannot start a sandbox now, or `null` when it can. Each profile drive of the
  * server asks this first: the chat open, the deliberate re-profile, and the re-profile after an input change.
  * The refusal is one line for a person, with the command that repairs the machine.
  *
- * A live transfer refuses before the machine is read: an image pull or a catalog merge changes what a sandbox
- * mounts, and the gate of a drive that a person starts clears a recorded farm failure each time it reads the
- * machine, thus the next check must still see it. That gate clears the record also when an image refusal or a
- * store refusal comes first, and then it does not name the failure. The next drive composes again.
+ * A live transfer refuses only when it changes what a sandbox mounts, or when the part that it brings is not
+ * complete yet. A catalog transfer in its `unpacking` phase merges into the store root, thus it refuses before
+ * the machine is read: the gate of a drive that a person starts clears a recorded farm failure each time it reads
+ * the machine, and the next check must still see it. A download phase writes only the blob cache, and an image
+ * pull swaps the tag only at its end, thus each serves a sandbox over a complete store and image. The gate clears
+ * the record also when an image refusal or a store refusal comes first, and then it does not name the failure.
+ * The next drive composes again.
  */
 export async function sandboxRefusal(analysisId: string, opts: SandboxGateOpts = DEFAULT_SANDBOX_GATE_OPTS): Promise<string | null> {
     // An analysis with no inputs profiles nothing, thus it needs no image and no store. A failed count falls
     // through to the checks.
     if (opts.inputCount(analysisId).unwrapOr(null) === 0) return null;
     const transfers = opts.transfers();
-    if (transfers.some((report) => report.live)) {
-        return "A sandbox download is in flight. Run `inflexa sandbox status` to watch it, then try again when it ends.";
-    }
+    if (transfers.some((report) => report.kind === "catalog" && report.live && report.row?.phase === "unpacking")) return TRANSFER_IN_FLIGHT;
     const machine = await opts.readiness(analysisId);
     const farmFailure = opts.readFarmFailure(analysisId)?.reason ?? null;
     return machineRefusal({ ...machine, farm: { ...machine.farm, failure: farmFailure } }, transfers);
@@ -145,6 +153,7 @@ function machineRefusal(machine: Omit<SandboxReadiness, "inputCount">, transfers
         case "custom":
             return `Sandbox image "${image.image}" is not present, and it is not the published image, thus no registry can supply it. Build it, or set the published image and run \`inflexa sandbox pull\`.`;
         case "absent":
+            if (liveTransfer(transfers, "runtime_image")) return TRANSFER_IN_FLIGHT;
             return `The sandbox image is not installed.${failureDetail(transfers, "runtime_image")} Run \`inflexa sandbox pull\` to download it.`;
         default: {
             const exhaustive: never = image;
@@ -154,6 +163,7 @@ function machineRefusal(machine: Omit<SandboxReadiness, "inputCount">, transfers
 
     const content = machine.store;
     if (content !== "installed" && content !== "local") {
+        if (liveTransfer(transfers, "catalog")) return TRANSFER_IN_FLIGHT;
         const catalog = transfers.find((report) => report.kind === "catalog")?.state;
         const reason =
             catalog === "declined"

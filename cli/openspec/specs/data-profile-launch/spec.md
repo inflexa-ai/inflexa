@@ -113,7 +113,7 @@ The command MUST fail with an error that names the missing prerequisite and its 
 
 The server checks the prerequisites of a sandbox before each profile drive, per `local-server`:
 
-- no live transfer
+- no catalog transfer that merges into the store, and no live transfer of a part that is not complete
 - a sandbox image in the engine
 - a package store that is present and complete
 - no recorded failure of the farm composition of the analysis

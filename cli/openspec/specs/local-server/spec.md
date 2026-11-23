@@ -821,7 +821,8 @@ When the gate succeeds, the command MUST read the discovery file. A server whose
 Before each profile drive, the server MUST ask why a sandbox of the analysis cannot start now. The drives are the chat open (`GET {A}/chat-context`), the deliberate re-profile (`POST {A}/data-profile/rerun`), and the input change. The gate MUST give one line for a person with the command that repairs the machine, or nothing:
 
 - An analysis with no inputs profiles nothing, thus it MUST pass.
-- A live image or catalog transfer MUST refuse, and name `inflexa sandbox status`.
+- A catalog transfer in its `unpacking` phase MUST refuse, and name `inflexa sandbox status`. That phase merges into the store root.
+- A live image transfer over an absent image MUST refuse, and name `inflexa sandbox status`. A live catalog transfer over an absent or incomplete store MUST refuse in the same way. Each other live transfer MUST NOT refuse.
 - A container engine that does not answer MUST refuse with the message of the engine.
 - An image that the engine cannot find MUST refuse, and name `inflexa sandbox pull`, or the build of a custom image.
 - An absent or incomplete store MUST refuse, and name `inflexa store download`. A declined or canceled catalog transfer gives the reason.
@@ -839,9 +840,15 @@ The read of the sandbox readiness (`GET {A}/sandbox-readiness`) MUST give a reco
 
 #### Scenario: A chat open during a transfer
 
-- **GIVEN** a live catalog transfer
+- **GIVEN** a live catalog transfer in its `unpacking` phase
 - **WHEN** a client sends `GET {A}/chat-context` for an analysis with inputs
 - **THEN** the profile outcome is `failed` with the transfer line, and no drive starts
+
+#### Scenario: A catalog update over a complete store
+
+- **GIVEN** a live catalog transfer in its `download` phase, a sandbox image in the engine, and a complete store
+- **WHEN** a client sends `POST {A}/data-profile/rerun` for an analysis with inputs
+- **THEN** the gate does not refuse, and the drive starts
 
 #### Scenario: A readiness read leaves the farm failure for the gate
 

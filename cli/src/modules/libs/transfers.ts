@@ -105,11 +105,6 @@ export function readTransferReports(): readonly TransferReport[] {
     });
 }
 
-/** Whether any transfer child is live right now. The sandbox gate waits on exactly this. */
-export function anyTransferLive(): boolean {
-    return TRANSFER_KINDS.some((kind) => instanceLockHolder(transferLockKey(kind)) !== null);
-}
-
 /**
  * Put a detached child on the machine and report its pid.
  *
