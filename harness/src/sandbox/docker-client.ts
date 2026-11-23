@@ -52,7 +52,7 @@ import { harnessLabels, MANAGED_BY_LABEL, MANAGED_BY_VALUE, mergeLabels, OWNER_W
 import { buildMountPlan, mountCoordsOf, sandboxWriteTail } from "./mount-plan.js";
 import { CPU_ONLINE_PATH, CPUINFO_PATH, cpuFiles, readHostCpuinfoOnce } from "./cpu-files.js";
 import { threadLimitEnv } from "./thread-env.js";
-import { workloadIdentityOf, type SandboxExecutor } from "./workload-identity.js";
+import { WORKLOAD_USER_ENV_KEYS, workloadIdentityOf, type SandboxExecutor } from "./workload-identity.js";
 
 /** Read the originating HTTP status off any `SandboxError` variant that carries one. */
 function statusOf(e: SandboxError): number | undefined {
@@ -493,8 +493,9 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     const limits = spec.resources;
 
                     // The firewall flag makes the root entrypoint install the egress block
-                    // before it drops to the workload user. The identity env comes last,
-                    // thus no extra env of a spec can change the user of the workload.
+                    // before it drops to the workload user. Only the executor fact names
+                    // that user: each key that names it leaves the extra env of the spec,
+                    // also when the fact sets no such key.
                     //
                     // Composed as one record, not as a list of `K=V`. A duplicate key in
                     // the Env array resolves at the libc that scans `environ`, thus the
@@ -503,7 +504,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         SANDBOX_EGRESS_FIREWALL: "1",
                         ...threadLimitEnv(limits),
                         ...plan.env,
-                        ...spec.extraEnv,
+                        ...Object.fromEntries(Object.entries(spec.extraEnv ?? {}).filter(([key]) => !WORKLOAD_USER_ENV_KEYS.includes(key))),
                         ...workload.env,
                     }).map(([k, v]) => `${k}=${v}`);
 

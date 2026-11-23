@@ -40,8 +40,35 @@ describe("workloadIdentityOf — one rule from the engine", () => {
         });
     });
 
+    test("gid 0 never reaches the workload: a primary gid 0 keeps the image user, and a supplementary gid 0 drops out", () => {
+        expect(workloadIdentityOf({ kind: "rootful", user: { uid: 1234, gid: 0, groups: [0, 3000] }, selinux: false })).toEqual({
+            env: {},
+            securityOpt: [],
+            stepTreeAccess: "world-writable",
+        });
+        expect(workloadIdentityOf({ kind: "rootful", user: { uid: 1234, gid: 1234, groups: [0, 1234, 3000] }, selinux: false }).env.SANDBOX_GROUPS).toBe(
+            "1234,3000",
+        );
+    });
+
+    test("rootless Podman with no keep-id user mapping keeps the image user and opens the step tree", () => {
+        expect(workloadIdentityOf({ kind: "rootless-podman", selinux: true, keepId: "unsupported" })).toEqual({
+            env: {},
+            securityOpt: ["label=disable"],
+            stepTreeAccess: "world-writable",
+        });
+    });
+
+    test("rootless Podman with keep-id but no groups maps the user and sends no group annotation", () => {
+        expect(workloadIdentityOf({ kind: "rootless-podman", selinux: false, keepId: "user" })).toEqual({
+            env: {},
+            securityOpt: [],
+            usernsMode: "keep-id:uid=1000,gid=1000",
+        });
+    });
+
     test("rootless Podman maps the user onto the image user and keeps the groups", () => {
-        expect(workloadIdentityOf({ kind: "rootless-podman", selinux: true })).toEqual({
+        expect(workloadIdentityOf({ kind: "rootless-podman", selinux: true, keepId: "user-and-groups" })).toEqual({
             env: { SANDBOX_KEEP_GROUPS: "1" },
             securityOpt: ["label=disable"],
             usernsMode: "keep-id:uid=1000,gid=1000",

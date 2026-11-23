@@ -418,7 +418,7 @@ describe("createSandboxClient — the executor fact", () => {
     const workDir = (): string => join(root, "runs/run-1/step-a/work");
 
     test("the fact reaches the docker backend", async () => {
-        const executor = { kind: "rootless-podman", selinux: true } as const;
+        const executor = { kind: "rootless-podman", selinux: true, keepId: "user-and-groups" } as const;
         await spawnWith(executor);
         // A read through a function: the spy assigns `captured` in a closure, which the narrowing of tsc cannot see.
         const readCaptured = (): dockerClient.DockerClientConfig | null => captured;

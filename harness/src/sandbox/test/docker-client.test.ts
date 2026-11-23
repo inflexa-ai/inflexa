@@ -536,9 +536,34 @@ describe("docker createSandbox — the workload user from the executor fact", ()
         expect(envMapOf(sandboxOfCreated(created)).SANDBOX_UID).toBe("1234");
     });
 
+    test("with no executor fact, the extra env of a spec cannot name a workload user either", async () => {
+        const { docker, created } = stubDocker();
+        const ops = opsWith(docker, undefined);
+        const extraEnv = { SANDBOX_UID: "0", SANDBOX_GID: "0", SANDBOX_GROUPS: "0", SANDBOX_KEEP_GROUPS: "1", OMP_NUM_THREADS: "4" };
+
+        (await ops.createSandbox(...splitSpawn({ ...META, extraEnv }), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
+
+        const env = envMapOf(sandboxOfCreated(created));
+        expect([env.SANDBOX_UID, env.SANDBOX_GID, env.SANDBOX_GROUPS, env.SANDBOX_KEEP_GROUPS]).toEqual([undefined, undefined, undefined, undefined]);
+        expect(env.OMP_NUM_THREADS).toBe("4");
+    });
+
+    test("under rootless Podman, the extra env of a spec cannot add the host-user env", async () => {
+        const { docker, created } = stubDocker();
+        const ops = opsWith(docker, { kind: "rootless-podman", selinux: false, keepId: "user-and-groups" });
+
+        (
+            await ops.createSandbox(...splitSpawn({ ...META, extraEnv: { SANDBOX_UID: "0", SANDBOX_GID: "0" } }), keyedSandboxIdentity("run-1", "lease#1"), {})
+        )._unsafeUnwrap();
+
+        const env = envMapOf(sandboxOfCreated(created));
+        expect(env.SANDBOX_UID).toBeUndefined();
+        expect(env.SANDBOX_GID).toBeUndefined();
+    });
+
     test("rootless Podman: keep-id onto the image user, and the groups kept through the OCI annotation", async () => {
         const { docker, created } = stubDocker();
-        const ops = opsWith(docker, { kind: "rootless-podman", selinux: false });
+        const ops = opsWith(docker, { kind: "rootless-podman", selinux: false, keepId: "user-and-groups" });
 
         (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
 

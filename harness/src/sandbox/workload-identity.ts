@@ -32,7 +32,13 @@ export type ExecutorUser = {
  * - `rootful`: a container uid is the same host uid (rootful Docker or rootful Podman on
  *   Linux). The workload drops to the host user.
  * - `rootless-podman`: Podman maps the container ids into the subordinate ids of the user.
- *   `keep-id` maps the user onto the image user.
+ *   `keepId` tells what the engine takes through the Docker-compat API:
+ *   - `user-and-groups` (Podman 5.1 and later): `keep-id:uid=,gid=` maps the user onto the
+ *     image user, and the compat API reads the annotation that keeps the groups of the user.
+ *   - `user` (Podman 4.3 to 5.0): the same mapping, but the compat API ignores the annotation,
+ *     thus the workload gets no project group.
+ *   - `unsupported` (before Podman 4.3): no mapping. The workload is a stranger to the files
+ *     of the user, as on a VM engine that shows the host owner.
  *
  * `selinux` is true when the engine labels its containers. Then the labels block each bind
  * mount, and the sandbox turns the label separation off for its container. It never
@@ -41,7 +47,13 @@ export type ExecutorUser = {
 export type SandboxExecutor =
     | { readonly kind: "vm"; readonly bindOwnership: "masked" | "host-preserved" }
     | { readonly kind: "rootful"; readonly user: ExecutorUser; readonly selinux: boolean }
-    | { readonly kind: "rootless-podman"; readonly selinux: boolean };
+    | { readonly kind: "rootless-podman"; readonly selinux: boolean; readonly keepId: "unsupported" | "user" | "user-and-groups" };
+
+/**
+ * The env keys that name the workload user to the entrypoint. Only the executor fact sets
+ * them: the backend removes each of them from the extra env of a spec.
+ */
+export const WORKLOAD_USER_ENV_KEYS: readonly string[] = ["SANDBOX_UID", "SANDBOX_GID", "SANDBOX_GROUPS", "SANDBOX_KEEP_GROUPS"];
 
 /** The container settings and the step-tree access that one {@link SandboxExecutor} demands. */
 export type WorkloadIdentity = {
@@ -60,7 +72,9 @@ export type WorkloadIdentity = {
  * engine that needs nothing.
  *
  * A host uid 0 stays the image user: sandbox-server refuses to run as root under the egress
- * firewall. That user is then a stranger to the files of root, thus the step tree opens to it.
+ * firewall. A primary gid 0 stays the image user too, and a supplementary gid 0 drops out, because
+ * the entrypoint refuses gid 0. The image user is then a stranger to the files of the user, thus
+ * the step tree opens to it.
  */
 export function workloadIdentityOf(executor: SandboxExecutor | undefined): WorkloadIdentity {
     if (executor === undefined) return { env: {}, securityOpt: [] };
@@ -69,27 +83,44 @@ export function workloadIdentityOf(executor: SandboxExecutor | undefined): Workl
             return executor.bindOwnership === "host-preserved" ? { env: {}, securityOpt: [], stepTreeAccess: "world-writable" } : { env: {}, securityOpt: [] };
         case "rootful": {
             const securityOpt = labelOpt(executor.selinux);
-            if (executor.user.uid === 0) return { env: {}, securityOpt, stepTreeAccess: "world-writable" };
+            if (executor.user.uid === 0 || executor.user.gid === 0) return { env: {}, securityOpt, stepTreeAccess: "world-writable" };
             return {
                 env: {
                     SANDBOX_UID: String(executor.user.uid),
                     SANDBOX_GID: String(executor.user.gid),
-                    SANDBOX_GROUPS: executor.user.groups.join(","),
+                    SANDBOX_GROUPS: executor.user.groups.filter((gid) => gid !== 0).join(","),
                 },
                 securityOpt,
             };
         }
-        case "rootless-podman":
+        case "rootless-podman": {
+            const securityOpt = labelOpt(executor.selinux);
+            const usernsMode = `keep-id:uid=${IMAGE_USER_ID},gid=${IMAGE_USER_ID}`;
+            switch (executor.keepId) {
+                case "unsupported":
+                    return { env: {}, securityOpt, stepTreeAccess: "world-writable" };
+                // No keep-groups env: the entrypoint drops with the groups of the image, never
+                // with the groups of the container root.
+                case "user":
+                    return { env: {}, securityOpt, usernsMode };
+                case "user-and-groups":
+                    break;
+                default: {
+                    const exhaustive: never = executor.keepId;
+                    throw new Error(`unhandled keep-id level: ${JSON.stringify(exhaustive)}`);
+                }
+            }
             return {
                 env: { SANDBOX_KEEP_GROUPS: "1" },
-                securityOpt: labelOpt(executor.selinux),
-                usernsMode: `keep-id:uid=${IMAGE_USER_ID},gid=${IMAGE_USER_ID}`,
+                securityOpt,
+                usernsMode,
                 // `--group-add keep-groups` is a translation of the Podman CLI only, and the
                 // compat API takes `GroupAdd` as a list of group names. The annotation is what
                 // the CLI makes of it, and the compat API passes it into the OCI spec. Only crun
                 // reads it, and the groups are those of the API service process.
                 annotations: { "run.oci.keep_original_groups": "1" },
             };
+        }
         default: {
             const exhaustive: never = executor;
             throw new Error(`unhandled executor: ${JSON.stringify(exhaustive)}`);
