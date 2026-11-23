@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
 
-import { ok, type Result } from "neverthrow";
+import type { Result } from "neverthrow";
 
 import { acceptPastedCallbacks, deliverCallback, pastedCallbackUrl } from "../oauth_callback.ts";
 
@@ -18,7 +18,9 @@ describe("pastedCallbackUrl", () => {
     test("text that is not the callback of this sign-in is refused with the reason", () => {
         expect(pastedCallbackUrl("the code is c1", 1455)._unsafeUnwrapErr()).toContain("not a URL");
         expect(pastedCallbackUrl("https://auth.openai.com/authorize?code=c1", 1455)._unsafeUnwrapErr()).toContain("does not point at the sign-in callback");
-        expect(pastedCallbackUrl("http://evil.example:1455/auth/callback?code=c1", 1455)._unsafeUnwrapErr()).toContain("does not point at the sign-in callback");
+        expect(pastedCallbackUrl("http://evil.example:1455/auth/callback?code=c1", 1455)._unsafeUnwrapErr()).toContain(
+            "does not point at the sign-in callback",
+        );
         expect(pastedCallbackUrl("http://localhost:8085/auth/callback?code=c1", 1455)._unsafeUnwrapErr()).toContain("names port 8085");
         expect(pastedCallbackUrl("http://localhost:1455/auth/callback?state=s1", 1455)._unsafeUnwrapErr()).toContain("holds no `code`");
     });
@@ -58,7 +60,9 @@ describe("deliverCallback and acceptPastedCallbacks", () => {
     test("a port with no listener names the port", async () => {
         const { port } = listener();
         await servers.splice(0)[0]?.stop();
-        expect((await deliverCallback(new URL(`http://127.0.0.1:${port}/auth/callback?code=c1`)))._unsafeUnwrapErr()).toContain(`nothing answered on port ${port}`);
+        expect((await deliverCallback(new URL(`http://127.0.0.1:${port}/auth/callback?code=c1`)))._unsafeUnwrapErr()).toContain(
+            `nothing answered on port ${port}`,
+        );
     });
 
     test("a pasted line reaches the listener, a bad line is refused, and the stop ends the read", async () => {
@@ -90,6 +94,6 @@ describe("deliverCallback and acceptPastedCallbacks", () => {
             "The callback reached the sign-in on this machine.",
         ]);
         expect(delivered).toHaveLength(1);
-        expect(await delivered[0]).toEqual(ok(undefined));
+        for (const result of delivered) (await result)._unsafeUnwrap();
     });
 });

@@ -186,7 +186,7 @@ describe("POST /mcp/:name/auth", () => {
     const REMOTE = { type: "http", url: "https://mcp.example/mcp", auth: "oauth" };
 
     /** The `data:` frames of an SSE body. */
-    async function frames(response: Response): Promise<({ type: string } | null)[]> {
+    async function frames(response: Response): Promise<unknown[]> {
         const text = await response.text();
         return text
             .split("\n\n")
