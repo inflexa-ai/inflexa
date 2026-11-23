@@ -275,8 +275,16 @@ describe("the Host and Origin check", () => {
         expect(body.message).toStartWith(`The ${header} header must be`);
     }
 
-    test("a Host that is not the address of the server gives 403 `forbidden`, before the bearer check", async () => {
-        for (const host of ["rebind.example:8436", "rebind.example", "127.0.0.1:9999", "127.0.0.1", "[::1]:8436", "0.0.0.0:8436"]) {
+    test("a Host that is not a loopback name gives 403 `forbidden`, before the bearer check", async () => {
+        for (const host of [
+            "rebind.example:8436",
+            "rebind.example",
+            "0.0.0.0:8436",
+            "127.0.0.1.rebind.example",
+            "localhost.rebind.example:8436",
+            "127.0.0.1:",
+            "127.0.0.1:84x",
+        ]) {
             await expectForbidden(await send({ Host: host }), "Host");
         }
     });
@@ -289,20 +297,44 @@ describe("the Host and Origin check", () => {
         await expectForbidden(await send({ Host: "rebind.example:8436" }, "/gui/"), "Host");
     });
 
-    test("each name of the server passes, in each case", async () => {
-        for (const host of ["127.0.0.1:8436", "localhost:8436", "LOCALHOST:8436"]) {
+    test("each loopback name passes, in each case, with any port or none", async () => {
+        // An SSH port-forward gives the browser a different local port than the bound one.
+        for (const host of [
+            "127.0.0.1:8436",
+            "localhost:8436",
+            "LOCALHOST:8436",
+            "[::1]:8436",
+            "127.0.0.1:9000",
+            "localhost:9000",
+            "[::1]:9000",
+            "127.0.0.1",
+            "localhost",
+        ]) {
             expect((await send({ ...AUTH, Host: host })).status).toBe(200);
         }
     });
 
     test("an Origin that is not the server gives 403 `forbidden`", async () => {
-        for (const origin of ["http://rebind.example:8436", "null", "https://127.0.0.1:8436", "http://127.0.0.1:9999", "http://localhost"]) {
+        for (const origin of [
+            "http://rebind.example:8436",
+            "null",
+            "https://127.0.0.1:8436",
+            "http://127.0.0.1.rebind.example",
+            "http://localhost.rebind.example:8436",
+        ]) {
             await expectForbidden(await send({ ...AUTH, Host: "127.0.0.1:8436", Origin: origin }), "Origin");
         }
     });
 
-    test("the origin of the server passes, by each of its names", async () => {
-        for (const origin of ["http://127.0.0.1:8436", "http://localhost:8436"]) {
+    test("a loopback origin passes, by each name, with any port or none", async () => {
+        for (const origin of [
+            "http://127.0.0.1:8436",
+            "http://localhost:8436",
+            "http://[::1]:8436",
+            "http://127.0.0.1:9000",
+            "http://localhost:9000",
+            "http://localhost",
+        ]) {
             expect((await send({ ...AUTH, Host: "127.0.0.1:8436", Origin: origin })).status).toBe(200);
         }
     });
