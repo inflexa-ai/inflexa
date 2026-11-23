@@ -46,7 +46,7 @@ import {
 } from "@inflexa-ai/harness";
 
 import { ensureRuntime, readConfig } from "../../lib/config.ts";
-import { resolveEngineSocket, type ContainerRuntime, type ContainerRuntimeError } from "../../lib/container.ts";
+import { engineCapacity, resolveEngineSocket, type ContainerRuntime, type ContainerRuntimeError, type EngineCapacity } from "../../lib/container.ts";
 import { env, KNOWLEDGE_API_KEY_VAR, providerApiKeyVar, resolveModelApiKey } from "../../lib/env.ts";
 import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialSource } from "../../lib/credential.ts";
 import { acquireInstanceLock, HARNESS_RUNTIME_LOCK_KEY, instanceLockPath, releaseInstanceLock } from "../../lib/lock.ts";
@@ -63,6 +63,7 @@ import { ensurePostgresReady } from "../infra/postgres.ts";
 import type { PostgresConnection, PostgresError } from "../infra/postgres_types.ts";
 import { modelMatchesProvider, readApiKey, resolveModelId, type ChatSetupError } from "../proxy/models.ts";
 import {
+    clampPolicyToEngine,
     resolveHarnessConfig,
     resolveKnowledgeConfig,
     resolveModelConnection,
@@ -384,12 +385,14 @@ async function probeEmbeddingProvider(provider: EmbeddingProvider): Promise<Resu
 
 /**
  * The pinned container runtime plus the Docker-API socket the sandbox client dials
- * for it. `socketPath` is `undefined` under Docker — dockerode keeps its default
- * resolution — and the resolved compat socket path under Podman.
+ * for it. `socketPath` is the socket of the current Docker context or the Podman
+ * compat socket, and `undefined` when dockerode keeps its default resolution.
  */
 export type ResolvedSandboxEngine = {
     readonly runtime: ContainerRuntime;
     readonly socketPath: string | undefined;
+    /** The cores and the memory of the engine. Absent when the engine gave no figures: the budget then keeps the host. */
+    readonly capacity?: EngineCapacity;
 };
 
 /**
@@ -404,7 +407,9 @@ async function resolveSandboxEngineOnce(): Promise<Result<ResolvedSandboxEngine,
     const rtResult = await ensureRuntime();
     if (rtResult.isErr()) return err(rtResult.error);
     const runtime = rtResult.value;
-    return (await resolveEngineSocket(runtime)).map((socketPath) => ({ runtime, socketPath }));
+    const socket = await resolveEngineSocket(runtime);
+    if (socket.isErr()) return err(socket.error);
+    return ok({ runtime, socketPath: socket.value, capacity: await engineCapacity(runtime) });
 }
 
 /**
@@ -924,6 +929,7 @@ async function bootHarnessRuntimeOnce(
     const engineResult = await seams.resolveSandboxEngine();
     if (engineResult.isErr()) return err({ type: "sandbox_engine_unresolved", message: engineResult.error.message });
     const { runtime: pinnedRuntime, socketPath: engineSocketPath } = engineResult.value;
+    const resourcePolicy = clampPolicyToEngine(cfg.resourcePolicy, engineResult.value.capacity);
 
     const pgResult = await seams.ensurePostgres();
     if (pgResult.isErr()) return err({ type: "postgres_unavailable", cause: pgResult.error });
@@ -1108,7 +1114,7 @@ async function bootHarnessRuntimeOnce(
             // restart. A boot-time existence gate here would freeze the cold-start state
             // for the whole process lifetime and defeat that re-check.
             refStorePath: env.refsDir,
-            resourceLimits: cfg.resourcePolicy.perStep,
+            resourceLimits: resourcePolicy.perStep,
             resolveWorkspaceRoot,
             // The docker backend's diagnostics (lib-store degradation, recovery
             // adoption) are observable only through this seam — unset, they fall to
@@ -1414,7 +1420,7 @@ async function bootHarnessRuntimeOnce(
                 // The one backend client of the runtime. The harness builds its sandbox module over it: the leases,
                 // the lease workflow, and the reconciler.
                 sandbox: { client: sandboxClient },
-                resourcePolicy: cfg.resourcePolicy,
+                resourcePolicy,
                 usageRecorder,
                 resolveReportPageAsset: assetsDir ? makeReportPageAssetLookup(assetsDir) : undefined,
                 ...sessionPageOptions,

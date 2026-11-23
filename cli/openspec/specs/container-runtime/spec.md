@@ -133,9 +133,13 @@ The system SHALL allow each runtime to diverge from the common command form wher
 
 The runtime descriptor surface SHALL resolve the Docker-API socket the embedded
 harness dials for sandbox containers, per runtime and per platform, through the
-descriptor rather than call-site conditionals. Docker SHALL resolve to no
-socket (the harness then uses dockerode's default resolution, preserving
-`DOCKER_HOST`). Podman SHALL resolve the Docker-compat socket: on macOS via
+descriptor rather than call-site conditionals. Docker SHALL obey the order of
+the Docker CLI. A `DOCKER_HOST` wins over the current context. A `DOCKER_HOST`
+that is not a unix socket SHALL resolve to no socket, and dockerode reads that
+`DOCKER_HOST`. With no `DOCKER_HOST`, Docker SHALL resolve the unix socket of
+the current context (`docker context inspect`), gated on the path existing.
+Each other case SHALL resolve to no socket, and dockerode keeps its default
+resolution. Thus Colima and rootless Docker work. Podman SHALL resolve the Docker-compat socket: on macOS via
 `podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}'`; on
 Linux via `podman info --format '{{.Host.RemoteSocket.Path}}'` gated on the
 returned path existing, because a reachable podman CLI does not imply a
@@ -145,9 +149,14 @@ restarts. A failed resolution SHALL return a runtime-specific actionable error
 (`podman machine start` on macOS; `systemctl --user enable --now podman.socket`
 on Linux). The probe SHALL be injectable for tests, mirroring `ensureReady`.
 
-#### Scenario: Docker resolves to default engine resolution
+#### Scenario: Docker resolves the socket of the current context
 
-- **WHEN** the pinned runtime is `docker` and the sandbox engine socket is resolved
+- **WHEN** the pinned runtime is `docker`, no `DOCKER_HOST` is set, and the current context is Colima
+- **THEN** the unix socket of the Colima context is returned as the engine socket
+
+#### Scenario: Docker with a remote DOCKER_HOST
+
+- **WHEN** the pinned runtime is `docker` and `DOCKER_HOST` is a `tcp://` address
 - **THEN** no socket path is returned and the harness client uses dockerode's default resolution
 
 #### Scenario: Podman on macOS resolves the machine's compat socket

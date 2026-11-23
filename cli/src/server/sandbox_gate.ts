@@ -9,7 +9,7 @@ import type { SandboxImageReadiness, SandboxReadiness, StoreContentState } from 
 import { countAnalysisInputs } from "../db/primary_query.ts";
 import { describeCause } from "../lib/cause.ts";
 import { resolveRuntime } from "../lib/config.ts";
-import { capture } from "../lib/container.ts";
+import { CAPTURE_TIMEOUT_CODE, capture, ENGINE_QUERY_TIMEOUT_MS } from "../lib/container.ts";
 import { env } from "../lib/env.ts";
 import {
     analysisFarmPath,
@@ -34,8 +34,13 @@ async function imageReadiness(image: string): Promise<SandboxImageReadiness> {
     // A readiness read changes no state, thus the runtime is resolved and never pinned to the configuration.
     const engine = await resolveRuntime();
     if (engine.isErr()) return { state: "engine_error", image, message: firstLine(engine.error.message) };
-    const inspected = await ResultAsync.fromPromise(capture(engine.value.runtime, ["image", "inspect", image]), (cause) => cause);
+    const inspected = await ResultAsync.fromPromise(
+        capture(engine.value.runtime, ["image", "inspect", image], { timeoutMs: ENGINE_QUERY_TIMEOUT_MS }),
+        (cause) => cause,
+    );
     if (inspected.isErr()) return { state: "engine_error", image, message: `The container engine is not reachable (${describeCause(inspected.error)}).` };
+    if (inspected.value.code === CAPTURE_TIMEOUT_CODE)
+        return { state: "engine_error", image, message: "The container engine does not answer. Restart it, then try again." };
     if (inspected.value.code === 0) return { state: "present", image };
     return isPublishedSandboxImage(image) ? { state: "absent", image } : { state: "custom", image };
 }

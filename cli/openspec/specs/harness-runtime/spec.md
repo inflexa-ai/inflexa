@@ -84,8 +84,9 @@ the pinned runtime is podman, boot SHALL additionally declare
 `engineBindOwnership: "host-preserved"` — podman machine's virtiofs preserves
 host ownership honestly, which the harness compensates for on the pre-created
 step tree; a docker pin SHALL NOT pass it, keeping today's modes under Docker
-Desktop's permissive sharing layer. A docker pin SHALL pass no
-socket path, preserving dockerode's default resolution byte-for-byte. Image
+Desktop's permissive sharing layer. A docker pin SHALL pass the socket of the
+current Docker context. When the resolution gives no socket, a docker pin SHALL
+pass no socket path, and dockerode keeps its default resolution. Image
 pre-pull (`ensureSandboxImage`) and container create then target the same
 engine by construction. A failed socket resolution SHALL fail boot with a
 dedicated, user-actionable error variant before any side effect — never a
@@ -97,10 +98,16 @@ dockerode connection error surfacing mid-run.
 - **THEN** `createSandboxClient` receives that socket as `engineSocketPath` and `engineBindOwnership: "host-preserved"`
 - **AND** sandbox containers are created on the same engine that pre-pulled the image
 
-#### Scenario: Docker pin is byte-identical to today
+#### Scenario: Docker pin with no resolved socket
 
-- **WHEN** the runtime boots with `docker` pinned
+- **WHEN** the runtime boots with `docker` pinned, and the resolution gives no socket
 - **THEN** `createSandboxClient` receives no `engineSocketPath` and no `engineBindOwnership`
+
+#### Scenario: The budget obeys the engine
+
+- **GIVEN** a budget of 4 cores and 8 GB, and an engine that has 2 cores and 1 GB
+- **WHEN** the runtime boots
+- **THEN** the sandbox client and the harness get a budget and step ceilings of 2 cores and 1 GB
 
 #### Scenario: Unresolvable podman socket blocks boot with actionable guidance
 

@@ -882,6 +882,26 @@ describe("bootHarnessRuntime", () => {
         expect(captured.config !== null && "engineBindOwnership" in captured.config).toBe(false);
     });
 
+    test("an engine smaller than the budget clamps the step ceilings of the sandbox client", async () => {
+        const calls: string[] = [];
+        const captured: { config: CreateSandboxClientConfig | null } = { config: null };
+        const seams: BootSeams = {
+            ...recordingSeams(calls),
+            resolveSandboxEngine: recorded(calls, "resolveSandboxEngine", () =>
+                ok({ runtime: runtimes.podman, socketPath: "/var/folders/xy/podman-api.sock", capacity: { cpu: 2, memoryGb: 1 } }),
+            ),
+            createSandbox: (cfg) => {
+                captured.config = cfg;
+                return createSandboxClient(cfg);
+            },
+        };
+        const policy = { perStep: { maxCpu: 4, maxMemoryGb: 8, maxGpuCount: 0 }, budget: { cpu: 4, memoryGb: 8 } };
+        const result = await bootHarnessRuntime({ seams, config: testConfig({ resourcePolicy: policy }) });
+
+        expect(result.isOk()).toBe(true);
+        expect(captured.config?.resourceLimits).toEqual({ maxCpu: 2, maxMemoryGb: 1, maxGpuCount: 0 });
+    });
+
     test("an unresolvable engine socket fails boot with sandbox_engine_unresolved before postgres/lock/launch", async () => {
         const calls: string[] = [];
         const seams: BootSeams = {
