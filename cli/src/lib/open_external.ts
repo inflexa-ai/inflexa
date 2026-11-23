@@ -81,7 +81,7 @@ export function isWslVersion(procVersion: string): boolean {
 
 // Detected once at module load: WSL identity is fixed for the process lifetime, and the probe reads a
 // virtual file that does not exist off-Linux. A read failure (any non-WSL host) is simply "not WSL".
-const isWsl: boolean = (() => {
+export const isWsl: boolean = (() => {
     if (process.platform !== "linux") return false;
     try {
         return isWslVersion(readFileSync("/proc/version", "utf8"));

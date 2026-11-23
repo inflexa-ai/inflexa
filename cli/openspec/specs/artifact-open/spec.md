@@ -13,6 +13,8 @@ The helper MUST NOT start an opener when the session has no display. A session h
 
 The browser setting MUST be able to stop each launch. The environment variable `INFLEXA_BROWSER` and the config key `browser` take the values `auto` (the default) and `never`. The variable MUST win over the key. A variable that is not one of the two values MUST be ignored. With `never`, the helper MUST NOT start an opener on any platform, and it MUST give a `no_display` error. The notice of the caller MUST show the URL or the path, and it MUST NOT say that the target opened. A person who works through SSH or on a server sets `never`.
 
+Setup MUST tell the user when no browser can open and the session does not show why. That is a Linux session (not WSL) with no display and no `SSH_CONNECTION`, for example `docker exec`, `kubectl exec`, a reattached tmux, or VS Code Remote. Setup tells it only when `INFLEXA_BROWSER` and the key `browser` are not set. The message MUST name both settings. An interactive setup MUST then ask one confirmation, and a yes writes `"browser": "never"` to config.json. A run with no terminal MUST write nothing.
+
 The helper detects WSL one time, for example from `microsoft` in `/proc/version`. Under WSL, the helper MUST use `wslview` first. When `wslview` is absent, it MUST use `explorer.exe` with the path that `wslpath -w` translates.
 
 Each opener of the CLI MUST use this helper: the auth login, the `inflexa open` command, the open affordances of the TUI, and the folder open of the local server (`POST /api/v1/open-directory`). The helper MUST run in the client process, because the desktop of the user belongs to the client.
@@ -37,6 +39,12 @@ In a client, a failed open MUST show a notice with the resolved path. It MUST NO
 - **GIVEN** `INFLEXA_BROWSER=never`, or `"browser": "never"` in config.json
 - **WHEN** the user opens an artifact, a report page, or a sign-in URL
 - **THEN** no opener starts, and the notice shows the path or the URL and names the setting
+
+#### Scenario: Setup offers the browser setting where no browser can open
+
+- **GIVEN** a Linux session with no display, no `SSH_CONNECTION`, and no browser setting
+- **WHEN** the user runs an interactive setup and confirms
+- **THEN** setup says that no browser can open, names `INFLEXA_BROWSER=never` and the key `browser`, and writes `"browser": "never"` to config.json
 
 #### Scenario: WSL opens via Windows
 

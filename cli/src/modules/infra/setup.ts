@@ -18,6 +18,7 @@ import {
     resolvePostgresConfig,
     selectedRuntime,
     writeConfig,
+    type BrowserMode,
     type ConfigError,
     type ModelAuthConfig,
 } from "../../lib/config.ts";
@@ -33,6 +34,7 @@ import {
 } from "../../lib/container.ts";
 import {
     anthropicAuthTokenSet,
+    browserEnvValue,
     dataRoot,
     detectProviderEnv,
     env,
@@ -50,7 +52,7 @@ import { recordOrEmpty, unknownRecordSchema } from "../../lib/json_record.ts";
 import { isAsciiDigits, trimTrailing, withoutSuffix } from "../../lib/text.ts";
 import { isMember } from "../../lib/types.ts";
 import { acceptPastedCallbacks, deliverCallback, pasteCallbackHint } from "../../lib/oauth_callback.ts";
-import { sshForwardCommand } from "../../lib/open_external.ts";
+import { isWsl, noDisplayReason, sshForwardCommand, type DisplayFacts } from "../../lib/open_external.ts";
 import {
     AGENT_NAMES,
     detectedMachine,
@@ -413,6 +415,45 @@ export async function offerLocalDataRoot(
         .map(() => dataDir);
 }
 
+// --- the browser setting ---------------------------------------------------
+
+/** The facts of the session that decide the browser advice of setup. */
+export type BrowserAdviceFacts = DisplayFacts & {
+    /** True when `INFLEXA_BROWSER` has a value: the user chose a setting for this shell. */
+    readonly browserVarSet: boolean;
+    readonly configBrowser: BrowserMode | undefined;
+};
+
+/** How setup reads the facts of the session. A test gives its own. */
+export type SessionFactsOpts = { readonly browser: () => BrowserAdviceFacts };
+
+export const DEFAULT_SESSION_FACTS_OPTS: SessionFactsOpts = {
+    browser: () => ({
+        sshConnection: terminalEnv.sshConnection,
+        display: terminalEnv.display,
+        platform: process.platform,
+        wsl: isWsl,
+        browserVarSet: browserEnvValue() !== undefined,
+        configBrowser: readConfig().browser,
+    }),
+};
+
+/**
+ * The advice for a session where no browser can open and nothing says why, or `null`. A Linux session with no display
+ * and no `SSH_CONNECTION` is a `docker exec`, a `kubectl exec`, a reattached tmux, or a VS Code Remote terminal. Each
+ * open there fails, and the sign-in that the user starts next waits on a URL that no browser shows. An SSH session gets
+ * no advice: each sign-in already names the port-forward. A browser setting, in the variable or in the key, is a choice
+ * that the user made.
+ */
+export function browserAdvice(facts: BrowserAdviceFacts): string | null {
+    if (facts.browserVarSet || facts.configBrowser !== undefined || noDisplayReason(facts) !== "headless") return null;
+    return (
+        "No browser can open in this session: it has no display, and no SSH connection that setup can see " +
+        "(for example docker exec, kubectl exec, a reattached tmux, or VS Code Remote). A sign-in prints its URL, and you open it by hand. " +
+        `To stop each browser launch, set INFLEXA_BROWSER=never, or "browser": "never" in ${env.configPath}.`
+    );
+}
+
 // --- the setup checkpoint --------------------------------------------------
 //
 // A failed run records the step it stopped at, and a complete run deletes the record. So the file's
@@ -633,6 +674,18 @@ export async function setup(options: SetupOptions): Promise<void> {
             );
             outro("Run `inflexa setup` again to set up the new data root");
             return;
+        }
+    }
+    const advice = browserAdvice(DEFAULT_SESSION_FACTS_OPTS.browser());
+    if (advice !== null) {
+        log.warn(advice);
+        if (canPrompt && (await confirm(`Set "browser": "never" in ${env.configPath}?`))) {
+            readConfigForWrite()
+                .andThen((config) => writeConfig({ ...config, browser: "never" }))
+                .match(
+                    () => log.success('Saved "browser": "never". Inflexa launches no browser, and prints each URL to open by hand.'),
+                    (e) => log.warn(`Could not save the browser setting: ${e.type}`),
+                );
         }
     }
 

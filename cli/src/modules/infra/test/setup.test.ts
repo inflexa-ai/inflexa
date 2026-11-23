@@ -13,7 +13,9 @@ import {
     askProxy,
     classifyModelResolution,
     credentialHelperDetected,
+    browserAdvice,
     dataRootNotes,
+    DEFAULT_SESSION_FACTS_OPTS,
     DEFAULT_DATA_ROOT_PROBE_OPTS,
     detectCredentialHelperFrom,
     detectedAdoptable,
@@ -1689,6 +1691,8 @@ describe("setup() — batch orchestration", () => {
         // The readout of the data root reads the real disk. A full disk on the machine of the test must not add the offer of a move.
         replaceProperty(DEFAULT_DATA_ROOT_PROBE_OPTS, "statfs", () => Promise.resolve(localStatfs(500 * 1024 ** 3)));
         replaceProperty(DEFAULT_DATA_ROOT_PROBE_OPTS, "localFolders", []);
+        // A Linux CI runner has no display. The browser advice would then add a confirm to each interactive run.
+        replaceProperty(DEFAULT_SESSION_FACTS_OPTS, "browser", () => ({ ...HEADLESS_SESSION, display: true }));
 
         firstReady = spyOn(container, "firstReadyRuntime").mockImplementation(() => Promise.resolve(ok(container.runtimes.docker)));
         embedStep = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(() => Promise.resolve(ok(undefined)));
@@ -2109,6 +2113,39 @@ describe("setup() — batch orchestration", () => {
             expect(output).toContain("inflexa server stop");
             expect(output).not.toContain("Setup complete");
             expect(refsStep).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("a session where no browser can open", () => {
+        beforeEach(() => {
+            replaceProperty(DEFAULT_SESSION_FACTS_OPTS, "browser", () => HEADLESS_SESSION);
+        });
+
+        test("a run with no terminal says it and suggests the setting, and writes nothing", async () => {
+            const output = await runSetup(batch({}));
+
+            expect(process.exitCode).toBe(0);
+            expect(output).toContain("No browser can open in this session");
+            expect(output).toContain("INFLEXA_BROWSER=never");
+            expect(readConfig().browser).toBeUndefined();
+        });
+
+        test("an interactive yes writes the `browser` key", async () => {
+            replaceProperty(process.stdin, "isTTY", true);
+            spies.push(...stubRecordedPrompts([], []));
+            const asked: string[] = [];
+            const confirmSpy = spyOn(cliPrompts, "confirm").mockImplementation((question: string) => {
+                asked.push(question);
+                return Promise.resolve(question.includes('"browser"'));
+            });
+            spies.push(confirmSpy);
+            globalThis.fetch = fakeFetch(respondWith(null, { status: 404 }));
+
+            await runSetup({ auth: false, start: false, force: false, postgres: false, flags: { connection: "cliproxy" } });
+
+            expect(process.exitCode).toBe(0);
+            expect(asked).toContain(`Set "browser": "never" in ${env.configPath}?`);
+            expect(readConfig().browser).toBe("never");
         });
     });
 
@@ -3192,5 +3229,36 @@ describe("the offer of a local data root", () => {
             level: "warn",
             text: `The data root has 2.0 GiB free. The sandbox images and the package store use about 20 GB. Set INFLEXA_DATA_DIR, or the "dataDir" key of ${env.configPath}, to a folder on a local disk with more space. Then run \`inflexa setup\` again.`,
         });
+    });
+});
+
+/** A Linux session with no display, no SSH connection, and no browser setting: a `docker exec` or a VS Code Remote terminal. */
+const HEADLESS_SESSION = {
+    sshConnection: null,
+    display: false,
+    platform: "linux" as const,
+    wsl: false,
+    browserVarSet: false,
+    configBrowser: undefined,
+};
+
+describe("browserAdvice", () => {
+    test("a session with no display and no SSH connection gets the advice", () => {
+        expect(browserAdvice(HEADLESS_SESSION)).toBe(
+            "No browser can open in this session: it has no display, and no SSH connection that setup can see " +
+                "(for example docker exec, kubectl exec, a reattached tmux, or VS Code Remote). A sign-in prints its URL, and you open it by hand. " +
+                `To stop each browser launch, set INFLEXA_BROWSER=never, or "browser": "never" in ${env.configPath}.`,
+        );
+    });
+
+    test.each([
+        ["a display", { display: true }],
+        ["an SSH connection, which the sign-in names by itself", { sshConnection: "10.0.0.1 5000 10.0.0.2 22" }],
+        ["WSL, which opens through Windows", { wsl: true }],
+        ["macOS", { platform: "darwin" as const }],
+        ["INFLEXA_BROWSER set", { browserVarSet: true }],
+        ["the `browser` key set", { configBrowser: "auto" as const }],
+    ])("a session with %s gets none", (_name, over) => {
+        expect(browserAdvice({ ...HEADLESS_SESSION, ...over })).toBeNull();
     });
 });
