@@ -21,9 +21,8 @@ export type RegisterArtifactInput = {
     sourceRun?: string | null;
     fileType?: string | null;
     /**
-     * Upstream file identity. Set for `input` rows at materialization so
-     * provenance lineage can attribute data inputs by `fileId`; left null for
-     * `step_output` rows (their `file_id` is assigned after upload-sync).
+     * Upstream file identity. Left null for `step_output` rows: their `file_id` is
+     * assigned after upload-sync.
      */
     fileId?: string | null;
     /** The template that rendered the file: set on the row of a script that `run_template` wrote. */
@@ -70,16 +69,15 @@ const COLS_PER_ROW = 11;
  * message's parameter count as an Int16, so a statement is capped at 65,535
  * bind parameters — beyond that the count silently wraps and the server
  * rejects with 08P01 ("bind message has N parameter formats but 0
- * parameters"). 1,000 rows × 10 columns stays an order of magnitude under the
- * cap while keeping round-trips negligible even for huge input manifests.
+ * parameters"). 1,000 rows × 11 columns stays an order of magnitude under the
+ * cap while keeping round-trips negligible even for a large manifest.
  */
 const ROWS_PER_STATEMENT = 1_000;
 
 /**
  * Batched upsert — writes entries in multi-row `INSERT ... VALUES` statements
- * of at most {@link ROWS_PER_STATEMENT} rows. Callers range from per-step
- * manifests (tens of files) to a data-profile's full staged-input manifest
- * (unbounded — directory inputs can reach tens of thousands of files).
+ * of at most {@link ROWS_PER_STATEMENT} rows. A step manifest has no fixed
+ * bound: a step can write tens of thousands of files.
  * Chunks run sequentially without a wrapping transaction: the upsert is
  * idempotent per row (`ON CONFLICT ... DO UPDATE`), so a failure between
  * chunks is healed by the caller's retry re-upserting the same manifest.
@@ -127,42 +125,6 @@ export function upsertArtifacts(pool: Querier, entries: RegisterArtifactInput[])
                 values,
             });
         }
-    });
-}
-
-/** Result type for input artifact metadata lookups. */
-export type InputArtifactMeta = {
-    path: string;
-    hash: string;
-    size: number;
-    fileId: string | null;
-};
-
-/**
- * Query cortex_artifacts for input-role rows matching the given paths.
- * Used at the registration boundary to resolve metadata for data-source inputs.
- */
-export function queryInputArtifacts(pool: Querier, analysisId: string, paths: string[]): ResultAsync<InputArtifactMeta[], DbError> {
-    return tryQuery("artifacts.queryInputArtifacts", async () => {
-        if (paths.length === 0) return [];
-        const result = await pool.query<{
-            path: string;
-            hash: string;
-            size: number;
-            file_id: string | null;
-        }>({
-            text: `SELECT path, hash, size, file_id
-          FROM cortex_artifacts
-          WHERE analysis_id = $1 AND role = 'input' AND path = ANY($2::text[])`,
-            values: [analysisId, paths],
-        });
-        return result.rows.map((r) => ({
-            path: r.path,
-            hash: r.hash,
-            // oxlint-disable-next-line typescript/no-unnecessary-type-conversion -- pg returns a bigint column as text; the row annotation says number, the driver gives a string, and the conversion is real.
-            size: Number(r.size),
-            fileId: r.file_id ?? null,
-        }));
     });
 }
 

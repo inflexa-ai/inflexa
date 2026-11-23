@@ -1,14 +1,12 @@
 /**
- * DB tests for input-artifact `file_id` storage — the materialized fileId
- * that lets runtime provenance attribute data inputs by `fileId`.
+ * DB tests for artifact `file_id` storage: a later upsert that omits it keeps the stored one.
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
 import type { Pool } from "pg";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
-import { upsertArtifacts, queryInputArtifacts } from "../index.js";
-import { presentAt } from "../../lib/present.js";
+import { upsertArtifacts } from "../index.js";
 
 let fx: { pool: Pool; drop: () => Promise<void> } | undefined;
 
@@ -17,27 +15,7 @@ afterEach(async () => {
     fx = undefined;
 });
 
-describe("input artifact file_id", () => {
-    it("persists and reads back file_id on input rows", async () => {
-        fx = await withSchema("input-fileid");
-        (
-            await upsertArtifacts(fx.pool, [
-                {
-                    resourceId: "a-1",
-                    path: "data/inputs/Lab/counts.csv",
-                    hash: "h1",
-                    size: 1000,
-                    role: "input",
-                    fileId: "uuid-1",
-                },
-            ])
-        )._unsafeUnwrap();
-
-        const meta = (await queryInputArtifacts(fx.pool, "a-1", ["data/inputs/Lab/counts.csv"]))._unsafeUnwrap();
-        expect(meta).toHaveLength(1);
-        expect(presentAt(meta, 0).fileId).toBe("uuid-1");
-    });
-
+describe("artifact file_id", () => {
     it("COALESCE preserves file_id when a later upsert omits it", async () => {
         fx = await withSchema("input-fileid-coalesce");
         (
@@ -46,8 +24,9 @@ describe("input artifact file_id", () => {
         // Re-upsert (e.g. replay) without a fileId — must not clobber.
         (await upsertArtifacts(fx.pool, [{ resourceId: "a-1", path: "data/inputs/x.csv", hash: "h2", size: 20, role: "input" }]))._unsafeUnwrap();
 
-        const meta = (await queryInputArtifacts(fx.pool, "a-1", ["data/inputs/x.csv"]))._unsafeUnwrap();
-        expect(presentAt(meta, 0).fileId).toBe("uuid-9");
-        expect(presentAt(meta, 0).hash).toBe("h2");
+        const rows = await fx.pool.query<{ file_id: string | null; hash: string }>(
+            "SELECT file_id, hash FROM cortex_artifacts WHERE analysis_id = 'a-1' AND path = 'data/inputs/x.csv'",
+        );
+        expect(rows.rows).toEqual([{ file_id: "uuid-9", hash: "h2" }]);
     });
 });

@@ -46,18 +46,7 @@ if (DBOS.isInitialized()) {
 
 const INPUT_PATH = "data/inputs/f1/counts.csv";
 
-const stagedInputs = [
-    {
-        fileId: "f1",
-        mountName: "f1",
-        key: "f1/counts.csv",
-        fileName: "counts.csv",
-        hash: "sha256:x",
-        size: 30,
-        mtimeMs: 1_780_000_000_000,
-        relativePath: "inputs/f1/counts.csv",
-    },
-];
+const inputSummary = { count: 1, totalBytes: 30, signature: { count: 1, digest: "d1" } };
 
 /** The input and the deps of one profile, keyed by its analysis. */
 const cases = new Map<string, { readonly input: DataProfileWorkflowInput; readonly deps: DataProfileDeps }>();
@@ -164,7 +153,7 @@ describe("the data profile inside a workflow — a stop", () => {
         const analysisId = await seedProfile();
         const { provider } = scriptedModel([{ fail: Object.assign(new Error("HTTP 402"), { statusCode: 402 }) }, reply([text("unused")])]);
         const revoked: string[] = [];
-        cases.set(analysisId, { input: { analysisId, runSession: runSession(analysisId), stagedInputs }, deps: depsFor(provider, revoked) });
+        cases.set(analysisId, { input: { analysisId, runSession: runSession(analysisId), inputSummary }, deps: depsFor(provider, revoked) });
         const workflowId = rig.nextWorkflowId("profile-stop-");
         const handle = await DBOS.startWorkflow(profileWorkflow, { workflowID: workflowId })(analysisId);
         await waitForPause(analysisId, workflowId);
@@ -195,7 +184,7 @@ describe("the data profile inside a workflow — a suspend error of the profiler
             reply([text("done")]),
         ]);
         cases.set(analysisId, {
-            input: { analysisId, runSession: runSession(analysisId), stagedInputs },
+            input: { analysisId, runSession: runSession(analysisId), inputSummary },
             deps: depsFor(model.provider, revoked),
         });
         const workflowId = rig.nextWorkflowId("profile-model-pause-");

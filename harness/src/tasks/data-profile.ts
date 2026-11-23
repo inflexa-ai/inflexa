@@ -1,8 +1,7 @@
 /**
  * Data-profile DBOS workflow — scans the already-staged input tree, runs the
- * data-profiler sandbox agent over the resulting manifest, registers each staged
- * file in cortex_artifacts, and indexes the profile's groups, dimensions, and annotated
- * members into the pgvector store. Inputs are staged under `data/inputs/` by the embedder before the
+ * data-profiler sandbox agent over the scan, and indexes the profile's groups,
+ * dimensions, and annotated members into the pgvector store. Inputs are staged under `data/inputs/` by the embedder before the
  * run (see the data-profile-init spec); the body assumes a populated tree and never
  * downloads.
  *
@@ -33,7 +32,7 @@ import type { EnvironmentStorePaths } from "../config/environment-stores.js";
 import type { ExtendAnalysisFarm } from "../sandbox/types.js";
 import type { RunAuthorizer } from "../execution/run-authorizer.js";
 import type { RunLauncher } from "../execution/run-launcher.js";
-import type { StagedInput } from "../execution/staged-input.js";
+import type { StagedInputSummary } from "../execution/staged-input.js";
 import { buildProfilerAgent } from "../agents/sandbox/index.js";
 import type { CatalogServices } from "../catalog/equip.js";
 import type { SandboxAgentDeps } from "../agents/sandbox/shared.js";
@@ -57,13 +56,12 @@ import { clearPausesOfWork } from "../state/paused-work.js";
 import type { WorkspaceFilesystem } from "../workspace/filesystem.js";
 import { STAGED_INPUT_ROOT, toSandboxPath, type ResolveWorkspaceRoot } from "../workspace/paths.js";
 
-import { estimateDataProfileResources } from "../sandbox/estimate-data-profile-resources.js";
+import { DATA_PROFILE_RESOURCES } from "../sandbox/estimate-data-profile-resources.js";
 import { generateExecutionId } from "../sandbox/execution-id.js";
 import { createVectorStore } from "../state/vector-store.js";
 import { z } from "zod";
 
 import { ProfileSubmissionSchema, type ProfileSubmission } from "../schemas/data-profile-schemas.js";
-import { computeInputSignature } from "../execution/input-signature.js";
 import { readHeaders } from "../input-scan/enrich.js";
 import { detectSets } from "../input-scan/detect-sets.js";
 import { buildSetMenu, renderSetMenu, type SetMenu } from "../input-scan/menu.js";
@@ -80,12 +78,12 @@ import {
     completeEmptyDataProfile,
     failDataProfile,
     loadDataProfileStatus,
-    loadSeedInputFileIds,
+    loadSeedInputCount,
     recordDataProfileUser,
     recordDataProfileWorkflowId,
     tryRerunDataProfile,
     tryStartDataProfile,
-    upsertArtifacts,
+    type DataProfileInputSignature,
     type DataProfileResult,
     type DataProfileTerminalWrite,
 } from "../state/index.js";
@@ -275,21 +273,15 @@ export type DataProfileWorkflowInput = {
     readonly analysisId: string;
     readonly runSession: RunSession;
     /**
-     * Manifest of the input files staged under `data/inputs/` before the run
-     * started (see the data-profile-init spec). The body assumes the tree is populated and profiles
-     * exactly these files — it never downloads. JSON-serializable; rides in the
-     * DBOS workflow input and survives recovery.
+     * The summary of the input files staged under `data/inputs/` before the run started (see the
+     * data-profile-init spec). The body assumes the tree is populated and scans it — it never downloads.
+     * Fixed-width, thus the DBOS workflow input does not grow with the file count.
      */
-    readonly stagedInputs: readonly StagedInput[];
+    readonly inputSummary: StagedInputSummary;
 };
 
-/** Build the canonical artifact path for a staged input file. */
-function inputArtifactPath(f: StagedInput): string {
-    return `data/${f.relativePath}`;
-}
-
 /**
- * Project the profiler's structured output plus the staged manifest into the record
+ * Project the profiler's structured output plus the input signature into the record
  * persisted on `cortex_analysis_state`.
  *
  * That row is the profile's ONLY durable home — the profiler's `runs/data-profile/`
@@ -307,7 +299,7 @@ function inputArtifactPath(f: StagedInput): string {
 export function buildDataProfileResult(
     submission: ProfileSubmission,
     resolution: ProfileResolution,
-    stagedInputs: readonly StagedInput[],
+    inputSignature: DataProfileInputSignature,
     profiledAt: string,
 ): DataProfileResult {
     return {
@@ -318,7 +310,7 @@ export function buildDataProfileResult(
         partition: resolution.partition,
         recipe: [...resolution.recipe],
         caveats: submission.caveats,
-        inputSignature: computeInputSignature(stagedInputs),
+        inputSignature,
         profiledAt,
         domain: submission.domain,
         subtype: submission.subtype,
@@ -405,7 +397,7 @@ function withoutMembers(groups: readonly ResolvedGroup[]): DataProfileGroup[] {
 export function buildAbsorbedResult(
     prior: DataProfileResult,
     resolution: ProfileResolution,
-    stagedInputs: readonly StagedInput[],
+    inputSignature: DataProfileInputSignature,
     profiledAt: string,
 ): DataProfileResult {
     return {
@@ -417,7 +409,7 @@ export function buildAbsorbedResult(
         dimensions: [...resolution.dimensions],
         partition: resolution.partition,
         recipe: [...resolution.recipe],
-        inputSignature: computeInputSignature(stagedInputs),
+        inputSignature,
         profiledAt,
     };
 }
@@ -541,7 +533,7 @@ export function registerDataProfileWorkflow(deps: DataProfileDeps): (input: Data
  */
 export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: DataProfileDeps): Promise<void> {
     const logger = (deps.logger ?? createNoopLogger()).named("data-profile").with({ analysisId: input.analysisId });
-    const { analysisId, runSession, stagedInputs } = input;
+    const { analysisId, runSession, inputSummary } = input;
     const revoke = (reason: string): Promise<boolean> => deliverNotice(logger, "RunAuthorizer.revoke", deps.runAuthorizer.revoke(runSession, reason));
 
     // The profile's activity channel. The write to the stream is bound here, while every phase and
@@ -578,13 +570,14 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         }
 
         // 1. Input files are already staged under data/inputs/ (see the data-profile-init spec); the
-        // embedder populated the tree and handed us this manifest in the workflow
+        // embedder populated the tree and handed us its summary in the workflow
         // input. The body never downloads.
-        if (stagedInputs.length === 0) {
+        logger.info("staged inputs", { count: inputSummary.count, totalBytes: inputSummary.totalBytes });
+        if (inputSummary.count === 0) {
             logger.warn("no input files staged");
             // One event per completed profile, this one included: the counters are how the
             // catalogue's fit is measured, and a completion that emitted none would make the
-            // empty-manifest path invisible to the same monitoring that watches every other.
+            // empty-set path invisible to the same monitoring that watches every other.
             logProfileMonitoring(logger, { dimensions: [], probes: [], repairRounds: 0, absorb: "none" });
             await settleTerminalWrite(
                 logger,
@@ -595,25 +588,10 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             );
             await revoke("data-profile-completed");
             // This is a terminal completion like any other, so it reports one — a consumer watching
-            // an empty-manifest profile sees it settle rather than seeing the stream simply stop.
+            // an empty-set profile sees it settle rather than seeing the stream simply stop.
             await activity.complete();
             return;
         }
-
-        // 2. Register staged files in cortex_artifacts
-        unwrapOrThrow(
-            await upsertArtifacts(
-                deps.pool,
-                stagedInputs.map((f) => ({
-                    resourceId: analysisId,
-                    path: inputArtifactPath(f),
-                    hash: f.hash,
-                    size: f.size,
-                    role: "input" as const,
-                    fileId: f.fileId,
-                })),
-            ),
-        );
 
         const executionId = generateExecutionId(DATA_PROFILE_AGENT_ID);
         const workflowId = DBOS.workflowID ?? `${DATA_PROFILE_RUN_LITERAL}:${executionId}`;
@@ -663,7 +641,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         if (detected.keptFileCount === 0) {
             logger.warn("every scanned file was quarantined", { scanned: detected.fileCount, quarantined: detected.quarantine.count });
             const resolution = resolveProfileSubmission(emptySubmission(), detected, menu, { finalRound: true });
-            const record = buildDataProfileResult(emptySubmission(), resolution, stagedInputs, new Date().toISOString());
+            const record = buildDataProfileResult(emptySubmission(), resolution, inputSummary.signature, new Date().toISOString());
             await activity.indexing();
             await indexProfile({ deps, analysisId, session: runSession, record, scan, logger });
             logProfileMonitoring(logger, { resolution, dimensions: [], probes: [], repairRounds: 0, absorb: "none" });
@@ -691,7 +669,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
         if (absorb.kind === "full" && prior) {
             logger.info("absorbed the prior recipe", { groups: absorb.resolution.groups.length, keptFiles: absorb.resolution.partition.keptFiles });
             await activity.indexing();
-            const absorbed = buildAbsorbedResult(prior, absorb.resolution, stagedInputs, new Date().toISOString());
+            const absorbed = buildAbsorbedResult(prior, absorb.resolution, inputSummary.signature, new Date().toISOString());
             await indexProfile({ deps, analysisId, session: runSession, record: absorbed, scan, logger });
             logProfileMonitoring(logger, {
                 resolution: absorb.resolution,
@@ -729,7 +707,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             work: { kind: "profile", id: workflowId },
             emit: (part) => DBOS.writeStream("events", part),
         });
-        const acquired = await lease.acquire(estimateDataProfileResources(stagedInputs));
+        const acquired = await lease.acquire(DATA_PROFILE_RESOURCES);
         if (acquired.kind === "refused") throw new Error(acquired.reason);
         if (acquired.kind === "failed") throw new Error(`the profiler sandbox did not start: ${acquired.detail}`);
         const resources = acquired.size;
@@ -827,7 +805,7 @@ export async function runDataProfileBody(input: DataProfileWorkflowInput, deps: 
             // products are this vector index and the ledger row.
             await activity.indexing();
 
-            const profileRecord = buildDataProfileResult(submission, resolution, stagedInputs, new Date().toISOString());
+            const profileRecord = buildDataProfileResult(submission, resolution, inputSummary.signature, new Date().toISOString());
             await indexProfile({ deps, analysisId, session: runSession, record: profileRecord, scan, logger });
             logProfileMonitoring(logger, {
                 resolution,
@@ -975,13 +953,13 @@ export type DataProfileTriggerDeps = {
 /**
  * Identity + staged inputs for a profile run. The caller (the managed route /
  * the CLI) stages `data/inputs/` BEFORE triggering (see the data-profile-init spec) and passes the
- * resulting manifest here; this trigger never stages — it forwards the manifest
+ * summary of the resulting manifest here; this trigger never stages — it forwards the summary
  * into the workflow input.
  */
 export type DataProfileTriggerParams = {
     readonly auth: AuthContext;
     readonly analysisId: string;
-    readonly stagedInputs: readonly StagedInput[];
+    readonly inputSummary: StagedInputSummary;
 };
 
 /**
@@ -1022,7 +1000,7 @@ export function dataProfileWorkflowId(analysisId: string, nonce: string): string
  * Start the data-profile workflow under the authorization and a per-attempt id
  * `dataprofile:{analysisId}:{nonce}` — concurrent triggers are already
  * serialized by the ledger CAS. The caller has already staged the inputs and
- * supplied the manifest in `params.stagedInputs`; this forwards it into the
+ * supplied their summary in `params.inputSummary`; this forwards it into the
  * workflow input. The handle result is not awaited.
  */
 async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: DataProfileTriggerParams, runSession: RunSession): Promise<void> {
@@ -1033,7 +1011,7 @@ async function startDataProfileWorkflow(deps: DataProfileTriggerDeps, params: Da
         {
             analysisId: params.analysisId,
             runSession,
-            stagedInputs: params.stagedInputs,
+            inputSummary: params.inputSummary,
         },
     );
 }
@@ -1077,15 +1055,15 @@ async function dispatchClaimedProfile(
  * concurrently: the claims are CAS UPDATEs, so at most one caller dispatches.
  *
  * Every claim requires a non-empty `seed_input_file_ids` — a profile must always name
- * the files it covers. The startable claim takes `'pending'` or a NULL status (NULL is
+ * the input set it covers. The startable claim takes `'pending'` or a NULL status (NULL is
  * the cleared-then-reseeded state); the rerun claim takes `'completed'`. A `'failed'`
  * row is claimed by neither: retrying a failure is a deliberate act the caller drives
  * through `tryRetryDataProfile` + `runDataProfile`.
  *
- * An analysis with no input files takes none of the claims. An empty manifest against
+ * An analysis with no input files takes none of the claims. An empty input set against
  * a seed that names no file stamps the row `completed` at once, with no result and no
  * workflow (see {@link completeEmptyDataProfile}), and the trigger returns
- * `"completed"`. An empty manifest against a seed that names files is a divergence
+ * `"completed"`. An empty input set against a seed that names files is a divergence
  * between the caller and the ledger, and the trigger refuses it.
  *
  * Returns what happened, so the caller can surface it (e.g. in the seed response). A
@@ -1103,20 +1081,20 @@ async function claimAndDispatchProfile(deps: DataProfileTriggerDeps, params: Dat
     // conjunct (see `SEEDED` in state/data-profile.ts) and is what actually makes a
     // seedless `running` row impossible. This read exists only to name the cause: on
     // the ordinary non-racing path it turns an opaque "no claim matched" into a
-    // precise reason. An empty array is not a seed — it names zero files. Reads via
-    // `loadSeedInputFileIds`, which returns null for BOTH a missing analysis row and
+    // precise reason. A seed of zero files is not a seed. Reads via
+    // `loadSeedInputCount`, which returns null for BOTH a missing analysis row and
     // a NULL-seed row (`loadDataProfileStatus` would hide the seed of a cleared row).
-    const seedRead = await loadSeedInputFileIds(deps.pool, analysisId);
+    const seedRead = await loadSeedInputCount(deps.pool, analysisId);
     if (seedRead.isErr()) return err(seedRead.error);
     const seeded = seedRead.value;
 
-    if (params.stagedInputs.length === 0) {
-        // The trigger validates the manifest it is about to dispatch against the ledger
-        // seed. A seeded row profiled against an EMPTY manifest would claim `running` and
-        // then hit the body's empty-manifest path, and complete with a NULL result while
+    if (params.inputSummary.count === 0) {
+        // The trigger validates the input set it is about to dispatch against the ledger
+        // seed. A seeded row profiled against an EMPTY set would claim `running` and
+        // then hit the body's empty-set path, and complete with a NULL result while
         // the seed still names files. Refuse the divergence before any claim.
-        if (seeded !== null && seeded.length > 0) {
-            logger.error("trigger rejected: empty manifest dispatched against a non-empty seed", { seededCount: seeded.length });
+        if (seeded !== null && seeded > 0) {
+            logger.error("trigger rejected: empty input set dispatched against a non-empty seed", { seededCount: seeded });
             return ok("failed");
         }
 
@@ -1135,9 +1113,9 @@ async function claimAndDispatchProfile(deps: DataProfileTriggerDeps, params: Dat
         return ok("failed");
     }
 
-    // A non-empty manifest against a seed that names no file: the caller skipped the
+    // A non-empty input set against a seed that names no file: the caller skipped the
     // seed, or the analysis row is missing. Name the cause before any claim.
-    if (seeded === null || seeded.length === 0) {
+    if (seeded === null || seeded === 0) {
         logger.error("trigger rejected: no seeded input set (missing analysis row or caller skipped seeding)");
         return ok("failed");
     }

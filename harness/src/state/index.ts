@@ -16,7 +16,6 @@ export { upsertAnalysis, loadAnalysisStatus } from "./analyses.js";
 export {
     upsertArtifact,
     upsertArtifacts,
-    queryInputArtifacts,
     queryStepArtifactPaths,
     queryStepSummaryPaths,
     queryStepTemplateArtifacts,
@@ -30,7 +29,6 @@ export {
 export type {
     RegisterArtifactInput,
     ArtifactOrigin,
-    InputArtifactMeta,
     StepArtifactRef,
     StepTemplateArtifact,
     ArtifactExtensionCount,
@@ -89,7 +87,7 @@ export {
     clearDataProfile,
     completeEmptyDataProfile,
     loadDataProfileStatus,
-    loadSeedInputFileIds,
+    loadSeedInputCount,
     queryRunningProfiles,
     recordDataProfileUser,
     recordDataProfileWorkflowId,

@@ -15,8 +15,10 @@ import {
     tryRetryDataProfile,
     tryStartDataProfile,
     expireStaleDataProfile,
+    loadSeedInputCount,
     type DataProfileResult,
 } from "../data-profile.js";
+import { upsertAnalysis } from "../analyses.js";
 
 /**
  * Insert an analysis-state row. `seed` defaults to a non-empty set because every claim
@@ -406,6 +408,36 @@ describe("the seed conjunct on every claim into running", () => {
 // expired (stale-timeout) out from under it — including on a DBOS recovery replay. Both
 // writes CAS on `data_profile_status = 'running'` so a late write finds no running row and
 // no-ops, instead of resurrecting the seedless-`completed` state the seed CAS forbids.
+describe("a seed from an input signature", () => {
+    let pool: Pool;
+    let drop: () => Promise<void>;
+
+    beforeAll(async () => {
+        const ctx = await withSchema("dp_seed_signature");
+        pool = ctx.pool;
+        drop = ctx.drop;
+    });
+
+    afterAll(async () => {
+        await drop();
+    });
+
+    it("stores one entry for a set of many files, reads back its count, and admits the claim", async () => {
+        (await upsertAnalysis(pool, "a-sig", null, { count: 600_000, digest: "abc" }))._unsafeUnwrap();
+        const raw = await pool.query<{ seed: unknown }>("SELECT seed_input_file_ids AS seed FROM cortex_analysis_state WHERE analysis_id = 'a-sig'");
+        expect(raw.rows[0]?.seed).toEqual([{ count: 600_000, digest: "abc" }]);
+        expect((await loadSeedInputCount(pool, "a-sig"))._unsafeUnwrap()).toBe(600_000);
+        expect((await tryStartDataProfile(pool, "a-sig"))._unsafeUnwrap()).toBe(true);
+        expect((await loadDataProfileStatus(pool, "a-sig"))._unsafeUnwrap()?.seedInputCount).toBe(600_000);
+    });
+
+    it("stores an empty set as `[]`, which no claim admits", async () => {
+        (await upsertAnalysis(pool, "a-sig-empty", null, { count: 0, digest: "e" }))._unsafeUnwrap();
+        expect((await loadSeedInputCount(pool, "a-sig-empty"))._unsafeUnwrap()).toBe(0);
+        expect((await tryStartDataProfile(pool, "a-sig-empty"))._unsafeUnwrap()).toBe(false);
+    });
+});
+
 describe("terminal writes CAS on running — a cleared row is never resurrected", () => {
     let pool: Pool;
     let drop: () => Promise<void>;
@@ -720,7 +752,7 @@ describe("the recorded profile workflow id", () => {
         expect(status?.error).toBeNull();
         expect(status?.startedAt).not.toBeNull();
         expect(status?.completedAt).not.toBeNull();
-        expect(status?.seedInputFileIds).toEqual(["file-seed"]);
+        expect(status?.seedInputCount).toBe(1);
     });
 
     it("refuses a completed row and leaves its recorded id untouched", async () => {
@@ -817,7 +849,7 @@ describe("completing an analysis with no input files", () => {
         expect(status?.result).toBeNull();
         expect(status?.error).toBeNull();
         expect(status?.workflowId).toBeNull();
-        expect(status?.seedInputFileIds).toEqual([]);
+        expect(status?.seedInputCount).toBe(0);
 
         // No workflow ran, so the profile started and completed at one instant.
         const stamps = await rawTimestamps("a-empty-null");
@@ -878,7 +910,7 @@ describe("completing an analysis with no input files", () => {
         expect((await completeEmptyDataProfile(pool, "a-empty-reseeded"))._unsafeUnwrap()).toBe(false);
         expect(await rawStatus(pool, "a-empty-reseeded")).toBe("pending");
         const status = (await loadDataProfileStatus(pool, "a-empty-reseeded"))._unsafeUnwrap();
-        expect(status?.seedInputFileIds).toEqual(["file-aaa"]);
+        expect(status?.seedInputCount).toBe(1);
     });
 
     it("refuses an analysis with no ledger row", async () => {

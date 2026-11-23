@@ -29,24 +29,13 @@ import type { BoundLease } from "../../sandbox/leases.js";
 import type { SandboxRef } from "../../sandbox/types.js";
 import { callTools, reply, scriptedModel, text, toolCall, type ScriptStep } from "../../testing.js";
 import { runDataProfileBody, type DataProfileDeps } from "../data-profile.js";
-import { estimateDataProfileResources } from "../../sandbox/estimate-data-profile-resources.js";
+import { DATA_PROFILE_RESOURCES } from "../../sandbox/estimate-data-profile-resources.js";
 import { presentAt } from "../../lib/present.js";
 
 const ANALYSIS_ID = "an-profile";
 const OTHER_ANALYSIS_ID = "an-profile-other";
 
-const stagedInputs = [
-    {
-        fileId: "f1",
-        mountName: "f1",
-        key: "f1/counts.csv",
-        fileName: "counts.csv",
-        hash: "sha256:x",
-        size: 30,
-        mtimeMs: 1_780_000_000_000,
-        relativePath: "inputs/f1/counts.csv",
-    },
-];
+const inputSummary = { count: 1, totalBytes: 30, signature: { count: 1, digest: "d1" } };
 
 let root: string;
 beforeEach(async () => {
@@ -111,7 +100,7 @@ describe("the data profile — a refused lease", () => {
         const revoked: string[] = [];
         const refusing = leaseOverClient(makeFakeSandboxClient(), MACHINE, { grant: () => ({ kind: "refused", reason: "account_frozen" }) });
 
-        await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, refusing, revoked));
+        await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), inputSummary }, deps(pool, refusing, revoked));
 
         const failed = statements.filter((q) => q.text.includes("data_profile_status = 'failed'"));
         expect(failed).toHaveLength(1);
@@ -119,6 +108,15 @@ describe("the data profile — a refused lease", () => {
         expect(revoked).toEqual(["data-profile-failed"]);
         expect(statements.some((q) => q.text.includes("cortex_paused_work"))).toBe(false);
         expect(statements.some((q) => writesAnalysisStatus(q.text))).toBe(false);
+    });
+
+    it("writes no row for each input file: the profile reads the tree, and the summary carries the count", async () => {
+        const { pool, statements } = statementPool();
+        const refusing = leaseOverClient(makeFakeSandboxClient(), MACHINE, { grant: () => ({ kind: "refused", reason: "account_frozen" }) });
+
+        await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), inputSummary }, deps(pool, refusing, []));
+
+        expect(statements.some((q) => q.text.includes("INSERT INTO cortex_artifacts"))).toBe(false);
     });
 
     it("passes a cancel from DBOS through with no change, revokes the mandate, and runs no failure path", async () => {
@@ -131,7 +129,7 @@ describe("the data profile — a refused lease", () => {
             },
         });
 
-        const outcome = await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs }, deps(pool, cancelled, revoked)).then(
+        const outcome = await runDataProfileBody({ analysisId: ANALYSIS_ID, runSession: runSession(), inputSummary }, deps(pool, cancelled, revoked)).then(
             () => "completed",
             (thrown: unknown) => thrown,
         );
@@ -152,7 +150,7 @@ describe("the data profile — the keys of its usage records", () => {
             const answer = reply([text("The inputs are a count table.")], "stop", { inputTokens: 10, outputTokens: 2 });
             const { provider } = scriptedModel([answer, answer]);
             await runDataProfileBody(
-                { analysisId, runSession: runSession(analysisId), stagedInputs },
+                { analysisId, runSession: runSession(analysisId), inputSummary },
                 {
                     ...deps(pool, leaseOverClient(makeFakeSandboxClient(), MACHINE), []),
                     provider,
@@ -178,12 +176,12 @@ describe("the data profile — the first message of the profiler", () => {
         const { pool } = statementPool();
         const { provider, calls } = scriptedModel([reply([text("The inputs are a count table.")]), reply([text("Still no submission.")])]);
         await runDataProfileBody(
-            { analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs },
+            { analysisId: ANALYSIS_ID, runSession: runSession(), inputSummary },
             { ...deps(pool, leaseOverClient(makeFakeSandboxClient(), MACHINE), []), provider },
         );
 
         const firstRequest = JSON.stringify(presentAt(calls, 0).prompt);
-        const budget = estimateDataProfileResources(stagedInputs);
+        const budget = DATA_PROFILE_RESOURCES;
         expect(firstRequest).toContain("Resources (hard limits)");
         expect(firstRequest).toContain(`CPU: ${budget.cpu} `);
         expect(firstRequest).toContain(`Memory: ${budget.memoryGb} GB`);
@@ -239,7 +237,7 @@ describe("the data profile — the submission that it records", () => {
         const revoked: string[] = [];
         const { provider, calls } = scriptedModel(script);
         await runDataProfileBody(
-            { analysisId: ANALYSIS_ID, runSession: runSession(), stagedInputs },
+            { analysisId: ANALYSIS_ID, runSession: runSession(), inputSummary },
             { ...deps(pool, leaseOverClient(makeFakeSandboxClient(), MACHINE), revoked), provider },
         );
         return { statements, revoked, calls: calls.length };

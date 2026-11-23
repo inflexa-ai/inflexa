@@ -73,6 +73,8 @@ export const InputRefSchema = z.object({
     path: z.string(),
     /** SHA-256 hash at read time. */
     hash: z.string(),
+    /** Size in bytes, from the stat of the reconcile that hashed the input. Absent until then. */
+    size: z.number().optional(),
     /** Source classification derived from mount path. */
     source: InputSourceSchema,
     /** Step ID that produced this input (absent for data inputs). */

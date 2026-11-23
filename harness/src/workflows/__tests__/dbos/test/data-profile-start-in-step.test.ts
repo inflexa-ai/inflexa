@@ -46,18 +46,7 @@ const turn = DBOS.registerWorkflow(
                 const started = await runDataProfile(deps, {
                     auth: makeLocalAuth(),
                     analysisId: ANALYSIS_ID,
-                    stagedInputs: [
-                        {
-                            fileId: "file-a",
-                            mountName: "file-a",
-                            key: "file-a.csv",
-                            fileName: "file-a.csv",
-                            hash: "hash-a",
-                            size: 1024,
-                            mtimeMs: 1_780_000_000_000,
-                            relativePath: "inputs/file-a/file-a.csv",
-                        },
-                    ],
+                    inputSummary: { count: 1, totalBytes: 1024, signature: { count: 1, digest: "d1" } },
                 });
                 return started.match(
                     () => "started",

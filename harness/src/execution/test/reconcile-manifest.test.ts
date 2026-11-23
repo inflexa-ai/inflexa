@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { metrics } from "@opentelemetry/api";
@@ -17,7 +17,7 @@ import { createCapturingLogger } from "../../__tests__/setup/logger.js";
 import { __resetMetricsForTest } from "../../lib/metrics.js";
 import { ProvenanceCollector } from "../../provenance/collector.js";
 import { feedExecFrame } from "../../provenance/exec-frame.js";
-import { reconcileManifestWithDisk } from "../reconcile-manifest.js";
+import { __clearInputHashCacheForTest, reconcileManifestWithDisk } from "../reconcile-manifest.js";
 import { computeSha256File } from "../../lib/fs-helpers.js";
 import type { ArtifactManifestEntry } from "../../schemas/artifact-manifest.js";
 import { presentAt } from "../../lib/present.js";
@@ -448,6 +448,81 @@ describe("reconcileManifestWithDisk — input content attestation", () => {
             const result = await reconcileDeRun(root, manifest, collector);
             expect(result.manifest).toHaveLength(1);
         } finally {
+            await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("reconcileManifestWithDisk — input hashes at scale", () => {
+    test("each attested input carries the size of its stat beside its hash", async () => {
+        const { sessionPath, root, upstreamRel, collector, manifest } = await setup({ writeUpstream: true });
+        try {
+            await reconcileDeRun(root, manifest, collector);
+            const upstream = collector.getTrackedInputs().find((r) => r.source === "upstream");
+            expect(upstream?.size).toBe((await stat(join(root, upstreamRel))).size);
+        } finally {
+            await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+
+    test("many inputs get the hash of their own bytes, in ref order", async () => {
+        const sessionPath = await mkdtemp(join(tmpdir(), "cortex-reconcile-"));
+        const root = join(sessionPath, RID);
+        try {
+            const names = Array.from({ length: 12 }, (_, i) => `data/inputs/local/f${i}.csv`);
+            const { collector } = await reconcileStagedFrame({
+                root,
+                reads: names.map((name) => ({ path: `/${RID}/${name}`, layers: ["python"] })),
+                stage: async (r) => {
+                    await mkdir(join(r, "data/inputs/local"), { recursive: true });
+                    for (const [i, name] of names.entries()) await writeFile(join(r, name), `value,${i}\n`);
+                },
+            });
+            const tracked = collector.getTrackedInputs();
+            expect(tracked.map((ref) => ref.path)).toEqual(names.map((name) => `/${RID}/${name}`));
+            for (const [i, name] of names.entries()) expect(presentAt(tracked, i).hash).toBe(await computeSha256File(join(root, name)));
+        } finally {
+            await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+
+    test("an input edited in place after an earlier reconcile gets the hash of its new bytes", async () => {
+        const sessionPath = await mkdtemp(join(tmpdir(), "cortex-reconcile-"));
+        const root = join(sessionPath, RID);
+        const rel = "data/inputs/local/counts.csv";
+        const reads = [{ path: `/${RID}/${rel}`, layers: ["python"] }];
+        try {
+            await mkdir(join(root, "data/inputs/local"), { recursive: true });
+            await writeFile(join(root, rel), "gene,count\nTP53,42\n");
+            const before = await stat(join(root, rel));
+            const first = await reconcileStagedFrame({ root, reads });
+            const firstHash = presentAt(first.collector.getTrackedInputs(), 0).hash;
+
+            // Same size and same mtime: only the ctime and the bytes tell the two apart.
+            await writeFile(join(root, rel), "gene,count\nTP53,43\n");
+            await utimes(join(root, rel), before.atime, before.mtime);
+            const second = await reconcileStagedFrame({ root, reads });
+
+            expect(presentAt(second.collector.getTrackedInputs(), 0).hash).toBe(await computeSha256File(join(root, rel)));
+            expect(presentAt(second.collector.getTrackedInputs(), 0).hash).not.toBe(firstHash);
+        } finally {
+            __clearInputHashCacheForTest();
+            await rm(sessionPath, { recursive: true, force: true });
+        }
+    });
+
+    test("an input that cannot be read fails the reconcile with the read error", async () => {
+        const sessionPath = await mkdtemp(join(tmpdir(), "cortex-reconcile-"));
+        const root = join(sessionPath, RID);
+        const rel = "data/inputs/local/locked.csv";
+        try {
+            await mkdir(join(root, "data/inputs/local"), { recursive: true });
+            await writeFile(join(root, rel), "x\n");
+            await chmod(join(root, rel), 0o000);
+            const reconcile = reconcileStagedFrame({ root, reads: [{ path: `/${RID}/${rel}`, layers: ["python"] }] });
+            await expect(reconcile).rejects.toMatchObject({ code: "EACCES" });
+        } finally {
+            await chmod(join(root, rel), 0o644);
             await rm(sessionPath, { recursive: true, force: true });
         }
     });

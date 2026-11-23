@@ -5,7 +5,9 @@
 import type { ResultAsync } from "neverthrow";
 
 import { tryMutation, tryQuery, type DbError } from "../lib/db-result.js";
+import type { DataProfileInputSignature } from "../contracts/data-profile.js";
 import type { Querier } from "./db.js";
+import { seedOfSignature } from "./data-profile.js";
 
 /**
  * Upsert a cortex_analysis_state row.
@@ -16,8 +18,12 @@ import type { Querier } from "./db.js";
  *
  * User identity is derived from the ambient credential's JWT `sub` claim
  * at request time — not persisted in this table.
+ *
+ * `seed` is the signature of the input set that the next profile must cover. The row stores
+ * it in `seed_input_file_ids` as one entry, not one entry for each file (see
+ * `seedOfSignature`). An absent seed leaves the stored seed unchanged.
  */
-export function upsertAnalysis(pool: Querier, resourceId: string, context: string | null, inputFileIds?: string[]): ResultAsync<void, DbError> {
+export function upsertAnalysis(pool: Querier, resourceId: string, context: string | null, seed?: DataProfileInputSignature): ResultAsync<void, DbError> {
     const now = new Date().toISOString();
     return tryMutation("analyses.upsertAnalysis", async () => {
         await pool.query({
@@ -29,7 +35,7 @@ export function upsertAnalysis(pool: Querier, resourceId: string, context: strin
               context = EXCLUDED.context,
               seed_input_file_ids = COALESCE(EXCLUDED.seed_input_file_ids, cortex_analysis_state.seed_input_file_ids),
               updated_at = EXCLUDED.updated_at`,
-            values: [resourceId, context ?? null, inputFileIds ? JSON.stringify(inputFileIds) : null, now, now],
+            values: [resourceId, context ?? null, seed ? JSON.stringify(seedOfSignature(seed)) : null, now, now],
         });
     });
 }
