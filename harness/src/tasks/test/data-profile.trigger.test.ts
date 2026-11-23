@@ -10,7 +10,7 @@ import type { Querier } from "../../state/db.js";
 import { withSchema } from "../../__tests__/setup/postgres.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { createLocalRunAuthorizer } from "../../auth/local-run-authorizer.js";
-import type { StagedInput } from "../../execution/staged-input.js";
+import type { StagedInput, StagedInputSummary } from "../../execution/staged-input.js";
 import type { RunLauncher } from "../../execution/run-launcher.js";
 import type { SignableInput } from "../../execution/input-signature.js";
 import { loadDataProfileStatus, tryRetryDataProfile } from "../../state/data-profile.js";
@@ -28,11 +28,15 @@ function stagedInput(fileId: string): StagedInput {
         mountName: fileId,
         key: `${fileId}.csv`,
         fileName: `${fileId}.csv`,
-        hash: `hash-${fileId}`,
         size: 1024,
         mtimeMs: 1_780_000_000_000,
         relativePath: `inputs/${fileId}/${fileId}.csv`,
     };
+}
+
+/** The summary of a manifest, computed the way an embedder computes it. */
+function summaryOf(files: readonly StagedInput[]): StagedInputSummary {
+    return { count: files.length, totalBytes: files.reduce((sum, f) => sum + f.size, 0), signature: computeInputSignature(files) };
 }
 
 /**
@@ -151,7 +155,7 @@ describe("triggerDataProfile seed-first guard", () => {
             await triggerDataProfile(tripwireDeps(pool), {
                 auth: makeLocalAuth(),
                 analysisId: "a-noseed",
-                stagedInputs: [stagedInput("file-aaa")],
+                inputSummary: summaryOf([stagedInput("file-aaa")]),
             })
         )._unsafeUnwrap();
 
@@ -174,7 +178,7 @@ describe("triggerDataProfile seed-first guard", () => {
             await triggerDataProfile(tripwireDeps(pool), {
                 auth: makeLocalAuth(),
                 analysisId: "a-emptyseed",
-                stagedInputs: [stagedInput("file-aaa")],
+                inputSummary: summaryOf([stagedInput("file-aaa")]),
             })
         )._unsafeUnwrap();
 
@@ -191,7 +195,7 @@ describe("triggerDataProfile seed-first guard", () => {
             await triggerDataProfile(tripwireDeps(pool), {
                 auth: makeLocalAuth(),
                 analysisId: "a-empty-noseed",
-                stagedInputs: [],
+                inputSummary: summaryOf([]),
             })
         )._unsafeUnwrap();
 
@@ -201,7 +205,7 @@ describe("triggerDataProfile seed-first guard", () => {
         expect(status?.status).toBe("completed");
         expect(status?.result).toBeNull();
         expect(status?.workflowId).toBeNull();
-        expect(status?.seedInputFileIds).toEqual([]);
+        expect(status?.seedInputCount).toBe(0);
     });
 
     it("completes an empty-seed pending row dispatched an empty manifest", async () => {
@@ -214,7 +218,7 @@ describe("triggerDataProfile seed-first guard", () => {
             await triggerDataProfile(tripwireDeps(pool), {
                 auth: makeLocalAuth(),
                 analysisId: "a-empty-seeded",
-                stagedInputs: [],
+                inputSummary: summaryOf([]),
             })
         )._unsafeUnwrap();
 
@@ -232,7 +236,7 @@ describe("triggerDataProfile seed-first guard", () => {
             await triggerDataProfile(tripwireDeps(pool), {
                 auth: makeLocalAuth(),
                 analysisId: "a-empty-running",
-                stagedInputs: [],
+                inputSummary: summaryOf([]),
             })
         )._unsafeUnwrap();
 
@@ -245,7 +249,7 @@ describe("triggerDataProfile seed-first guard", () => {
             await triggerDataProfile(tripwireDeps(pool), {
                 auth: makeLocalAuth(),
                 analysisId: "a-empty-norow",
-                stagedInputs: [],
+                inputSummary: summaryOf([]),
             })
         )._unsafeUnwrap();
 
@@ -266,7 +270,7 @@ describe("triggerDataProfile seed-first guard", () => {
             await triggerDataProfile(parkedDispatchDeps(pool), {
                 auth: makeLocalAuth(),
                 analysisId: "a-cleared",
-                stagedInputs: [stagedInput("file-aaa")],
+                inputSummary: summaryOf([stagedInput("file-aaa")]),
             })
         )._unsafeUnwrap();
 
@@ -282,7 +286,7 @@ describe("triggerDataProfile seed-first guard", () => {
             await triggerDataProfile(parkedDispatchDeps(pool), {
                 auth: makeLocalAuth(),
                 analysisId: "a-seeded",
-                stagedInputs: [stagedInput("file-aaa")],
+                inputSummary: summaryOf([stagedInput("file-aaa")]),
             })
         )._unsafeUnwrap();
 
@@ -300,7 +304,7 @@ describe("triggerDataProfile seed-first guard", () => {
             await triggerDataProfile(parkedDispatchDeps(pool), {
                 auth: makeLocalAuth(),
                 analysisId: "a-completed",
-                stagedInputs: [stagedInput("file-aaa")],
+                inputSummary: summaryOf([stagedInput("file-aaa")]),
             })
         )._unsafeUnwrap();
 
@@ -310,7 +314,7 @@ describe("triggerDataProfile seed-first guard", () => {
 
     it("refuses a seeded row dispatched an EMPTY manifest — the seed names files the manifest does not", async () => {
         // The manifest divergence the trigger closes: the ledger seed names files, but the
-        // caller forwarded `stagedInputs: []`. Left through, the claim would flip `running`
+        // caller forwarded `inputSummary: summaryOf([])`. Left through, the claim would flip `running`
         // and the body's empty-manifest path would complete with a NULL result — the exact
         // seedless-completed incoherence a staleness policy loops on. The refusal must land
         // BEFORE any claim, so the row stays untouched at its seeded status.
@@ -321,7 +325,7 @@ describe("triggerDataProfile seed-first guard", () => {
             await triggerDataProfile(tripwireDeps(pool), {
                 auth: makeLocalAuth(),
                 analysisId: "a-empty-manifest",
-                stagedInputs: [],
+                inputSummary: summaryOf([]),
             })
         )._unsafeUnwrap();
 
@@ -359,7 +363,7 @@ describe("triggerDataProfile seed-first guard", () => {
             await triggerDataProfile(raced, {
                 auth: makeLocalAuth(),
                 analysisId: "a-raced",
-                stagedInputs: [stagedInput("file-aaa")],
+                inputSummary: summaryOf([stagedInput("file-aaa")]),
             })
         )._unsafeUnwrap();
 
@@ -374,10 +378,10 @@ describe("triggerDataProfile seed-first guard", () => {
         };
 
         const failure = (
-            await triggerDataProfile(faulty, { auth: makeLocalAuth(), analysisId: "a-faulty", stagedInputs: [stagedInput("file-aaa")] })
+            await triggerDataProfile(faulty, { auth: makeLocalAuth(), analysisId: "a-faulty", inputSummary: summaryOf([stagedInput("file-aaa")]) })
         )._unsafeUnwrapErr();
 
-        expect(failure.op).toBe("dataProfile.loadSeedInputFileIds");
+        expect(failure.op).toBe("dataProfile.loadSeedInputCount");
     });
 });
 
@@ -434,7 +438,7 @@ describe("triggerDataProfile — a refused authorization", () => {
 
         expect(
             (
-                await triggerDataProfile(refusingDeps(false), { auth: makeLocalAuth(), analysisId: "a-refused", stagedInputs: [stagedInput("file-aaa")] })
+                await triggerDataProfile(refusingDeps(false), { auth: makeLocalAuth(), analysisId: "a-refused", inputSummary: summaryOf([stagedInput("file-aaa")]) })
             )._unsafeUnwrap(),
         ).toBe("started");
 
@@ -453,7 +457,7 @@ describe("triggerDataProfile — a refused authorization", () => {
                 await triggerDataProfile(refusingDeps(true), {
                     auth: makeLocalAuth(),
                     analysisId: "a-refused-suspend",
-                    stagedInputs: [stagedInput("file-aaa")],
+                    inputSummary: summaryOf([stagedInput("file-aaa")]),
                 })
             )._unsafeUnwrap(),
         ).toBe("started");
@@ -519,7 +523,7 @@ describe("triggerDataProfile: the person of the profile", () => {
 
         const result = await triggerDataProfile(
             { pool, runAuthorizer: authorizerOf("u1"), runLauncher: launcher, workflow: async () => {} },
-            { auth: makeLocalAuth(), analysisId: "a-person", stagedInputs: [stagedInput("file-aaa")] },
+            { auth: makeLocalAuth(), analysisId: "a-person", inputSummary: summaryOf([stagedInput("file-aaa")]) },
         );
 
         expect(result._unsafeUnwrap()).toBe("started");
@@ -544,7 +548,7 @@ describe("triggerDataProfile: the person of the profile", () => {
 
             const result = await triggerDataProfile(
                 { pool: isolated.pool, runAuthorizer: authorizerOf("u1"), runLauncher: launcher, workflow: async () => {} },
-                { auth: makeLocalAuth(), analysisId: "a-person-fails", stagedInputs: [stagedInput("file-aaa")] },
+                { auth: makeLocalAuth(), analysisId: "a-person-fails", inputSummary: summaryOf([stagedInput("file-aaa")]) },
             );
 
             expect(result._unsafeUnwrap()).toBe("started");
@@ -578,7 +582,7 @@ describe("triggerDataProfile: the person of the profile", () => {
             workflow: async () => {},
         };
 
-        const result = await triggerDataProfile(refusing, { auth: makeLocalAuth(), analysisId: "a-person-refused", stagedInputs: [stagedInput("file-aaa")] });
+        const result = await triggerDataProfile(refusing, { auth: makeLocalAuth(), analysisId: "a-person-refused", inputSummary: summaryOf([stagedInput("file-aaa")]) });
 
         expect(result._unsafeUnwrap()).toBe("restarted");
         expect(await userAfterDispatch("a-person-refused", null)).toBeNull();
@@ -647,7 +651,7 @@ describe("runDataProfile — the outcome of the dispatch", () => {
                 },
             };
 
-            const failure = (await runDataProfile(refusing, { auth: makeLocalAuth(), analysisId, stagedInputs: [stagedInput("file-aaa")] }))._unsafeUnwrapErr();
+            const failure = (await runDataProfile(refusing, { auth: makeLocalAuth(), analysisId, inputSummary: summaryOf([stagedInput("file-aaa")]) }))._unsafeUnwrapErr();
 
             expect(failure).toEqual({ type: "refused", reason: "no_funds", suspend });
             expect(await rawStatus(pool, analysisId)).toBe("failed");
@@ -665,7 +669,7 @@ describe("runDataProfile — the outcome of the dispatch", () => {
         await claimFailedRow("a-run-start-failed");
 
         const failure = (
-            await runDataProfile(tripwireDeps(pool), { auth: makeLocalAuth(), analysisId: "a-run-start-failed", stagedInputs: [stagedInput("file-aaa")] })
+            await runDataProfile(tripwireDeps(pool), { auth: makeLocalAuth(), analysisId: "a-run-start-failed", inputSummary: summaryOf([stagedInput("file-aaa")]) })
         )._unsafeUnwrapErr();
 
         expect(failure.type).toBe("start_failed");

@@ -24,18 +24,8 @@ import { loadDataProfileStatus, tryStartDataProfile } from "../../state/data-pro
 import { createWorkspaceFilesystem } from "../../workspace/filesystem.js";
 import { runDataProfileBody, type DataProfileDeps, type DataProfileSettlement, type NotifyDataProfileSettled } from "../data-profile.js";
 
-const stagedInputs = [
-    {
-        fileId: "f1",
-        mountName: "f1",
-        key: "f1/counts.csv",
-        fileName: "counts.csv",
-        hash: "sha256:x",
-        size: 30,
-        mtimeMs: 1_780_000_000_000,
-        relativePath: "inputs/f1/counts.csv",
-    },
-];
+const inputSummary = { count: 1, totalBytes: 30, signature: { count: 1, digest: "d1" } };
+const emptySummary = { count: 0, totalBytes: 0, signature: { count: 0, digest: "d0" } };
 
 function runSession(analysisId: string): RunSession {
     return {
@@ -130,7 +120,7 @@ describe("the settle notice of the data profile", () => {
         const analysisId = await seedAnalysis(true);
         const { notify, settlements } = recordingNotice();
 
-        await runDataProfileBody({ analysisId, runSession: runSession(analysisId), stagedInputs: [] }, depsWith(unusedSandbox, notify));
+        await runDataProfileBody({ analysisId, runSession: runSession(analysisId), inputSummary: emptySummary }, depsWith(unusedSandbox, notify));
 
         const row = (await loadDataProfileStatus(pool, analysisId))._unsafeUnwrap();
         expect(row?.status).toBe("completed");
@@ -143,7 +133,7 @@ describe("the settle notice of the data profile", () => {
         const analysisId = await seedAnalysis(true);
         const { notify, settlements } = recordingNotice();
 
-        await runDataProfileBody({ analysisId, runSession: runSession(analysisId), stagedInputs }, depsWith(refusingSandbox, notify));
+        await runDataProfileBody({ analysisId, runSession: runSession(analysisId), inputSummary }, depsWith(refusingSandbox, notify));
 
         const row = (await loadDataProfileStatus(pool, analysisId))._unsafeUnwrap();
         expect(row?.status).toBe("failed");
@@ -156,7 +146,7 @@ describe("the settle notice of the data profile", () => {
         const analysisId = await seedAnalysis(false);
         const { notify, settlements } = recordingNotice();
 
-        await runDataProfileBody({ analysisId, runSession: runSession(analysisId), stagedInputs: [] }, depsWith(unusedSandbox, notify));
+        await runDataProfileBody({ analysisId, runSession: runSession(analysisId), inputSummary: emptySummary }, depsWith(unusedSandbox, notify));
 
         expect(settlements).toEqual([]);
         expect((await loadDataProfileStatus(pool, analysisId))._unsafeUnwrap()?.status).toBe("failed");
@@ -170,7 +160,7 @@ describe("the settle notice of the data profile", () => {
             return errAsync({ reason: "the store is down" });
         };
 
-        await runDataProfileBody({ analysisId, runSession: runSession(analysisId), stagedInputs: [] }, depsWith(unusedSandbox, failing));
+        await runDataProfileBody({ analysisId, runSession: runSession(analysisId), inputSummary: emptySummary }, depsWith(unusedSandbox, failing));
 
         expect(calls).toBe(1);
         expect((await loadDataProfileStatus(pool, analysisId))._unsafeUnwrap()?.status).toBe("completed");
@@ -179,7 +169,7 @@ describe("the settle notice of the data profile", () => {
     it("settles as before when the deps bind no notice", async () => {
         const analysisId = await seedAnalysis(true);
 
-        await runDataProfileBody({ analysisId, runSession: runSession(analysisId), stagedInputs: [] }, depsWith(unusedSandbox, undefined));
+        await runDataProfileBody({ analysisId, runSession: runSession(analysisId), inputSummary: emptySummary }, depsWith(unusedSandbox, undefined));
 
         expect((await loadDataProfileStatus(pool, analysisId))._unsafeUnwrap()?.status).toBe("completed");
     });

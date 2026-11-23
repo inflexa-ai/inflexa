@@ -19,16 +19,21 @@
  *      `study.artifacts.hash` equal `sha256sum` of the bytes the sync target
  *      will receive at upload time — the equivalence `SyncConfirm` checks.
  */
+import type { Stats } from "node:fs";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 
+import PQueue from "p-queue";
+
 import type { ArtifactManifestEntry } from "../schemas/artifact-manifest.js";
 import type { ProvenanceCollector } from "../provenance/collector.js";
+import type { InputRef } from "../provenance/types.js";
 import { createNoopLogger } from "../lib/console-logger.js";
 import type { Logger } from "../lib/logger.js";
 import { classifyWithinRoot, computeSha256File, hasValidContentHash } from "../lib/fs-helpers.js";
 import { recordArtifactReconcileDropped, recordLineageInputDropped } from "../lib/metrics.js";
 import { errnoOf } from "../lib/fs-result.js";
+import { presentAt } from "../lib/present.js";
 
 export type ReconcileManifestInput = {
     /** Absolute host root of the analysis's workspace tree. */
@@ -159,6 +164,12 @@ export async function reconcileManifestWithDisk(input: ReconcileManifestInput): 
  *
  * Fail-fast is retained for a `stat` that fails any OTHER way: the file is there
  * and cannot be read, which says something is wrong with the tree itself.
+ *
+ * The checks and the stats run one ref at a time, in ref order, thus the drops keep that
+ * order. The hashes run after them in a queue of {@link INPUT_HASH_WIDTH}, and each one
+ * first asks {@link inputHashCache}: a step reads the same inputs as the steps before it.
+ * The first failure in ref order is the one thrown: a hash failure, or the stat failure
+ * that ended the checks. Each ref that gets a hash also gets the size of its stat.
  */
 async function fillInputHashesFromDisk(
     collector: ProvenanceCollector,
@@ -170,6 +181,8 @@ async function fillInputHashesFromDisk(
     logger: Logger,
 ): Promise<void> {
     const resourceRoot = path.resolve(workspaceRoot);
+    const toHash: { readonly ref: InputRef; readonly hostPath: string; readonly info: Stats; readonly attestation: Record<string, unknown> }[] = [];
+    let statFailure: { readonly cause: unknown; readonly fields: Record<string, unknown> } | undefined;
 
     for (const ref of collector.getTrackedInputs()) {
         if (ref.source === "artifacts") continue;
@@ -229,8 +242,8 @@ async function fillInputHashesFromDisk(
                 collector.dropInput(ref);
                 continue;
             }
-            logger.error("cannot attest input — stat failed", { ...attestation, hostPath, throwSite: "input-stat", ...logger.errorFields(err) });
-            throw err;
+            statFailure = { cause: err, fields: { ...attestation, hostPath, throwSite: "input-stat", ...logger.errorFields(err) } };
+            break;
         }
         if (!info.isFile()) {
             // A directory read (e.g. `ls` / `list.files` of a mount) is tracked by
@@ -244,6 +257,70 @@ async function fillInputHashesFromDisk(
             continue;
         }
 
-        ref.hash = await computeSha256File(hostPath);
+        toHash.push({ ref, hostPath, info, attestation });
     }
+
+    const queue = new PQueue({ concurrency: INPUT_HASH_WIDTH });
+    // Two refs to one file in this step share one read.
+    const inFlight = new Map<string, Promise<string>>();
+    const hashes = await Promise.allSettled(
+        toHash.map(({ hostPath, info }) => {
+            const key = inputHashKey(hostPath, info);
+            const cached = inputHashCache.get(key);
+            if (cached !== undefined) return Promise.resolve(cached);
+            const pending =
+                inFlight.get(key) ??
+                queue.add(async () => {
+                    const hash = await computeSha256File(hostPath);
+                    rememberInputHash(key, hash);
+                    return hash;
+                });
+            inFlight.set(key, pending);
+            return pending;
+        }),
+    );
+    for (const [index, settled] of hashes.entries()) {
+        const { ref, info, hostPath, attestation } = presentAt(toHash, index, "the input that was hashed");
+        if (settled.status === "rejected") {
+            logger.error("cannot attest input — hash failed", { ...attestation, hostPath, throwSite: "input-hash", ...logger.errorFields(settled.reason) });
+            throw settled.reason;
+        }
+        ref.hash = settled.value;
+        ref.size = info.size;
+    }
+    if (statFailure !== undefined) {
+        logger.error("cannot attest input — stat failed", statFailure.fields);
+        throw statFailure.cause;
+    }
+}
+
+/** How many input files one reconcile hashes at one time. Each slot streams one file. */
+const INPUT_HASH_WIDTH = 4;
+
+/** The most hashes {@link inputHashCache} keeps. One entry is a key and a digest, a few hundred bytes. */
+const INPUT_HASH_CACHE_LIMIT = 10_000;
+
+/**
+ * The hash of each input file that a reconcile of this process hashed, oldest first. The key holds the
+ * host path, the device, the inode, the size, the mtime, and the ctime of the stat: an edit in place
+ * changes the mtime or the ctime, and a replacement changes the inode, thus a hit is the same bytes.
+ */
+const inputHashCache = new Map<string, string>();
+
+function inputHashKey(hostPath: string, info: Stats): string {
+    return JSON.stringify([hostPath, info.dev, info.ino, info.size, info.mtimeMs, info.ctimeMs]);
+}
+
+function rememberInputHash(key: string, hash: string): void {
+    inputHashCache.delete(key);
+    inputHashCache.set(key, hash);
+    if (inputHashCache.size > INPUT_HASH_CACHE_LIMIT) {
+        const oldest = inputHashCache.keys().next();
+        if (oldest.done !== true) inputHashCache.delete(oldest.value);
+    }
+}
+
+/** Test hook: forget each cached input hash. */
+export function __clearInputHashCacheForTest(): void {
+    inputHashCache.clear();
 }

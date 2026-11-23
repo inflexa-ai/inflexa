@@ -704,11 +704,12 @@ export type { ProfileDimensionView, ProfileGroupView } from "./app/data-profile-
 export { createAnalysisPurge } from "./state/purge-analysis.js";
 export type { AnalysisPurge, AnalysisPurgeDeps, AnalysisPurgeOutcome } from "./state/purge-analysis.js";
 
-// Staged-input manifest contract (the embedder stages; the harness only reads).
-export type { StagedInput } from "./execution/staged-input.js";
+// Staged-input contract (the embedder stages; the harness only reads). The trigger takes the
+// summary, never the manifest.
+export type { StagedInput, StagedInputSummary } from "./execution/staged-input.js";
 
-// The input signature a completed profile persists. Exported because the embedder owns
-// the OTHER side of the comparison — it enumerates the current input set — and a second
+// The input signature a completed profile persists. Exported because the embedder computes it
+// for the `StagedInputSummary` — it enumerates the current input set — and a second
 // implementation of the digest would silently disagree with the one on the row, which is
 // the failure a fixed-width comparand exists to prevent.
 export { computeInputSignature } from "./execution/input-signature.js";
