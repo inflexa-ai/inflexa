@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, onTestFinished, spyOn, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, type StatsFs } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Writable } from "node:stream";
@@ -14,6 +14,7 @@ import {
     classifyModelResolution,
     credentialHelperDetected,
     dataRootNotes,
+    DEFAULT_DATA_ROOT_PROBE_OPTS,
     detectCredentialHelperFrom,
     detectedAdoptable,
     collectDirectModel,
@@ -29,6 +30,7 @@ import {
     networkFilesystemInMountTable,
     networkFilesystemOfType,
     normalizeAdoptedBaseURL,
+    offerLocalDataRoot,
     pingMessagesEndpoint,
     probeCredentialSource,
     describeLoginFailure,
@@ -1690,6 +1692,10 @@ describe("setup() — batch orchestration", () => {
         rmSync(env.setupStatePath, { force: true });
         process.exitCode = 0;
 
+        // The readout of the data root reads the real disk. A full disk on the machine of the test must not add the offer of a move.
+        replaceProperty(DEFAULT_DATA_ROOT_PROBE_OPTS, "statfs", () => Promise.resolve(localStatfs(500 * 1024 ** 3)));
+        replaceProperty(DEFAULT_DATA_ROOT_PROBE_OPTS, "localFolders", []);
+
         firstReady = spyOn(container, "firstReadyRuntime").mockImplementation(() => Promise.resolve(ok(container.runtimes.docker)));
         embedStep = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(() => Promise.resolve(ok(undefined)));
         refsStep = spyOn(refsCommands, "runReferenceSetup").mockImplementation(() => Promise.resolve(ok(undefined)));
@@ -2070,6 +2076,46 @@ describe("setup() — batch orchestration", () => {
         expect(output).not.toContain("first `inflexa` launch");
         // The step being silent is not the step being skipped: the stack is still provisioned.
         expect(existsSync(env.cliproxyConfigPath)).toBe(true);
+    });
+
+    describe("a default data root with little free space", () => {
+        let scratch: string;
+
+        beforeEach(() => {
+            scratch = mkdtempSync(join(tmpdir(), "inflexa-scratch-"));
+            replaceProperty(DEFAULT_DATA_ROOT_PROBE_OPTS, "statfs", (path: string) =>
+                Promise.resolve(localStatfs(path.startsWith(scratch) ? 500 * 1024 ** 3 : 1024 ** 3)),
+            );
+            replaceProperty(DEFAULT_DATA_ROOT_PROBE_OPTS, "localFolders", [scratch]);
+        });
+
+        afterEach(() => {
+            rmSync(scratch, { recursive: true, force: true });
+        });
+
+        test("a run with no terminal only warns, and writes no `dataDir`", async () => {
+            const output = await runSetup(batch({}));
+
+            expect(process.exitCode).toBe(0);
+            expect(output).toContain("The data root has 1.0 GiB free.");
+            expect(readConfig().dataDir).toBeUndefined();
+            expect(output).toContain("Setup complete");
+        });
+
+        test("an interactive yes writes `dataDir`, says to stop a running server, and ends the run", async () => {
+            replaceProperty(process.stdin, "isTTY", true);
+            const selects: string[] = [];
+            spies.push(...stubRecordedPrompts([], selects));
+
+            const output = await runSetup({ auth: false, start: false, force: false, postgres: false, flags: { connection: "cliproxy" } });
+
+            expect(process.exitCode).toBe(0);
+            expect(selects[0]).toBe("Move the data root to a local disk?");
+            expect(readConfig().dataDir).toBe(join(scratch, "inflexa"));
+            expect(output).toContain("inflexa server stop");
+            expect(output).not.toContain("Setup complete");
+            expect(refsStep).not.toHaveBeenCalled();
+        });
     });
 
     test("a fully non-interactive run prints no prompt-shaped banner for a step that cannot prompt", async () => {
@@ -2940,7 +2986,7 @@ describe("describeLoginFailure", () => {
 });
 
 describe("the data root", () => {
-    const local = { freeBytes: 5 * 1024 ** 3, networkFilesystem: null, earlierData: false, timedOut: false };
+    const local = { freeBytes: 50 * 1024 ** 3, networkFilesystem: null, earlierData: false, timedOut: false };
 
     function root(overrides: Partial<DataRoot>): DataRoot {
         return { path: "/scratch/u/inflexa", source: "env", defaultPath: "/home/u/.local/share/inflexa", error: null, ...overrides };
@@ -2981,7 +3027,7 @@ describe("the data root", () => {
     });
 
     test("setup shows the root, its origin, and its free space", () => {
-        expect(dataRootNotes(root({}), local)).toEqual([{ level: "info", text: "Data root: /scratch/u/inflexa (from INFLEXA_DATA_DIR, 5.0 GiB free)." }]);
+        expect(dataRootNotes(root({}), local)).toEqual([{ level: "info", text: "Data root: /scratch/u/inflexa (from INFLEXA_DATA_DIR, 50.0 GiB free)." }]);
         expect(dataRootNotes(root({ source: "config" }), { ...local, freeBytes: null })[0]?.text).toBe(
             `Data root: /scratch/u/inflexa (from "dataDir" in ${env.configPath}, free space unknown).`,
         );
@@ -2995,7 +3041,7 @@ describe("the data root", () => {
     });
 
     test("a filesystem that does not answer in time gives unknown facts and a warning, and setup continues", async () => {
-        const hung = { timeoutMs: 20, statfs: (): Promise<never> => new Promise<never>(() => undefined) };
+        const hung = { timeoutMs: 20, statfs: (): Promise<never> => new Promise<never>(() => undefined), localFolders: [] };
         const facts = await inspectDataRoot(root({ path: tmpdir() }), hung);
         expect(facts).toEqual({ freeBytes: null, networkFilesystem: null, earlierData: false, timedOut: true });
         expect(dataRootNotes(root({}), facts, hung)[1]).toEqual({
@@ -3030,5 +3076,127 @@ describe("the data root", () => {
         } finally {
             rmSync(home, { recursive: true, force: true });
         }
+    });
+});
+
+/** A `statfs` answer with `freeBytes` free, of a local ext4 filesystem unless `type` names a different one. */
+function localStatfs(freeBytes: number, type = 0xef53): StatsFs {
+    return { type, bsize: 4096, frsize: 4096, blocks: 1e9, bfree: freeBytes / 4096, bavail: freeBytes / 4096, files: 1e6, ffree: 1e6 };
+}
+
+describe("the offer of a local data root", () => {
+    const GiB = 1024 ** 3;
+    let home: string;
+    let selects: { message: string; labels: string[] }[];
+
+    beforeEach(() => {
+        home = mkdtempSync(join(tmpdir(), "inflexa-local-root-"));
+        selects = [];
+        assertTestSandbox(env.configPath);
+        rmSync(env.configPath, { force: true });
+    });
+
+    afterEach(() => {
+        rmSync(home, { recursive: true, force: true });
+        rmSync(env.configPath, { force: true });
+    });
+
+    /** A default root in `home/default`, whose filesystem has `freeBytes` free. Each other folder has 500 GiB. */
+    function lowDiskOpts(freeBytes: number, localFolders: readonly string[]) {
+        const defaultPath = join(home, "default");
+        mkdirSync(defaultPath);
+        return {
+            root: { path: defaultPath, source: "default" as const, defaultPath, error: null },
+            opts: {
+                ...DEFAULT_DATA_ROOT_PROBE_OPTS,
+                localFolders,
+                statfs: (path: string): Promise<StatsFs> => Promise.resolve(localStatfs(path === defaultPath ? freeBytes : 500 * GiB)),
+            },
+        };
+    }
+
+    function stubSelect(pick: (labels: { value: string; label: string }[]) => string) {
+        const spy = spyOn(cliPrompts, "select").mockImplementation((message: string, options: { value: string; label: string }[]) => {
+            selects.push({ message, labels: options.map((option) => option.label) });
+            return Promise.resolve(pick(options));
+        });
+        onTestFinished(() => spy.mockRestore());
+        return spy;
+    }
+
+    test("a default root with little free space offers a local folder, and a yes writes `dataDir`", async () => {
+        const scratch = join(home, "scratch", "u");
+        mkdirSync(scratch, { recursive: true });
+        const { root, opts } = lowDiskOpts(2 * GiB, [scratch, join(home, "absent", "u")]);
+        stubSelect((options) => present(options[0]).value);
+
+        const facts = await inspectDataRoot(root, opts);
+        const moved = await offerLocalDataRoot(root, facts, opts);
+
+        expect(moved._unsafeUnwrap()).toBe(join(scratch, "inflexa"));
+        expect(readConfig().dataDir).toBe(join(scratch, "inflexa"));
+        expect(selects[0]?.labels).toEqual([`${join(scratch, "inflexa")} (500.0 GiB free)`, `Keep ${root.path}`, "Type a different folder"]);
+        // Setup never moves data: the old root keeps each file.
+        expect(existsSync(root.path)).toBe(true);
+    });
+
+    test("with no local folder found, the offer keeps the root by default, and a typed folder is written", async () => {
+        const { root, opts } = lowDiskOpts(2 * GiB, [join(home, "absent", "u")]);
+        stubSelect((options) => present(options.at(-1)).value);
+        const typed = spyOn(cliPrompts, "promptText").mockImplementation(() => Promise.resolve("/mnt/local/u/inflexa"));
+        onTestFinished(() => typed.mockRestore());
+
+        const moved = await offerLocalDataRoot(root, await inspectDataRoot(root, opts), opts);
+
+        expect(selects[0]?.labels[0]).toBe(`Keep ${root.path}`);
+        expect(moved._unsafeUnwrap()).toBe("/mnt/local/u/inflexa");
+        expect(readConfig().dataDir).toBe("/mnt/local/u/inflexa");
+    });
+
+    test("a keep writes nothing", async () => {
+        const { root, opts } = lowDiskOpts(2 * GiB, []);
+        stubSelect((options) => present(options[0]).value);
+
+        const moved = await offerLocalDataRoot(root, await inspectDataRoot(root, opts), opts);
+
+        expect(moved._unsafeUnwrap()).toBeNull();
+        expect(existsSync(env.configPath)).toBe(false);
+    });
+
+    test("a root with enough space, or a root that a setting names, gets no offer", async () => {
+        const { root, opts } = lowDiskOpts(100 * GiB, []);
+        const spy = stubSelect(() => "unused");
+
+        expect((await offerLocalDataRoot(root, await inspectDataRoot(root, opts), opts))._unsafeUnwrap()).toBeNull();
+        const named = { ...root, source: "env" as const };
+        const lowFacts = { freeBytes: 1 * GiB, networkFilesystem: "NFS", earlierData: false, timedOut: false };
+        expect((await offerLocalDataRoot(named, lowFacts, opts))._unsafeUnwrap()).toBeNull();
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    // The NFS magic of `statfs` names a network filesystem only on Linux. On macOS the mount table decides.
+    test.if(process.platform === "linux")("a local folder on a network filesystem is no candidate", async () => {
+        const scratch = join(home, "scratch", "u");
+        mkdirSync(scratch, { recursive: true });
+        const { root, opts } = lowDiskOpts(2 * GiB, [scratch]);
+        stubSelect((options) => present(options[0]).value);
+        const nfs = {
+            ...opts,
+            statfs: (path: string) => Promise.resolve(path === root.path ? localStatfs(2 * GiB) : localStatfs(500 * GiB, 0x6969)),
+        };
+
+        expect((await offerLocalDataRoot(root, await inspectDataRoot(root, nfs), nfs))._unsafeUnwrap()).toBeNull();
+        expect(selects[0]?.labels[0]).toBe(`Keep ${root.path}`);
+    });
+
+    test("a root with little free space gets a warning that names the space that the sandbox needs", () => {
+        const notes = dataRootNotes(
+            { path: "/home/u/.local/share/inflexa", source: "default", defaultPath: "/home/u/.local/share/inflexa", error: null },
+            { freeBytes: 2 * GiB, networkFilesystem: null, earlierData: false, timedOut: false },
+        );
+        expect(notes[1]).toEqual({
+            level: "warn",
+            text: `The data root has 2.0 GiB free. The sandbox images and the package store use about 20 GB. Set INFLEXA_DATA_DIR, or the "dataDir" key of ${env.configPath}, to a folder on a local disk with more space. Then run \`inflexa setup\` again.`,
+        });
     });
 });

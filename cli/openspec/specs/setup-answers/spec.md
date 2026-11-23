@@ -318,3 +318,32 @@ A failed record write MUST warn, and it MUST NOT change the outcome of the run. 
 - **WHEN** `setup --yes` runs
 - **THEN** no question is asked, every step resolves through its batch path, and the run exits as it does with no record
 
+
+### Requirement: Setup offers a local data root
+
+Setup MUST show the data root, its origin, and its free space. Setup MUST
+warn when the root is on a network filesystem, or when the root has less than
+20 GiB free. If the root is the default root and one of these two facts is
+true, an interactive setup MUST offer a move to a local disk. The offer lists
+each local folder that setup finds: `/scratch/$USER`, `/data/$USER`, and
+`/local/$USER`, with `inflexa` below each. A folder is a candidate only when
+it, or its parent, is writable, and its filesystem is local and has 20 GiB
+free or more. `/tmp` is not a candidate. The user can also type a folder.
+
+A yes writes the `dataDir` key of the config file. Setup moves no data. The
+process resolved its data root at its start, thus setup then stops, and tells
+the user to stop a server or a stack of the old root. A run with no terminal
+only warns, and writes no `dataDir`.
+
+#### Scenario: A full default root gets the offer of a local folder
+
+- **GIVEN** the default root with 1 GiB free, and a writable `/scratch/$USER` with 500 GiB free
+- **WHEN** an interactive setup runs, and the user selects the folder
+- **THEN** the config file gets `dataDir` set to `/scratch/$USER/inflexa`
+- **AND** setup tells the user to run `inflexa server stop`, and stops
+
+#### Scenario: A run with no terminal only warns
+
+- **GIVEN** the default root with 1 GiB free
+- **WHEN** `setup --yes` runs
+- **THEN** setup warns about the free space, writes no `dataDir`, and completes
