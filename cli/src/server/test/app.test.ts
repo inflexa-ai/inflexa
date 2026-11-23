@@ -150,7 +150,7 @@ describe("the read route", () => {
 
     test("a browser with the session cookie of `signIn` gets the figure, and the bearer token gets it too", async () => {
         const cookie = await signIn(app, TOKEN);
-        const response = await app.request(readUrl(), { headers: { Cookie: cookie } });
+        const response = await app.request(readUrl(), { headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" } });
         expect(response.status).toBe(200);
         expect(response.headers.get("Content-Type")).toBe("image/png");
         expect(await response.text()).toBe("png-bytes");
@@ -190,30 +190,34 @@ describe("the session cookie", () => {
 
     test("a signed-in browser reaches an API route with the cookie and no Authorization header", async () => {
         const cookie = await signIn(app, TOKEN);
-        const response = await app.request("/api/v1/server", { headers: { Cookie: cookie } });
+        const response = await app.request("/api/v1/server", { headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" } });
         expect(response.status).toBe(200);
     });
 
     test("the bearer token still passes beside a cookie", async () => {
         const cookie = await signIn(app, TOKEN);
-        expect((await app.request("/api/v1/server", { headers: { ...AUTH, Cookie: cookie } })).status).toBe(200);
+        expect((await app.request("/api/v1/server", { headers: { ...AUTH, Cookie: cookie, "Sec-Fetch-Site": "same-origin" } })).status).toBe(200);
     });
 
     test("a cookie of an unknown session gives 401 with the message that names `inflexa gui`", async () => {
         const name = (await signIn(app, TOKEN)).split("=")[0];
-        const response = await app.request("/api/v1/server", { headers: { Cookie: `${present(name, "the cookie name")}=${"f".repeat(64)}` } });
+        const response = await app.request("/api/v1/server", {
+            headers: { Cookie: `${present(name, "the cookie name")}=${"f".repeat(64)}`, "Sec-Fetch-Site": "same-origin" },
+        });
         await expectUnauthorized(response, SIGN_IN_AGAIN);
     });
 
     test("a cookie of a restarted server gives 401 with the message that names `inflexa gui`", async () => {
         const cookie = await signIn(app, TOKEN);
         const restarted = buildApp({ token: TOKEN, lifecycle: idleLifecycle(), boot, pageGrants: createPageGrantStore() });
-        await expectUnauthorized(await restarted.request("/api/v1/server", { headers: { Cookie: cookie } }), SIGN_IN_AGAIN);
+        await expectUnauthorized(await restarted.request("/api/v1/server", { headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" } }), SIGN_IN_AGAIN);
     });
 
     test("a cookie with a wrong name is no credential, and the message is the default one", async () => {
         const cookie = await signIn(app, TOKEN);
-        const response = await app.request("/api/v1/server", { headers: { Cookie: cookie.replace("inflexa_session", "other_session") } });
+        const response = await app.request("/api/v1/server", {
+            headers: { Cookie: cookie.replace("inflexa_session", "other_session"), "Sec-Fetch-Site": "same-origin" },
+        });
         await expectUnauthorized(response, "Send the token");
     });
 
@@ -221,11 +225,14 @@ describe("the session cookie", () => {
         const listener = { port: 8436 };
         const cookie = await signIn(app, TOKEN, listener);
         expect(cookie).toStartWith("inflexa_session_8436=");
-        const headers = { Cookie: cookie, Host: "127.0.0.1:8436" };
+        const headers = { Cookie: cookie, Host: "127.0.0.1:8436", "Sec-Fetch-Site": "same-origin" };
         expect((await app.request("/api/v1/server", { headers }, listener)).status).toBe(200);
         // The production server on 8431 reads a cookie named for 8436 as no cookie.
         const other = { port: 8431 };
-        await expectUnauthorized(await app.request("/api/v1/server", { headers: { Cookie: cookie, Host: "127.0.0.1:8431" } }, other), "Send the token");
+        await expectUnauthorized(
+            await app.request("/api/v1/server", { headers: { Cookie: cookie, Host: "127.0.0.1:8431", "Sec-Fetch-Site": "same-origin" } }, other),
+            "Send the token",
+        );
     });
 
     test("Sec-Fetch-Site same-origin and none accept the cookie", async () => {
@@ -233,6 +240,13 @@ describe("the session cookie", () => {
         for (const site of ["same-origin", "none"]) {
             expect((await app.request("/api/v1/server", { headers: { Cookie: cookie, "Sec-Fetch-Site": site } })).status).toBe(200);
         }
+    });
+
+    // A page of a different loopback port passes the Host check, and an old browser sends no Sec-Fetch-Site. With no
+    // header, the cookie cannot prove that its own page sent the request.
+    test("a cookie with no Sec-Fetch-Site is ignored, with the message for a missing token", async () => {
+        const cookie = await signIn(app, TOKEN);
+        await expectUnauthorized(await app.request("/api/v1/server", { headers: { Cookie: cookie } }), "Send the token");
     });
 
     test("Sec-Fetch-Site same-site and cross-site ignore the cookie, with the message for a missing token", async () => {
