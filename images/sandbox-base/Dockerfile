@@ -447,7 +447,12 @@ RUN chmod -R a+rX /opt/inflexa
 # var (CellTypist reads $CELLTYPIST_FOLDER) can get one per command, from the
 # agent that just learned the real path.
 
+# The home is world-writable with the sticky bit. On a rootful engine the
+# entrypoint drops to the uid of the host user, not to 1000, and the
+# workload still needs a writable $HOME (see below). The entrypoint cannot
+# chown the home at run time, because the container holds no CAP_CHOWN.
 RUN useradd -l -m -u 1000 -s /bin/bash sandbox \
+    && chmod 1777 /home/sandbox \
     && mkdir -p /workspace && chown -R sandbox:sandbox /workspace
 
 # Declared explicitly, not left to the passwd lookup of the runtime. That
@@ -564,7 +569,8 @@ RUN --mount=type=bind,from=syft,source=/syft,target=/tmp/syft \
 # The default is the unprivileged workload user. K8s runs as uid 1000
 # throughout. Docker overrides User to root at create
 # time, thus the entrypoint can install the egress firewall. `setpriv` then
-# drops back to uid 1000 before the server starts.
+# drops to the workload user that the env names (uid 1000 by default) before
+# the server starts.
 WORKDIR /workspace
 USER sandbox
 

@@ -219,9 +219,22 @@ sets the flag. The entrypoint MUST do these steps:
    rules fail to install MUST stop the start.
 3. Remove each capability that the container gave to the setup of the
    entrypoint. Clear the inheritable set and the bounding set before the exec of
-   the workload. Thus the uid-1000 sandbox-server cannot change or flush the
-   rules, and it cannot get a privilege again.
-4. Exec sandbox-server as uid 1000. The entrypoint keeps no privilege.
+   the workload. Thus sandbox-server cannot change or flush the rules, and it
+   cannot get a privilege again.
+4. Exec sandbox-server as the workload user. The entrypoint keeps no privilege.
+
+The env selects the workload user:
+
+- `SANDBOX_UID`, `SANDBOX_GID`, and `SANDBOX_GROUPS` name the host user and its
+  supplementary groups. The entrypoint MUST give the `sandbox` entries of
+  `/etc/passwd` and `/etc/group` the same ids. Then it MUST drop to them with
+  the groups of the list. A uid of 0 MUST stay 1000.
+- `SANDBOX_KEEP_GROUPS=1` MUST drop to uid 1000 and keep the groups that the
+  engine gave the process.
+- With neither, the entrypoint MUST drop to uid 1000.
+
+A malformed id MUST stop the start. `/home/sandbox` MUST have the mode `1777`,
+thus each workload user can write `$HOME`.
 
 When the flag is unset, the entrypoint MUST exec sandbox-server directly and
 MUST NOT touch `iptables`. A K8s pod gets no flag, because a NetworkPolicy of
@@ -237,7 +250,7 @@ start, and the container fails at its start.
 - **GIVEN** the firewall flag is set, and the container gives the setup capabilities of the entrypoint (`NET_ADMIN` among them)
 - **WHEN** the container starts
 - **THEN** the `OUTPUT` policy is `DROP`, with loopback and established traffic permitted
-- **AND** sandbox-server runs as uid 1000, and it cannot flush the rules
+- **AND** sandbox-server runs as the workload user, and it cannot flush the rules
 
 #### Scenario: A new outbound connection is blocked, and the inbound poll works
 

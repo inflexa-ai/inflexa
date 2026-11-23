@@ -108,8 +108,20 @@ iptables -A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 iptables -P OUTPUT DROP
 ```
 
-Then `setpriv` drops to uid 1000 with an empty capability set. Thus the
-workload cannot open a new outbound connection, and it cannot flush the rules.
+Then `setpriv` drops to the workload user with an empty capability set. Thus
+the workload cannot open a new outbound connection, and it cannot flush the
+rules.
+
+The env of the harness selects the workload user:
+
+| Env | Engine | Workload user |
+|-|-|-|
+| `SANDBOX_UID`, `SANDBOX_GID`, `SANDBOX_GROUPS` | A rootful engine on Linux | The host user, with its supplementary groups. The entrypoint gives the `sandbox` entries of `/etc/passwd` and `/etc/group` the same ids. A uid of 0 stays 1000. |
+| `SANDBOX_KEEP_GROUPS=1` | Rootless Podman with `keep-id` | uid 1000, with the groups that the engine kept from the host user. |
+| none | An engine in a VM | uid 1000. |
+
+A malformed id stops the start. `/home/sandbox` has the mode `1777`, thus each
+workload user can write `$HOME`.
 The inbound poll of the host uses the established connection. Thus the poll
 works while egress is blocked. `lo` stays open for local tooling.
 
