@@ -1,7 +1,7 @@
-import { opendir, readdir, readFile, realpath, stat, statfs } from "node:fs/promises";
+import { access, constants as fsConstants, opendir, readdir, readFile, realpath, stat, statfs } from "node:fs/promises";
 import { mkdirSync, readFileSync, rmSync, writeFileSync, type StatsFs } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { homedir, userInfo } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Writable } from "node:stream";
 
 import pkg from "../../../package.json";
@@ -222,14 +222,33 @@ export type DataRootFacts = {
     readonly timedOut: boolean;
 };
 
-/** How setup reads the filesystem of the data root. A test replaces the bound or the `statfs` call. */
+/** How setup reads the filesystem of the data root. A test replaces the bound, the `statfs` call, or the local folders. */
 export type DataRootProbeOpts = {
     /** The bound of all the reads together. A hung network mount blocks a read for ever, and setup must continue. */
     readonly timeoutMs: number;
     readonly statfs: (path: string) => Promise<StatsFs>;
+    /** The folders of the user on the local disks of a shared host, in the order of the offer. Each one gets `inflexa` below it. */
+    readonly localFolders: readonly string[];
 };
 
-export const DEFAULT_DATA_ROOT_PROBE_OPTS: DataRootProbeOpts = { timeoutMs: 3000, statfs: (path) => statfs(path) };
+/** The folders of the user that a shared host or an HPC node puts on a local disk. `/tmp` is not one: a reboot or a sweep empties it. */
+function conventionalLocalFolders(): string[] {
+    // A uid with no passwd entry makes `userInfo` throw. That host gets no offer of a folder, only the typed one.
+    const user = Result.fromThrowable(
+        () => userInfo().username,
+        () => null,
+    )().unwrapOr("");
+    if (user === "") return [];
+    return ["/scratch", "/data", "/local"].map((base) => join(base, user));
+}
+
+export const DEFAULT_DATA_ROOT_PROBE_OPTS: DataRootProbeOpts = { timeoutMs: 3000, statfs: (path) => statfs(path), localFolders: conventionalLocalFolders() };
+
+/**
+ * Less free space than this is "little". The sandbox images and the package store use about 20 GB (the README, "Set
+ * up"), and the Postgres data and the outputs of the analyses come on top.
+ */
+const LOW_FREE_BYTES = 20 * 1024 ** 3;
 
 /** The nearest folder of `path` that exists: the root itself after the first run, an ancestor before it. */
 async function nearestExistingFolder(path: string): Promise<string> {
@@ -302,6 +321,14 @@ export function dataRootNotes(
             text: `The filesystem of the data root did not answer in ${opts.timeoutMs / 1000} s. A network filesystem that hangs is a frequent cause: move the data root to a local disk.`,
         });
     }
+    if (facts.freeBytes !== null && facts.freeBytes < LOW_FREE_BYTES) {
+        notes.push({
+            level: "warn",
+            text:
+                `The data root has ${formatIecBytes(facts.freeBytes)} free. The sandbox images and the package store use about 20 GB. ` +
+                `Set INFLEXA_DATA_DIR, or the "dataDir" key of ${env.configPath}, to a folder on a local disk with more space. Then run \`inflexa setup\` again.`,
+        });
+    }
     if (facts.networkFilesystem !== null) {
         notes.push({
             level: "warn",
@@ -318,6 +345,72 @@ export function dataRootNotes(
         });
     }
     return notes;
+}
+
+/** A folder that can hold a data root: on a local filesystem, with more than {@link LOW_FREE_BYTES} free. */
+type LocalRootCandidate = { readonly path: string; readonly freeBytes: number };
+
+/**
+ * The local folders of {@link DataRootProbeOpts.localFolders} that can hold a data root. A folder qualifies when it, or
+ * its parent, exists and is writable, and its filesystem is local and has space. All the reads share one bound, because
+ * a shared host can mount `/data` from a network that hangs.
+ */
+async function localRootCandidates(opts: DataRootProbeOpts): Promise<LocalRootCandidate[]> {
+    async function candidate(folder: string): Promise<LocalRootCandidate | null> {
+        const writable = async (path: string): Promise<boolean> => (await ResultAsync.fromPromise(access(path, fsConstants.W_OK), (cause) => cause)).isOk();
+        const existing = (await writable(folder)) ? folder : (await writable(dirname(folder))) ? dirname(folder) : null;
+        if (existing === null) return null;
+        const stats = await ResultAsync.fromPromise(opts.statfs(existing), (cause) => cause);
+        if (stats.isErr()) return null;
+        const freeBytes = stats.value.bavail * stats.value.bsize;
+        if (freeBytes < LOW_FREE_BYTES || (await networkFilesystemOf(existing, stats.value.type, opts.timeoutMs)) !== null) return null;
+        return { path: join(folder, "inflexa"), freeBytes };
+    }
+    async function all(): Promise<LocalRootCandidate[]> {
+        const found = await Promise.all(opts.localFolders.map(candidate));
+        return found.filter((entry) => entry !== null);
+    }
+    return Promise.race([all(), Promise.sleep(opts.timeoutMs).then((): LocalRootCandidate[] => [])]);
+}
+
+/** The values of the two choices of {@link offerLocalDataRoot} that are not a folder. A folder is absolute, thus it cannot be one of them. */
+const KEEP_ROOT = "keep";
+const TYPE_ROOT = "type";
+
+/**
+ * Offer to move a default data root that is on a network filesystem or has little free space. The offer lists each
+ * local folder that {@link localRootCandidates} finds, and a folder that the user types. A yes writes the `dataDir` key
+ * of the config file, and gives the new root. The data stays where it is: setup never moves data. A root that a
+ * setting names gets no offer, because the user chose that root.
+ *
+ * Only an interactive run calls this. A run with no terminal keeps the warnings of {@link dataRootNotes}.
+ */
+export async function offerLocalDataRoot(
+    root: DataRoot,
+    facts: DataRootFacts,
+    opts: DataRootProbeOpts = DEFAULT_DATA_ROOT_PROBE_OPTS,
+): Promise<Result<string | null, ConfigError>> {
+    const lowSpace = facts.freeBytes !== null && facts.freeBytes < LOW_FREE_BYTES;
+    if (root.source !== "default" || (facts.networkFilesystem === null && !lowSpace)) return ok(null);
+    const candidates = await localRootCandidates(opts);
+    const folders = candidates.map((entry) => ({ value: entry.path, label: `${entry.path} (${formatIecBytes(entry.freeBytes)} free)` }));
+    // The first option is the one that a plain Enter takes: a found local folder, else the root that the user has.
+    const choice = await select("Move the data root to a local disk?", [
+        ...folders,
+        { value: KEEP_ROOT, label: `Keep ${root.path}` },
+        { value: TYPE_ROOT, label: "Type a different folder" },
+    ]);
+    if (choice === KEEP_ROOT) return ok(null);
+    const path =
+        choice === TYPE_ROOT
+            ? await promptText("Data root (an absolute path, or one that starts with ~/)", {
+                  validate: (value) => (isAbsolute(value.trim()) || value.trim().startsWith("~/") ? undefined : "Type an absolute path."),
+              })
+            : choice;
+    const dataDir = path.trim();
+    return readConfigForWrite()
+        .andThen((config) => writeConfig({ ...config, dataDir }))
+        .map(() => dataDir);
 }
 
 // --- the setup checkpoint --------------------------------------------------
@@ -519,7 +612,29 @@ export async function setup(options: SetupOptions): Promise<void> {
     const asks = (step: SetupStep): boolean => canPrompt && !done(step);
 
     intro("inflexa setup");
-    for (const line of dataRootNotes(dataRoot, await inspectDataRoot(dataRoot))) log[line.level](line.text);
+    const rootFacts = await inspectDataRoot(dataRoot);
+    for (const line of dataRootNotes(dataRoot, rootFacts)) log[line.level](line.text);
+    if (canPrompt) {
+        const moved = await offerLocalDataRoot(dataRoot, rootFacts);
+        if (moved.isErr()) {
+            log.error(`Could not save the data root: ${moved.error.type}`);
+            process.exitCode = 1;
+            return;
+        }
+        // This process resolved its data root at import (lib/env.ts), thus each later step would still write to the old
+        // root. The run ends here, and the next run provisions the new root.
+        if (moved.value !== null) {
+            log.success(`Saved "dataDir": ${moved.value} in ${env.configPath}.`);
+            note(
+                `If a server or the stack of the old root runs, stop them first. Otherwise the new root cannot start its stack:\n` +
+                    `  inflexa server stop\n  INFLEXA_DATA_DIR=${dataRoot.path} inflexa down\n\n` +
+                    `Setup moves no data: ${dataRoot.path} keeps each file. Copy what you want to keep, or delete the old folder.`,
+                "Data root moved",
+            );
+            outro("Run `inflexa setup` again to set up the new data root");
+            return;
+        }
+    }
 
     // The try below leaves through many error returns and one throw. One variable set at the head of each
     // step, plus one write in the `finally`, covers all of them, so a new return needs no new mark.
