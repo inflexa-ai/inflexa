@@ -110,6 +110,7 @@ export async function runServe(): Promise<void> {
         apiVersion: API_VERSION,
         startedAt: startedAt.toISOString(),
         channel: env.isDevelopment ? "development" : "production",
+        machine: ownProcessIdentity().machine,
         host: ownProcessIdentity().host,
         processStart: ownProcessIdentity().start,
     };

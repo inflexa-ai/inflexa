@@ -37,7 +37,7 @@ The server MUST read the input paths and the anchor markers off the event loop, 
 
 ### Requirement: The discovery file names the running server
 
-After the bind, the server MUST write the discovery file `<dataDir>/inflexa/server.json`, or `server.dev.json` for a dev build. The file MUST hold the pid, the port, the bearer token, the package version, the API version, the start time, the build channel, the host name, and the start token of the process. The server MUST write it with mode 0600, through a temporary file and a rename, so that a reader never sees a part of the file. At its exit, the server MUST remove the file only when the file names its own pid.
+After the bind, the server MUST write the discovery file `<dataDir>/inflexa/server.json`, or `server.dev.json` for a dev build. The file MUST hold the pid, the port, the bearer token, the package version, the API version, the start time, the build channel, the machine id, the host name, and the start token of the process. The server MUST write it with mode 0600, through a temporary file and a rename, so that a reader never sees a part of the file. At its exit, the server MUST remove the file only when the file names its own pid.
 
 A client MUST read the file again at each request. Thus a client that outlives a restart of the server sends the new token.
 
@@ -46,7 +46,7 @@ A client MUST read the file again at each request. Thus a client that outlives a
 #### Scenario: The file holds the token with a narrow mode
 
 - **WHEN** the server binds its port
-- **THEN** the discovery file exists with mode 0600, and it holds the pid, the port, the token, the versions, the start time, the channel, the host name, and the start token of the process
+- **THEN** the discovery file exists with mode 0600, and it holds the pid, the port, the token, the versions, the start time, the channel, the machine id, the host name, and the start token of the process
 
 #### Scenario: A stop removes only its own file
 
@@ -211,9 +211,9 @@ The pull MUST write one line at its start and one line for its outcome.
 
 ### Requirement: A client starts a server when none answers
 
-An `instance` command MUST connect to the server before its action runs. The client MUST read the discovery file and probe `GET /api/v1/server` with a limit of 2 s. A server that answers in any phase counts. A file whose process is dead is stale, and the client MUST remove it, after it reads the file again. The client MUST use the liveness rule of the instance lock: on this host, a dead pid or a pid with a different start time is a dead process. A file of a different host names the server of that host, which shares the data folder. The client MUST NOT probe it, remove it, or start a server. The command MUST fail with a message that names the host and the file, and that says to stop Inflexa on that host, or to remove the file if that host is gone.
+An `instance` command MUST connect to the server before its action runs. The client MUST read the discovery file and probe `GET /api/v1/server` with a limit of 2 s. A server that answers in any phase counts. A file whose process is dead is stale, and the client MUST remove it, after it reads the file again. The client MUST use the liveness rule of the instance lock: on this machine, a dead pid or a pid with a different start time is a dead process. An answer to the probe that accepts the token proves a server of this machine, whatever machine id the file names. With no such answer, a file of a different machine id names the server of that host, which shares the data folder. The client MUST NOT remove that file or start a server. The command MUST fail with a message that names the host and the file, and that says to stop Inflexa on that host, or to remove the file if that host is gone.
 
-A file whose process lives but whose port does not answer names a busy server. The client MUST then probe again until the server answers, up to 30 s, and it MUST tell the person that it waits. It MUST NOT start a second server, because a second server cannot bind the port. If the process ends during the wait, the file is stale. If the server does not answer within 30 s, the command MUST fail with a message that names the pid, the port, and the server log.
+A file with a start token whose process lives but whose port does not answer names a busy server. A file with no start token does not prove that the pid is the server, thus the client MUST go to the start, as for no server. The client MUST then probe again until the server answers, up to 30 s, and it MUST tell the person that it waits. It MUST NOT start a second server, because a second server cannot bind the port. If the process ends during the wait, the file is stale. If the server does not answer within 30 s, the command MUST fail with a message that names the pid, the port, and the server log.
 
 When no server answers, the client MUST take the `server-spawn` lock, read the file again, and run `inflexa serve --detach`. Then it MUST probe until the server answers, up to 30 s. A client that finds the lock held MUST start nothing, and it MUST wait for the server that the holder starts. Thus two clients that find no server start one server. The client MUST tell the person that it starts the server, and it MUST name the server log.
 

@@ -8,7 +8,9 @@ import {
     acquireInstanceLock,
     instanceLockHolder,
     instanceLockPath,
+    liveInstanceLockHolds,
     isProcessAlive,
+    machineId,
     processIdentity,
     processStartToken,
     releaseInstanceLock,
@@ -47,7 +49,7 @@ function lockText(key: string): string {
 test("acquires a free key and records our pid, host, and start", () => {
     const key = "lock-test-free";
     expect(acquireInstanceLock(key)).toEqual({ acquired: true });
-    expect(lockText(key)).toBe(JSON.stringify({ pid: process.pid, host: hostname(), start: processStartToken(process.pid) }));
+    expect(lockText(key)).toBe(JSON.stringify({ pid: process.pid, machine: machineId(), host: hostname(), start: processStartToken(process.pid) }));
     releaseInstanceLock(key);
     expect(existsSync(instanceLockPath(key))).toBe(false);
 });
@@ -108,7 +110,7 @@ test("a live pid with a different start time is a reused pid, and its lock is re
     // that process for ever when it held only the pid.
     const key = "lock-test-reused";
     const proc = Bun.spawn(["sleep", "60"]);
-    seedLockText(key, JSON.stringify({ pid: proc.pid, host: hostname(), start: "a start before the reboot" }));
+    seedLockText(key, JSON.stringify({ pid: proc.pid, machine: machineId(), host: hostname(), start: "a start before the reboot" }));
     expect(instanceLockHolder(key)).toBeNull();
     expect(acquireInstanceLock(key)).toEqual({ acquired: true });
     releaseInstanceLock(key);
@@ -122,24 +124,68 @@ test("a holder on a different host holds the lock, also with a pid that is dead 
     const proc = Bun.spawn(["sleep", "60"]);
     proc.kill();
     await proc.exited;
-    const other = `not-${hostname()}`;
-    seedLockText(key, JSON.stringify({ pid: proc.pid, host: other, start: "a start on the other host" }));
+    const other = "node-b";
+    seedLockText(key, JSON.stringify({ pid: proc.pid, machine: "0123456789abcdef0123456789abcdef", host: other, start: "a start on the other host" }));
     expect(acquireInstanceLock(key)).toEqual({ acquired: false, holderPid: proc.pid, holderHost: other });
     expect(instanceLockHolder(key)).toBe(proc.pid);
     rmSync(instanceLockPath(key), { force: true });
 });
 
-test("a record with no known start falls back to the pid probe", async () => {
+test("the machine id is stable and known on this platform", () => {
+    expect(machineId()).not.toBeNull();
+    expect(machineId()).toBe(machineId());
+});
+
+// macOS changes the host name with the network (Wi-Fi, VPN). The own lock must stay the own lock.
+test("a record of this machine under an old host name is this machine: the own lock stays re-entrant, and a dead holder is reclaimed", async () => {
+    const own = "lock-test-renamed-own";
+    seedLockText(own, JSON.stringify({ ...processIdentity(process.pid), host: "the-name-before-the-vpn" }));
+    expect(acquireInstanceLock(own)).toEqual({ acquired: true });
+    releaseInstanceLock(own);
+    expect(existsSync(instanceLockPath(own))).toBe(false);
+
+    const dead = "lock-test-renamed-dead";
     const proc = Bun.spawn(["sleep", "60"]);
-    expect(isProcessAlive({ pid: proc.pid, host: null, start: null })).toBe(true);
     proc.kill();
     await proc.exited;
-    expect(isProcessAlive({ pid: proc.pid, host: null, start: null })).toBe(false);
+    seedLockText(dead, JSON.stringify({ pid: proc.pid, machine: machineId(), host: "the-name-before-the-vpn", start: null }));
+    expect(acquireInstanceLock(dead)).toEqual({ acquired: true });
+    releaseInstanceLock(dead);
+});
+
+test("a record with no known start falls back to the pid probe", async () => {
+    const proc = Bun.spawn(["sleep", "60"]);
+    expect(isProcessAlive({ pid: proc.pid, machine: null, host: null, start: null })).toBe(true);
+    proc.kill();
+    await proc.exited;
+    expect(isProcessAlive({ pid: proc.pid, machine: null, host: null, start: null })).toBe(false);
 });
 
 test("a lock file that is not a lock record is reclaimed", () => {
     const key = "lock-test-corrupt";
-    seedLockText(key, String(process.ppid));
+    seedLockText(key, "{ half a record");
+    expect(acquireInstanceLock(key)).toEqual({ acquired: true });
+    releaseInstanceLock(key);
+});
+
+// A lock file of an older inflexa holds the bare pid. A live old server still holds it after the update, and a
+// reclaim would let the sweep of the package store delete what that server uses.
+test("a plain-pid lock file of a live process holds the lock, and a live family hold counts it", () => {
+    const key = "lock-test-plain-live";
+    seedLockText(key, `${process.ppid}\n`);
+    expect(acquireInstanceLock(key)).toEqual({ acquired: false, holderPid: process.ppid });
+    expect(instanceLockHolder(key)).toBe(process.ppid);
+    expect(liveInstanceLockHolds("lock-test-plain-")).toEqual([{ key, pid: process.ppid }]);
+    expect(lockText(key)).toBe(`${process.ppid}\n`);
+    rmSync(instanceLockPath(key), { force: true });
+});
+
+test("a plain-pid lock file of a dead process is reclaimed", async () => {
+    const key = "lock-test-plain-dead";
+    const proc = Bun.spawn(["sleep", "60"]);
+    proc.kill();
+    await proc.exited;
+    seedLockText(key, String(proc.pid));
     expect(acquireInstanceLock(key)).toEqual({ acquired: true });
     releaseInstanceLock(key);
 });
