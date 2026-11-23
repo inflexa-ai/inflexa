@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Writable } from "node:stream";
 
-import { REFERENCE_DATA_CATALOG } from "@inflexa-ai/harness";
+import { REFERENCE_DATA_CATALOG, type SandboxExecutor } from "@inflexa-ai/harness";
 import pkg from "../../../../package.json";
 import { ok, err } from "neverthrow";
 import { z } from "zod";
@@ -36,6 +36,7 @@ import {
     pingMessagesEndpoint,
     probeCredentialSource,
     describeLoginFailure,
+    executorReadout,
     probeOnce,
     ProxyError,
     providerKindForSlug,
@@ -2202,6 +2203,19 @@ describe("setup() — batch orchestration", () => {
         expect(existsSync(env.configPath)).toBe(false);
     });
 
+    test("setup shows the executor fact of the engine", async () => {
+        spies.push(
+            spyOn(container, "resolveSandboxExecutor").mockImplementation(() =>
+                Promise.resolve(ok({ executor: { kind: "rootless-podman", selinux: false, keepId: "user" }, ociRuntime: "crun", podmanVersion: "4.9.3" })),
+            ),
+        );
+
+        const output = await runSetup(batch({}));
+
+        expect(process.exitCode).toBe(0);
+        expect(output).toContain("Podman 4.9.3 is older than 5.1");
+    });
+
     test("an engine whose info setup cannot read does not stop setup: the boot reports it", async () => {
         spies.push(
             spyOn(container, "resolveSandboxExecutor").mockImplementation(() =>
@@ -3321,5 +3335,75 @@ describe("browserAdvice", () => {
         ["the `browser` key set", { configBrowser: "auto" as const }],
     ])("a session with %s gets none", (_name, over) => {
         expect(browserAdvice({ ...HEADLESS_SESSION, ...over })).toBeNull();
+    });
+});
+
+describe("executorReadout", () => {
+    const user = { uid: 1001, gid: 1001, groups: [1001, 2000] };
+
+    function readout(executor: SandboxExecutor, extra: Partial<container.DetectedExecutor> = {}, rt = container.runtimes.podman) {
+        return executorReadout(rt, { executor, ociRuntime: "crun", podmanVersion: "5.4.0", ...extra });
+    }
+
+    test("a VM that masks the owner needs nothing", () => {
+        expect(readout({ kind: "vm", bindOwnership: "masked" }, {}, container.runtimes.docker)).toEqual([
+            { level: "info", text: "Sandbox engine: Docker in a VM. Its file sharing lets the sandbox read and write your files." },
+        ]);
+    });
+
+    test("a podman machine shows the true owner, thus the step tree opens to each user", () => {
+        expect(readout({ kind: "vm", bindOwnership: "host-preserved" })).toEqual([
+            {
+                level: "info",
+                text: "Sandbox engine: Podman in a VM that shows the true owner of each file. The sandbox runs as uid 1000, and its step tree is writable by each user.",
+            },
+        ]);
+    });
+
+    test("rootful Docker drops to the user, with the groups", () => {
+        expect(readout({ kind: "rootful", user, selinux: false }, {}, container.runtimes.docker)).toEqual([
+            { level: "info", text: "Sandbox engine: rootful Docker. The sandbox runs as your user (uid 1001, gid 1001) with your groups." },
+        ]);
+    });
+
+    test("SELinux gets `label=disable`", () => {
+        expect(readout({ kind: "rootful", user, selinux: true }, {}, container.runtimes.docker)[1]).toEqual({
+            level: "info",
+            text: "SELinux labels the containers. The sandbox container runs with label=disable, thus it can read your files. No file on this machine gets a new label.",
+        });
+    });
+
+    test("root on a rootful engine runs the sandbox as uid 1000", () => {
+        expect(readout({ kind: "rootful", user: { uid: 0, gid: 0, groups: [0] }, selinux: false }, {}, container.runtimes.docker)[1]).toEqual({
+            level: "warn",
+            text: "You run setup as root. The sandbox never runs as root, thus it runs as uid 1000, and its step tree is writable by each user. Run Inflexa as your own user.",
+        });
+    });
+
+    test("rootless Podman 5.1 or later with crun needs nothing", () => {
+        expect(readout({ kind: "rootless-podman", selinux: false, keepId: "user-and-groups" })).toEqual([
+            { level: "info", text: "Sandbox engine: rootless Podman 5.4.0. The sandbox maps to your user, with your groups." },
+        ]);
+    });
+
+    test("rootless Podman before 5.1 cannot read project-group data", () => {
+        expect(readout({ kind: "rootless-podman", selinux: false, keepId: "user" }, { podmanVersion: "4.9.3" })[1]).toEqual({
+            level: "warn",
+            text: "Podman 4.9.3 is older than 5.1, thus the sandbox gets none of your supplementary groups, and it cannot read the data of a project group. Use Podman 5.1 or later, or rootful Docker.",
+        });
+    });
+
+    test("Podman before 4.3 runs the sandbox as uid 1000 with a world-writable step tree", () => {
+        expect(readout({ kind: "rootless-podman", selinux: false, keepId: "unsupported" }, { podmanVersion: "4.2.1" })[1]).toEqual({
+            level: "warn",
+            text: "Podman 4.2.1 is older than 4.3 and has no keep-id user mapping. The sandbox runs as uid 1000, its step tree is writable by each user, and it cannot read a file that only you can read. Use Podman 4.3 or later.",
+        });
+    });
+
+    test("rootless Podman without crun gets no project groups", () => {
+        expect(readout({ kind: "rootless-podman", selinux: false, keepId: "user-and-groups" }, { ociRuntime: "runc" })[1]).toEqual({
+            level: "warn",
+            text: 'The OCI runtime of rootless Podman is runc, not crun, thus the sandbox gets none of your supplementary groups, and it cannot read the data of a project group. Set runtime = "crun" in containers.conf.',
+        });
     });
 });

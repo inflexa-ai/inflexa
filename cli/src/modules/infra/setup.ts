@@ -32,6 +32,7 @@ import {
     ContainerRuntimeError,
     type ContainerRuntime,
     type EngineCapacity,
+    type DetectedExecutor,
 } from "../../lib/container.ts";
 import {
     anthropicAuthTokenSet,
@@ -456,6 +457,86 @@ export function browserAdvice(facts: BrowserAdviceFacts): string | null {
     );
 }
 
+// --- the sandbox engine ----------------------------------------------------
+
+/**
+ * The lines that setup shows for the executor fact of the engine: how the sandbox reaches the files of the user, and
+ * each limit with its fix. The boot logs the same limits, but a log line is where a user looks last. The words follow
+ * `workloadIdentityOf` of the harness, which turns the same fact into the container settings.
+ */
+export function executorReadout(rt: ContainerRuntime, detected: DetectedExecutor): { level: "info" | "warn"; text: string }[] {
+    const { executor } = detected;
+    const lines: { level: "info" | "warn"; text: string }[] = [];
+    switch (executor.kind) {
+        case "vm":
+            lines.push({
+                level: "info",
+                text:
+                    executor.bindOwnership === "masked"
+                        ? `Sandbox engine: ${rt.label} in a VM. Its file sharing lets the sandbox read and write your files.`
+                        : `Sandbox engine: ${rt.label} in a VM that shows the true owner of each file. The sandbox runs as uid 1000, and its step tree is writable by each user.`,
+            });
+            return lines;
+        case "rootful":
+            lines.push({
+                level: "info",
+                text: `Sandbox engine: rootful ${rt.label}. The sandbox runs as your user (uid ${executor.user.uid}, gid ${executor.user.gid}) with your groups.`,
+            });
+            // sandbox-server refuses to run as root, thus workloadIdentityOf keeps the image user for a host uid or gid 0.
+            if (executor.user.uid === 0 || executor.user.gid === 0) {
+                lines.push({
+                    level: "warn",
+                    text: "You run setup as root. The sandbox never runs as root, thus it runs as uid 1000, and its step tree is writable by each user. Run Inflexa as your own user.",
+                });
+            }
+            break;
+        case "rootless-podman": {
+            const version = detected.podmanVersion ?? "(no version)";
+            switch (executor.keepId) {
+                case "user-and-groups":
+                    lines.push({ level: "info", text: `Sandbox engine: rootless Podman ${version}. The sandbox maps to your user, with your groups.` });
+                    if (detected.ociRuntime !== "crun") {
+                        lines.push({
+                            level: "warn",
+                            text: `The OCI runtime of rootless Podman is ${detected.ociRuntime ?? "unknown"}, not crun, thus the sandbox gets none of your supplementary groups, and it cannot read the data of a project group. Set runtime = "crun" in containers.conf.`,
+                        });
+                    }
+                    break;
+                case "user":
+                    lines.push({ level: "info", text: `Sandbox engine: rootless Podman ${version}. The sandbox maps to your user.` });
+                    lines.push({
+                        level: "warn",
+                        text: `Podman ${version} is older than 5.1, thus the sandbox gets none of your supplementary groups, and it cannot read the data of a project group. Use Podman 5.1 or later, or rootful Docker.`,
+                    });
+                    break;
+                case "unsupported":
+                    lines.push({ level: "info", text: `Sandbox engine: rootless Podman ${version}.` });
+                    lines.push({
+                        level: "warn",
+                        text: `Podman ${version} is older than 4.3 and has no keep-id user mapping. The sandbox runs as uid 1000, its step tree is writable by each user, and it cannot read a file that only you can read. Use Podman 4.3 or later.`,
+                    });
+                    break;
+                default: {
+                    const exhaustive: never = executor.keepId;
+                    throw new Error(`unhandled keep-id level: ${JSON.stringify(exhaustive)}`);
+                }
+            }
+            break;
+        }
+        default: {
+            const exhaustive: never = executor;
+            throw new Error(`unhandled executor: ${JSON.stringify(exhaustive)}`);
+        }
+    }
+    if (executor.selinux) {
+        lines.push({
+            level: "info",
+            text: "SELinux labels the containers. The sandbox container runs with label=disable, thus it can read your files. No file on this machine gets a new label.",
+        });
+    }
+    return lines;
+}
+
 // --- the setup checkpoint --------------------------------------------------
 //
 // A failed run records the step it stopped at, and a complete run deletes the record. So the file's
@@ -665,6 +746,7 @@ export async function setup(options: SetupOptions): Promise<void> {
     intro("inflexa setup");
     const rootFacts = await inspectDataRoot(dataRoot);
     for (const line of dataRootNotes(dataRoot, rootFacts)) log[line.level](line.text);
+    if (executor.isOk()) for (const line of executorReadout(rt, executor.value)) log[line.level](line.text);
     if (canPrompt) {
         const moved = await offerLocalDataRoot(dataRoot, rootFacts);
         if (moved.isErr()) {
