@@ -137,32 +137,48 @@ export async function runExec(
     if (request.cwd !== undefined) body.cwd = request.cwd;
     if (request.env !== undefined) body.env = { ...request.env };
     if (request.timeoutSeconds !== undefined) body.timeoutSeconds = request.timeoutSeconds;
-    await submitExec(fetchImpl, ref, body);
+    const submitted = await submitExec(fetchImpl, ref, body);
+    if (submitted.kind === "unreachable") {
+        // A machine that died between two execs, for example in a restart of the engine, refuses the submit. Only a
+        // dead verdict gives the synthetic failure, thus the lease clears the machine and the next exec gets a new one.
+        const verdict = deps.isAlive === undefined ? undefined : await probeLiveness(deps.isAlive, ref);
+        if (verdict?.kind === "dead") return syntheticFailureResult(execId, syntheticFailureReason({ oomKilled: verdict.oomKilled }));
+        throw submitted.cause;
+    }
     return pollExec(ref, execId, emit, deadlineMs, deps);
 }
+
+/** A submit that got no answer: the request did not reach sandbox-server, or the answer did not come back. */
+type SubmitOutcome = { readonly kind: "accepted" } | { readonly kind: "unreachable"; readonly cause: unknown };
 
 /**
  * POST the command to `/exec` and return after the 202 ack. A non-202 throws.
  * The server dedups on `execId`: a submit of an exec that it already holds
  * returns 202 with the stored status and runs nothing.
  */
-async function submitExec(fetchImpl: typeof fetch, ref: SandboxRef, body: SubmitExecBody): Promise<void> {
+async function submitExec(fetchImpl: typeof fetch, ref: SandboxRef, body: SubmitExecBody): Promise<SubmitOutcome> {
     const controller = new AbortController();
     // oxlint-disable-next-line eslint-js/no-restricted-syntax -- a deadline guard, not a wait: it aborts the controller of the in-flight submit, and the finally clears it.
     const timer = setTimeout(() => controller.abort(), SUBMIT_HTTP_TIMEOUT_MS);
     try {
-        const res = await untracedFetch(fetchImpl, `http://${ref.host}:${ref.port}/exec`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(body),
-            signal: controller.signal,
-        });
+        let res: Response;
+        try {
+            res = await untracedFetch(fetchImpl, `http://${ref.host}:${ref.port}/exec`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(body),
+                signal: controller.signal,
+            });
+        } catch (cause) {
+            return { kind: "unreachable", cause };
+        }
         if (res.status !== 202) {
             const text = await res.text().catch(() => "");
             throw Object.assign(new Error(`submitExec: sandbox-server returned ${res.status} for execId=${body.execId}: ${text}`), { statusCode: res.status });
         }
         // Read and discard the ack, so the socket is released.
         await res.text().catch(() => "");
+        return { kind: "accepted" };
     } finally {
         clearTimeout(timer);
     }

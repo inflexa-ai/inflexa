@@ -140,6 +140,32 @@ describe("the submit", () => {
         expect(seen).toHaveLength(1);
     });
 
+    /** A sandbox whose port refuses each request, as a container does after a restart of the engine. */
+    const refusing = Object.assign((): Promise<Response> => Promise.reject(new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } })), {
+        preconnect: fetch.preconnect,
+    });
+
+    test("a submit that a dead machine refuses gives the synthetic failure of a dead machine", async () => {
+        const result = await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, {
+            ...BASE,
+            fetch: refusing,
+            isAlive: () => Promise.resolve({ alive: false, oomKilled: false }),
+        });
+
+        expect(result.syntheticFailure?.reason).toBe("sandbox-dead");
+        expect(result.execId).toBe(EXEC_ID);
+    });
+
+    test("a submit that a live machine refuses throws the failure of the network", async () => {
+        const run = runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, {
+            ...BASE,
+            fetch: refusing,
+            isAlive: () => Promise.resolve({ alive: true, oomKilled: false }),
+        });
+
+        await expect(run).rejects.toThrow("fetch failed");
+    });
+
     test("the poll URL escapes the colons of the exec id", async () => {
         const seen: SeenRequest[] = [];
         await runExec(REF, EXEC_ID, REQUEST, () => {}, DEADLINE, { ...BASE, fetch: sandbox([completed], seen) });
