@@ -10,7 +10,7 @@ import { join } from "node:path";
 import type { Pool } from "pg";
 
 import { withSchema } from "../../__tests__/setup/postgres.js";
-import { readLease, requestLease, setMachine, tryGrant } from "../../state/sandbox-leases.js";
+import { clearIdleMachine, readLease, requestLease, setMachine, tryGrant } from "../../state/sandbox-leases.js";
 import { tailWritePrefix } from "../../workspace/paths.js";
 import { leaseRecordTail } from "../lease-names.js";
 import { classifyManaged, reconcileOnce, type ReconcilerDeps } from "../reconciler.js";
@@ -162,6 +162,19 @@ describe("reconcileOnce — the leases", () => {
                 () => "absent",
             ),
         ).toBe("absent");
+    });
+
+    test("releases an idle lease whose lease workflow ended", async () => {
+        await grantedLease("lw-1", "k1", "owner-1");
+        await pool.query("UPDATE cortex_sandbox_leases SET last_used_at = now() - interval '1 hour'");
+        (await clearIdleMachine(pool, "lw-1", 1, 60_000))._unsafeUnwrap();
+        const { deps, removed } = sweep({ "lw-1": "CANCELLED", "owner-1": "SUCCESS" });
+
+        const summary = await reconcileOnce(deps);
+
+        expect(summary.leasesReleased).toBe(1);
+        expect((await readLease(pool, "lw-1"))._unsafeUnwrap()).toMatchObject({ state: "released", releaseReason: "lease-workflow-ended" });
+        expect(removed).toEqual([]);
     });
 
     test("cancels a live lease workflow whose owner ended", async () => {

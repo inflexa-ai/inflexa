@@ -34,6 +34,11 @@ const ReleaseSandboxInputSchema = z.object({});
 
 type ReleaseSandboxResult = { readonly status: "released"; readonly message: string };
 
+/** The activity of a wait for a sandbox: the call of `acquire_sandbox`, and an exec that waits for a new machine. */
+export function sandboxWaitActivity(size: { readonly cpu: number; readonly memoryGb: number }): string {
+    return `Waiting for a sandbox (${size.cpu} CPU, ${size.memoryGb} GB)`;
+}
+
 export function createAcquireSandboxTool(lease: BoundLease): Tool<z.infer<typeof AcquireSandboxInputSchema>, AcquireSandboxResult> {
     return defineTool({
         id: ACQUIRE_SANDBOX_TOOL_ID,
@@ -44,7 +49,7 @@ export function createAcquireSandboxTool(lease: BoundLease): Tool<z.infer<typeof
             "size. Your files and your outputs live in the workspace, not in the sandbox.",
         inputSchema: AcquireSandboxInputSchema,
         view: "none",
-        describeCall: ({ cpu, memoryGb }) => `Waiting for a sandbox (${cpu} CPU, ${memoryGb} GB)`,
+        describeCall: sandboxWaitActivity,
         execute: async ({ cpu, memoryGb, gpuCount }) => {
             const size: ResourceSpec = gpuCount === undefined || gpuCount === 0 ? { cpu, memoryGb } : { cpu, memoryGb, gpu: { count: gpuCount } };
             const outcome = await lease.acquire(size);

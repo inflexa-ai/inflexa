@@ -63,6 +63,7 @@ import {
     stepPartId,
     toolActivityKey,
 } from "../sandbox/sandbox-step-translate.js";
+import { sandboxWaitActivity } from "../tools/sandbox/lease-tools.js";
 import { modelFailureClass } from "../providers/errors.js";
 import type { ChatProvider, EmbeddingProvider } from "../providers/types.js";
 import { forSubAgent, type RunSession, type SpawnSession } from "../auth/types.js";
@@ -432,7 +433,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         }
     };
 
-    // The step waits in place. The lease stays, and its machine goes away when the pause outlasts the idle period.
+    // The step waits in place. The lease stays, and its machine and its grant go when the pause outlasts the idle period.
     const pause = workPause({
         pool: deps.pool,
         workId: input.runId,
@@ -456,6 +457,9 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
 
     const lineageCollector = createLineageCollector(input);
 
+    /** The activity of the last tool call. An exec that waited for a machine shows it again. */
+    let lastToolActivity: { readonly toolUseId: string; readonly activity: string } | undefined;
+
     // (2) The lease of the step. The agent acquires its sandbox with `acquire_sandbox` when it needs one, and the
     // sandbox module owns the machine: the admission, the spawn, a new machine after a pause or a death, and the
     // pause of a refused spawn. The lease key is the id of this workflow.
@@ -465,6 +469,23 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         work: { kind: "run", id: input.runId },
         spawn: { image: input.image, extraEnv: input.extraEnv },
         emit: safeEmit,
+        // An exec that waits for a new machine shows the activity of the first acquire, and then its own call again.
+        // The wait runs inside the step of the call, and a replayed call emits nothing, thus the wall clock dates it.
+        onSandboxWait: async (wait) => {
+            const call = lastToolActivity;
+            const parts =
+                wait.state === "waiting"
+                    ? activityEmission(input, `wait-${call?.toolUseId ?? "exec"}`, "sandbox-init", sandboxWaitActivity(wait.size), new Date().toISOString())
+                    : activityEmission(
+                          input,
+                          `ready-${call?.toolUseId ?? "exec"}`,
+                          "executing",
+                          call?.activity ?? `Running ${input.agentId}`,
+                          new Date().toISOString(),
+                      );
+            await safeEmit(parts.activity);
+            await safeEmit(parts.entry);
+        },
     });
 
     // (3) runLoop — the harness loop, each call a durable step.
@@ -512,6 +533,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // writes, and each write fails alone through `safeEmit`.
     let activitySeq = 0;
     const emitActivity = async (phase: StepPhase, activity: string, toolUseId?: string): Promise<void> => {
+        if (toolUseId !== undefined) lastToolActivity = { toolUseId, activity };
         const key = toolUseId === undefined ? activitySeq++ : toolActivityKey(toolUseId);
         const at = new Date(await DBOS.now()).toISOString();
         const parts = activityEmission(input, key, phase, activity, at);

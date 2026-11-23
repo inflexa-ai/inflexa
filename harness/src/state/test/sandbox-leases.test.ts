@@ -23,6 +23,7 @@ import {
     setMachine,
     touchLease,
     tryGrant,
+    wakeIdleLease,
 } from "../sandbox-leases.js";
 
 let pool: Pool;
@@ -153,6 +154,49 @@ describe("the grant", () => {
     });
 });
 
+describe("an idle lease", () => {
+    const budget = { cpu: 4, memoryGb: 16 };
+
+    async function idleHolder(): Promise<void> {
+        await request("lw-idle", "ki", { cpu: 4, memoryGb: 16 });
+        await requestedAt("lw-idle", "2026-10-30T10:00:00Z");
+        (await tryGrant(pool, "lw-idle", budget))._unsafeUnwrap();
+        (await setMachine(pool, "lw-idle", MACHINE, 1))._unsafeUnwrap();
+        await pool.query("UPDATE cortex_sandbox_leases SET last_used_at = now() - interval '1 hour'");
+        (await clearIdleMachine(pool, "lw-idle", 1, 60_000))._unsafeUnwrap();
+    }
+
+    it("holds no capacity and no place in the queue, and asks for no grant", async () => {
+        await idleHolder();
+        await request("lw-next", "kn", { cpu: 4, memoryGb: 16 });
+        await requestedAt("lw-next", "2026-10-30T10:00:05Z");
+
+        expect((await oldestWaiting(pool))._unsafeUnwrap()).toBe("lw-next");
+        expect((await tryGrant(pool, "lw-idle", undefined))._unsafeUnwrap()).toEqual({ kind: "waiting" });
+        expect((await tryGrant(pool, "lw-next", budget))._unsafeUnwrap().kind).toBe("granted");
+    });
+
+    it("goes to the front of the queue with its first request time when an exec wakes it", async () => {
+        await idleHolder();
+        await request("lw-later", "kl", { cpu: 1, memoryGb: 2 });
+        await requestedAt("lw-later", "2026-10-30T10:00:05Z");
+
+        expect((await wakeIdleLease(pool, "lw-idle"))._unsafeUnwrap()).toBe(true);
+        expect((await wakeIdleLease(pool, "lw-idle"))._unsafeUnwrap()).toBe(false);
+        expect((await readLease(pool, "lw-idle"))._unsafeUnwrap()?.state).toBe("requested");
+        expect((await oldestWaiting(pool))._unsafeUnwrap()).toBe("lw-idle");
+        expect((await tryGrant(pool, "lw-later", budget))._unsafeUnwrap()).toEqual({ kind: "waiting" });
+        expect((await tryGrant(pool, "lw-idle", budget))._unsafeUnwrap()).toEqual({ kind: "granted", size: { cpu: 4, memoryGb: 16 } });
+    });
+
+    it("releases with no machine", async () => {
+        await idleHolder();
+
+        expect((await releaseLease(pool, "lw-idle", "released"))._unsafeUnwrap()).toEqual({ machine: undefined });
+        expect((await openLeases(pool))._unsafeUnwrap()).toEqual([]);
+    });
+});
+
 describe("the machine of a lease", () => {
     async function granted(): Promise<void> {
         await request("lw-1", "k", { cpu: 1, memoryGb: 2 });
@@ -160,14 +204,16 @@ describe("the machine of a lease", () => {
         (await setMachine(pool, "lw-1", MACHINE, 1))._unsafeUnwrap();
     }
 
-    it("clears an idle machine, and keeps the grant", async () => {
+    it("clears an idle machine, and moves the lease to idle", async () => {
         await granted();
         await pool.query("UPDATE cortex_sandbox_leases SET last_used_at = now() - interval '1 hour'");
 
         expect((await clearIdleMachine(pool, "lw-1", 1, 60_000))._unsafeUnwrap()).toEqual(MACHINE);
         const lease = (await readLease(pool, "lw-1"))._unsafeUnwrap();
         expect(lease?.machine).toBeUndefined();
-        expect(lease?.state).toBe("granted");
+        expect(lease?.state).toBe("idle");
+        expect((await touchLease(pool, "lw-1"))._unsafeUnwrap()).toBeUndefined();
+        expect((await openLeases(pool))._unsafeUnwrap().map((row) => row.state)).toEqual(["idle"]);
     });
 
     it("keeps the machine of a lease that an exec touched", async () => {

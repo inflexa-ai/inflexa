@@ -121,15 +121,23 @@ The lease workflow MUST read the status of the owner workflow at each tick. When
 - **WHEN** the lease workflow reaches its next tick
 - **THEN** the lease workflow releases the lease, and the machine goes away
 
-### Requirement: An idle lease loses its machine and keeps its grant
+### Requirement: An idle lease loses its machine and its grant
 
-A lease is idle when no exec runs on its machine, and no exec used the lease for the idle period. The idle period is a configuration value. An idle lease MUST lose its machine, and it MUST keep its grant.
+A lease is idle when no exec runs on its machine, and no exec used the lease for the idle period. The idle period is a configuration value. In one transaction, the idle removal MUST clear the machine and move the lease to the state `idle`. An `idle` lease MUST hold no capacity, and it MUST have no place in the queue of the requests. After the idle removal, the lease workflow MUST wake the waiting requests.
 
-#### Scenario: A paused step holds no machine
+The next exec of an `idle` lease MUST move the lease to `requested`, and keep its first request time. Thus the lease goes to the front of the queue. Then the exec MUST wait for the grant and for a new machine, and it MUST submit after that. The agent sees no change but the time of its call. The consumer MUST show the same wait for a sandbox as the first `acquire`. A release, the end of the owner, and the reconciler MUST end an `idle` lease the same as a granted lease.
+
+#### Scenario: A paused step holds no capacity
 
 - **GIVEN** a step that holds a lease and waits in a pause for longer than the idle period
 - **WHEN** the lease workflow finds the lease idle
-- **THEN** the machine goes away, and the lease stays granted
+- **THEN** the machine goes away, the lease is `idle`, and a waiting request of a different run gets the capacity
+
+#### Scenario: The next exec of an idle lease goes first
+
+- **GIVEN** an `idle` lease, a full budget, and a later waiting request
+- **WHEN** the step of the idle lease runs a command, and the holder of the budget releases
+- **THEN** the idle lease gets its grant before the later request, and the command runs on a new machine
 
 #### Scenario: A command that runs keeps the machine
 
