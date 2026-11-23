@@ -1038,14 +1038,18 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
         if (!(await seams.checkServer())) return;
         // The probe was an await: an analysis swap in that time re-armed the poll for the new analysis.
         if (workspace.analysis?.id !== analysisId) return;
-        // Awaited at the end, thus the read of the scope stays under the in-flight guard: a scope read that the
-        // server answers slowly, for example the search for a missing anchor folder, holds the next tick.
+        // Awaited at the end, also when a read before it fails, thus the read of the scope stays under the
+        // in-flight guard: a scope read that the server answers slowly, for example the search for a missing
+        // anchor folder, holds the next tick.
         const scope = workspace.refreshScope();
-        setPollTick((n) => n + 1);
-        const threadId = workspace.sessionId;
-        if (threadId !== null) await seams.pollThread(analysisId, threadId);
-        await seams.pollPaused(analysisId, threadId);
-        await scope;
+        try {
+            setPollTick((n) => n + 1);
+            const threadId = workspace.sessionId;
+            if (threadId !== null) await seams.pollThread(analysisId, threadId);
+            await seams.pollPaused(analysisId, threadId);
+        } finally {
+            await scope.catch((e: unknown) => getLogger("chat").warn({ err: e, analysisId }, "the scope read of a sidebar tick failed"));
+        }
     }
 
     /**
@@ -1073,9 +1077,11 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
         inFlight = claim;
         // Cleared by IDENTITY: an abandoned refresh can still settle long after its replacement
         // claimed the guard, and a bare `inFlight = null` there would release a claim it does not own.
-        void Promise.all([seams.refresh(analysisId), readShared(analysisId)]).finally(() => {
-            if (inFlight === claim) inFlight = null;
-        });
+        void Promise.all([seams.refresh(analysisId), readShared(analysisId)])
+            .catch((e: unknown) => getLogger("chat").warn({ err: e, analysisId }, "a sidebar tick failed"))
+            .finally(() => {
+                if (inFlight === claim) inFlight = null;
+            });
     }
 
     createEffect(() => {

@@ -984,6 +984,26 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
         }
     });
 
+    test("a failed read of the thread does not release the guard while the scope read waits", async () => {
+        let scopeReads = 0;
+        const ws = buildWorkspace({
+            analysis: buildAnalysis({ id: "A" }),
+            sessionId: "T",
+            refreshScope: () => {
+                scopeReads += 1;
+                return new Promise<void>(() => {});
+            },
+        });
+        const poll = mountPoll(ws, { pollThread: () => Promise.reject(new Error("the thread read failed")) });
+        try {
+            await poll.tick();
+            await poll.tick();
+            expect(scopeReads).toBe(1);
+        } finally {
+            poll.dispose();
+        }
+    });
+
     test("a tick whose server does not answer reads neither the scope nor the thread", async () => {
         let scopeReads = 0;
         let threadReads = 0;
