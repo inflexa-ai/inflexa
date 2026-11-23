@@ -77,7 +77,7 @@ export function fakeLeases(lease: BoundLease, toolchainSource: ToolchainSource =
             return lease.release();
         },
         releaseOwnedBy: () => Promise.resolve(),
-        exec: (_leaseKey, request, emit) => lease.exec(request, emit),
+        exec: (_leaseKey, request, emit, waits) => lease.exec(request, emit, waits?.invocationId),
         bind: (binding) => {
             bindings.push(binding);
             return {
@@ -86,7 +86,7 @@ export function fakeLeases(lease: BoundLease, toolchainSource: ToolchainSource =
                     releasedKeys.push(binding.leaseKey);
                     return lease.release();
                 },
-                exec: (request, emit) => lease.exec(request, emit),
+                exec: (request, emit, invocationId) => lease.exec(request, emit, invocationId),
             };
         },
     };

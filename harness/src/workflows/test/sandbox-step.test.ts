@@ -43,7 +43,8 @@ import { createCapturingLogger, silentLogger, type CapturingLogger } from "../..
 import { classifyReadPath } from "../../provenance/collector.js";
 import type { ChatProvider, ChatUsage } from "../../providers/types.js";
 import type { SandboxClient } from "../../sandbox/client.js";
-import { fakeLeases, leaseOverClient } from "../../sandbox/__fixtures__/leases.js";
+import type { BoundLease } from "../../sandbox/leases.js";
+import { fakeLeases, leaseOverClient, type FakeLeases } from "../../sandbox/__fixtures__/leases.js";
 import type { Querier } from "../../state/db.js";
 import type { SandboxRef, SandboxSpec } from "../../sandbox/types.js";
 import type { ArtifactRegistry, ArtifactSyncInput } from "../../execution/artifact-registry.js";
@@ -988,20 +989,40 @@ describe("sandbox-step lease", () => {
         expect(leases.releasedKeys).toEqual([binding.leaseKey]);
     });
 
-    it("shows an exec that waits for a new machine as the wait of an acquire, and then the step activity again", async () => {
-        const leases = fakeLeases(leaseOverClient(makeSandboxClient(), SANDBOX_REF));
-        await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), leases });
-        const binding = presentAt(leases.bindings, 0);
-        dbosState.emittedParts.length = 0;
-
-        await binding.onSandboxWait?.({ state: "waiting", size: { cpu: 1, memoryGb: 2 } });
-        await binding.onSandboxWait?.({ state: "ready" });
-
-        const activities = dbosState.emittedParts.filter((part) => part.type === "data-step-activity");
-        expect(activities.map((part) => [part.phase, part.activity])).toEqual([
-            ["sandbox-init", "Waiting for a sandbox (1 CPU, 2 GB)"],
-            ["executing", `Running ${USAGE_AGENT_ID}`],
+    it("shows an exec that waits for a new machine as the wait of an acquire, and then the activity of its own call", async () => {
+        const base = leaseOverClient(makeSandboxClient(), SANDBOX_REF);
+        const holder: { leases?: FakeLeases } = {};
+        // The lease gives the exec of the first call a wait for a new machine, as after an idle removal.
+        const waiting: BoundLease = {
+            ...base,
+            exec: async (request, emit, invocationId) => {
+                const binding = presentAt(holder.leases?.bindings ?? [], 0);
+                if (invocationId === "tu-a") {
+                    await binding.onSandboxWait?.({ state: "waiting", size: { cpu: 1, memoryGb: 2 }, invocationId });
+                    await binding.onSandboxWait?.({ state: "ready", invocationId });
+                }
+                return base.exec(request, emit);
+            },
+        };
+        const leases = fakeLeases(waiting);
+        holder.leases = leases;
+        const { provider } = scriptedModel([
+            callTools(
+                toolCall("tu-a", "execute_command", { command: ["python", "a.py"] }),
+                toolCall("tu-b", "execute_command", { command: ["python", "b.py"] }),
+            ),
+            reply([text("done")]),
+            reply([text("## Summary")]),
         ]);
+
+        await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), provider, leases });
+
+        const entryOf = (key: string): Record<string, unknown> | undefined =>
+            dbosState.emittedParts.find((part) => part.type === "data-activity-entry" && typeof part.id === "string" && part.id.endsWith(`-${key}`));
+        const ownActivity = entryOf("tool-tu-a")?.activity;
+        expect(ownActivity).toEqual(expect.stringContaining("a.py"));
+        expect(entryOf("wait-tu-a")).toMatchObject({ phase: "sandbox-init", activity: "Waiting for a sandbox (1 CPU, 2 GB)" });
+        expect(entryOf("ready-tu-a")).toMatchObject({ phase: "executing", activity: ownActivity });
     });
 });
 

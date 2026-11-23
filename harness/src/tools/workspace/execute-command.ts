@@ -195,6 +195,7 @@ export function createExecuteCommandTool(
                 env,
                 timeoutSeconds,
                 emit: ctx.emit,
+                invocationId: ctx.invocationId,
             });
             if (ran.isErr()) return err(ran.error);
             const result = ran.value;
