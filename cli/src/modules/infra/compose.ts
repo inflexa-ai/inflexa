@@ -349,8 +349,11 @@ function isSameHostPath(source: string, expected: string): boolean {
  *
  * Only the bind mount needs the check. Windows keeps the Postgres data in one named volume and refuses a custom root
  * (`resolveDataRoot` in lib/env.ts), thus each process on Windows names the same volume.
+ *
+ * {@link composeUp} runs the check for each caller. `ensureProxyReady` also runs it before the provider login, thus a
+ * person on a second root sees the refusal before any prompt.
  */
-async function postgresRootConflict(rt: ContainerRuntime, host: ComposeHost = realHost()): Promise<string | null> {
+export async function postgresRootConflict(rt: ContainerRuntime, host: ComposeHost = realHost()): Promise<string | null> {
     const location = postgresDataLocation(host);
     if (location.kind === "volume") return null;
     const { code, stdout } = await capture(rt, ["container", "inspect", "--format", "{{.State.Running}} {{json .Mounts}}", POSTGRES_CONTAINER_NAME]);

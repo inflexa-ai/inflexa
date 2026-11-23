@@ -2927,11 +2927,21 @@ describe("ensureProxyReady — the boot steps", () => {
         for (const spy of spies.splice(0)) spy.mockRestore();
     });
 
-    /** Stub the engine and the compose steps, and record the order in which the gate starts its steps. */
-    function recordSteps(opts: { composeUpFails: boolean }): BootStepId[] {
+    /**
+     * Stub the engine and the compose steps, and record the order in which the gate starts its steps. `postgres` is the
+     * answer of `container inspect` for the Postgres container. No answer is no container.
+     */
+    function recordSteps(opts: { composeUpFails: boolean; postgres?: string }): BootStepId[] {
         const steps: BootStepId[] = [];
         spies.push(
             spyOn(configModule, "ensureRuntime").mockImplementation(() => Promise.resolve(ok(container.runtimes.docker))),
+            spyOn(container, "capture").mockImplementation((_rt, args) =>
+                Promise.resolve(
+                    args[0] === "container" && args[1] === "inspect" && opts.postgres !== undefined
+                        ? { code: 0, stdout: opts.postgres, stderr: "" }
+                        : { code: 1, stdout: "", stderr: "stub: no such container" },
+                ),
+            ),
             spyOn(compose, "writeComposeFile").mockImplementation(() => ok(undefined)),
             spyOn(compose, "composePullIfMissing").mockImplementation(() => Promise.resolve(ok(undefined))),
             spyOn(compose, "composeProxyRunning").mockImplementation(() => Promise.resolve(ok(false))),
@@ -2974,6 +2984,16 @@ describe("ensureProxyReady — the boot steps", () => {
         }
 
         expect(steps).toEqual(["container_engine", "proxy", "images", "containers"]);
+    });
+
+    test("a running Postgres of a different data root stops the gate before the provider login", async () => {
+        const mounts = JSON.stringify([{ Type: "bind", Source: "/old/inflexa/postgres-dev", Destination: "/var/lib/postgresql" }]);
+        recordSteps({ composeUpFails: false, postgres: `true ${mounts}\n` });
+
+        const ready = await ensureProxyReady("cliproxy", { ...DEFAULT_PROXY_READY_OPTS, interactiveLogin: false });
+
+        const failure = ready._unsafeUnwrapErr();
+        expect(failure.message).toStartWith(`The running ${compose.POSTGRES_CONTAINER_NAME} keeps its data in /old/inflexa/postgres-dev`);
     });
 
     test("the pull progress callback reaches the pull of the images", async () => {

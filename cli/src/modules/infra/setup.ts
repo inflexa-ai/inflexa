@@ -92,6 +92,7 @@ import {
     composeMissingMessage,
     composeProxyRunning,
     composeRestartProxy,
+    postgresRootConflict,
     PROXY_IMAGE,
     type ConnectionMode,
 } from "./compose.ts";
@@ -3688,6 +3689,9 @@ export async function ensureProxyReady(
     const rtResult = await ensureRuntime();
     if (rtResult.isErr()) return err(rtResult.error);
     const rt = rtResult.value;
+
+    const conflict = await postgresRootConflict(rt);
+    if (conflict !== null) return err(new ProxyError(conflict));
 
     // Proxy config + provider OAuth are only meaningful when chat targets the managed
     // proxy. A direct connection has neither, so both are skipped — the Postgres/compose
