@@ -2823,9 +2823,6 @@ function persistAnsweredDirectModel(model: string): Result<void, ProxyError> {
 const PROVIDER_SLUG: Record<Provider, string> = {
     claude: "anthropic",
     openai: "openai",
-    gemini: "google",
-    qwen: "qwen",
-    iflow: "iflow",
 };
 
 /**
@@ -2855,31 +2852,26 @@ const CONTAINER_AUTH_DIR = "/root/.cli-proxy-api";
 
 type Provider = OAuthAccountKind;
 
+/**
+ * The login flag of each account kind in the pinned proxy image ({@link PROXY_IMAGE}). CLIProxyAPI v7.3.17 has no
+ * `--login` (Gemini), `--qwen-login`, or `--iflow-login` flag, thus those kinds are not account kinds here: their login
+ * container would stop with "flag provided but not defined". A new kind comes in with the image that has its flag.
+ */
 const PROVIDER_LOGIN_FLAG: Record<Provider, string> = {
-    gemini: "--login",
     openai: "--codex-login",
     claude: "--claude-login",
-    qwen: "--qwen-login",
-    iflow: "--iflow-login",
 };
 const PROVIDER_LABEL: Record<Provider, string> = {
-    gemini: "Gemini (Google)",
     openai: "OpenAI (Codex/GPT)",
     claude: "Claude (Anthropic)",
-    qwen: "Qwen",
-    iflow: "iFlow",
 };
 /**
  * OAuth-callback flows need their port published so the browser redirect to
- * localhost reaches the one-shot login container. Qwen uses a device flow and
- * needs no inbound port.
+ * localhost reaches the one-shot login container.
  */
-const PROVIDER_CALLBACK_PORT: Record<Provider, number | null> = {
-    gemini: 8085,
+const PROVIDER_CALLBACK_PORT: Record<Provider, number> = {
     openai: 1455,
     claude: 54545,
-    qwen: null,
-    iflow: 11451,
 };
 const PROVIDERS: readonly Provider[] = OAUTH_ACCOUNT_KINDS;
 
@@ -2975,10 +2967,10 @@ const LOGIN_OUTPUT_TAIL_LINES = 40;
  * different process holds is named: the engine refuses the publish and gives only exit code 125, and the
  * reason is in the output.
  */
-export function describeLoginFailure(label: string, code: number, output: readonly string[], port: number | null): string {
+export function describeLoginFailure(label: string, code: number, output: readonly string[], port: number): string {
     const tail = output.slice(-LOGIN_OUTPUT_TAIL_LINES).join("\n").trim();
     const lowered = tail.toLowerCase();
-    const portInUse = port !== null && (lowered.includes("port is already allocated") || lowered.includes("address already in use"));
+    const portInUse = lowered.includes("port is already allocated") || lowered.includes("address already in use");
     const lines = [`${label} login failed (exit code ${code}).`];
     if (portInUse) {
         lines.push(
@@ -3025,7 +3017,7 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
     const port = PROVIDER_CALLBACK_PORT[provider];
     // Loopback-only: publish the OAuth callback port where only this host can reach it, never the LAN. A remote/SSH
     // login still works — the SSH local-forward printed below targets 127.0.0.1 on this host, which is the loopback bind.
-    const publish = port === null ? [] : ["-p", `127.0.0.1:${port}:${port}`];
+    const publish = ["-p", `127.0.0.1:${port}:${port}`];
     // No `-t`: the `--no-browser` flow doesn't need a PTY. Dropping it lets us
     // pipe stdout/stderr to capture the auth URL without hanging.
     // The login container runs the same pinned image as the compose proxy service (PROXY_IMAGE).
@@ -3078,7 +3070,7 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
                     s.stop(`${PROVIDER_LABEL[provider]} — open this URL in your browser`);
                     // The vendor prints its own tunnel command, but it names `root@` and the address of the
                     // container. This one names the user and the address of this session.
-                    if (port !== null && terminalEnv.sshConnection !== null) {
+                    if (terminalEnv.sshConnection !== null) {
                         note(sshForwardCommand(port), "Over SSH: run this on your computer first, to forward the callback port");
                     }
                     const { writeClipboard } = await import("../../lib/clipboard.ts");
@@ -3090,7 +3082,7 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
                     console.log(`  ${authUrl}`);
                     console.log();
                     if (copied.isOk()) log.info("Copied to clipboard.");
-                    if (port !== null && process.stdin.isTTY) {
+                    if (process.stdin.isTTY) {
                         // The vendor redirects to `http://localhost:<port>/…` (the RedirectURI constants of its
                         // Codex and Claude flows), thus the hint names that address.
                         const callback = new URL(`http://localhost:${port}/`);

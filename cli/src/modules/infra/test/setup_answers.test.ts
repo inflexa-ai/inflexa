@@ -842,7 +842,16 @@ describe("resolveSetupAnswers — the --provider vocabulary keys on the connecti
             resolveSetupAnswers({ connection: { mode: "cliproxy", provider: "anthropic" } }, undefined, interactive())._unsafeUnwrapErr(),
         ).join("\n");
         expect(text).toContain("OAuth account kind");
-        expect(text).toContain("gemini, openai, claude, qwen, iflow");
+        expect(text).toContain("openai, claude.");
+    });
+
+    // CLIProxyAPI v7.3.17, the pinned proxy image, has no `--login`, `--qwen-login`, or `--iflow-login` flag. The
+    // login container would stop with "flag provided but not defined".
+    test.each(["gemini", "qwen", "iflow"])("cliproxy refuses `%s`, whose login the pinned proxy image cannot do", (kind) => {
+        const text = problemsOf(resolveSetupAnswers({ connection: { mode: "cliproxy", provider: kind } }, undefined, interactive())._unsafeUnwrapErr()).join(
+            "\n",
+        );
+        expect(text).toContain("OAuth account kind: openai, claude.");
     });
 
     test("direct mode takes an open vendor slug with no account-kind validation", () => {
@@ -1241,7 +1250,7 @@ describe("vocabulary agreement with the orchestrator", () => {
         // setup.ts owns the account-kind → vendor-slug map; `providerKindForSlug` is its inverse, so mapping
         // the slugs it writes back to kinds must reproduce this module's vocabulary. A kind renamed or
         // dropped there fails here instead of at the first fleet provision.
-        const kinds = ["anthropic", "openai", "google", "qwen", "iflow"].map(providerKindForSlug);
+        const kinds = ["anthropic", "openai"].map(providerKindForSlug);
         expect(new Set(kinds)).toEqual(new Set(OAUTH_ACCOUNT_KINDS));
     });
 

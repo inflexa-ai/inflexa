@@ -120,7 +120,7 @@ Under `--yes`, setup SHALL never prompt — on a TTY or off it. The complete ans
 
 ### Requirement: `--provider` wears the vocabulary of the connection mode
 
-The `--provider` answer (file: `connection.provider`) SHALL be interpreted by the resolved connection mode: in `cliproxy` mode it is the OAuth account kind (`gemini|openai|claude|qwen|iflow`), valid only where the OAuth flow can run — an interactive run; in `direct` mode it is the open vendor slug written to `models.connection.provider`. Under `--yes` (or non-TTY) with cliproxy mode, a provider answer SHALL be rejected during upfront validation with an error explaining that provider OAuth cannot run unattended and that the first launch offers the sign-in.
+The `--provider` answer (file: `connection.provider`) SHALL be interpreted by the resolved connection mode: in `cliproxy` mode it is the OAuth account kind (`openai|claude`, the kinds whose login flag the pinned proxy image has), valid only where the OAuth flow can run — an interactive run; in `direct` mode it is the open vendor slug written to `models.connection.provider`. Under `--yes` (or non-TTY) with cliproxy mode, a provider answer SHALL be rejected during upfront validation with an error explaining that provider OAuth cannot run unattended and that the first launch offers the sign-in.
 
 #### Scenario: Batch cliproxy rejects a provider answer
 

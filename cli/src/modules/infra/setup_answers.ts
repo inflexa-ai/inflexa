@@ -65,7 +65,7 @@ export function refsPresetOf(value: string): RefsPreset | undefined {
  * close an import cycle. setup.ts's own `resolveProvider` re-validates the value at the command boundary,
  * so a drift between the two lists surfaces there as well; setup_answers.test.ts pins them together.
  */
-export const OAUTH_ACCOUNT_KINDS = ["gemini", "openai", "claude", "qwen", "iflow"] as const;
+export const OAUTH_ACCOUNT_KINDS = ["openai", "claude"] as const;
 
 /** A cliproxy OAuth account kind — the `--provider` vocabulary in cliproxy mode. */
 export type OAuthAccountKind = (typeof OAUTH_ACCOUNT_KINDS)[number];
