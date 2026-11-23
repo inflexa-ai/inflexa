@@ -70,6 +70,7 @@ export type PostgresError =
     | { type: "compose_file_write_failed"; message: string }
     | { type: "ready_timeout"; message: string }
     | { type: "container_crash_loop"; message: string }
+    | { type: "database_create_failed"; message: string }
     | { type: "vector_install_failed"; message: string }
     | { type: "compose_not_available"; message: string };
 
