@@ -387,7 +387,7 @@ export function createRunTemplateTool(deps: RunTemplateDeps): Tool<z.infer<typeo
 
             const runDir = cwd === undefined ? deps.workingDir : cwd.startsWith("/") ? cwd : posixPath.join(deps.workingDir, cwd);
             const command = [language === "R" ? "Rscript" : "python3", written.path];
-            const ran = await runSandboxExec({ lease: deps.lease, command, cwd: runDir, timeoutSeconds, emit: ctx.emit });
+            const ran = await runSandboxExec({ lease: deps.lease, command, cwd: runDir, timeoutSeconds, emit: ctx.emit, invocationId: ctx.invocationId });
             if (ran.isErr()) return err(ran.error);
             const result = ran.value;
             if (result.exitCode !== 0) logger.info("a template run ended with a non-zero exit code", { template: render.template, exitCode: result.exitCode });

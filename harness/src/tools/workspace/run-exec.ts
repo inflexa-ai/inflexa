@@ -19,14 +19,18 @@ export type RunExecArgs = {
     readonly env?: Record<string, string>;
     readonly timeoutSeconds?: number;
     readonly emit: EmitFn;
+    /** The tool call that runs the command. A wait for a new machine shows under it. */
+    readonly invocationId?: string;
 };
 
 /** The error of an exec with no lease. The order "acquire, then exec" is a rule of the code, not of a prompt. */
 export const NO_SANDBOX_ERROR = "No sandbox is held. Call acquire_sandbox with the size that the command needs, then run the command again.";
 
 export async function runSandboxExec(args: RunExecArgs): Promise<Result<ExecResult, ToolError>> {
-    const ran = await args.lease.exec({ command: args.command, cwd: args.cwd, env: args.env, timeoutSeconds: args.timeoutSeconds }, (event) =>
-        args.emit({ type: "data-sandbox-event", data: { event } }),
+    const ran = await args.lease.exec(
+        { command: args.command, cwd: args.cwd, env: args.env, timeoutSeconds: args.timeoutSeconds },
+        (event) => args.emit({ type: "data-sandbox-event", data: { event } }),
+        args.invocationId,
     );
     if (ran.isOk()) return ok(ran.value);
     const detail = ran.error.detail === undefined ? "" : ` (${ran.error.detail})`;

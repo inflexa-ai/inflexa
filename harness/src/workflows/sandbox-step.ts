@@ -457,8 +457,8 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
 
     const lineageCollector = createLineageCollector(input);
 
-    /** The activity of the last tool call. An exec that waited for a machine shows it again. */
-    let lastToolActivity: { readonly toolUseId: string; readonly activity: string } | undefined;
+    /** The activity of each tool call, by its id. An exec that waited for a machine shows the activity of its call again. */
+    const toolActivities = new Map<string, string>();
 
     // (2) The lease of the step. The agent acquires its sandbox with `acquire_sandbox` when it needs one, and the
     // sandbox module owns the machine: the admission, the spawn, a new machine after a pause or a death, and the
@@ -472,17 +472,12 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
         // An exec that waits for a new machine shows the activity of the first acquire, and then its own call again.
         // The wait runs inside the step of the call, and a replayed call emits nothing, thus the wall clock dates it.
         onSandboxWait: async (wait) => {
-            const call = lastToolActivity;
+            const call = wait.invocationId ?? "exec";
+            const own = wait.invocationId === undefined ? undefined : toolActivities.get(wait.invocationId);
             const parts =
                 wait.state === "waiting"
-                    ? activityEmission(input, `wait-${call?.toolUseId ?? "exec"}`, "sandbox-init", sandboxWaitActivity(wait.size), new Date().toISOString())
-                    : activityEmission(
-                          input,
-                          `ready-${call?.toolUseId ?? "exec"}`,
-                          "executing",
-                          call?.activity ?? `Running ${input.agentId}`,
-                          new Date().toISOString(),
-                      );
+                    ? activityEmission(input, `wait-${call}`, "sandbox-init", sandboxWaitActivity(wait.size), new Date().toISOString())
+                    : activityEmission(input, `ready-${call}`, "executing", own ?? `Running ${input.agentId}`, new Date().toISOString());
             await safeEmit(parts.activity);
             await safeEmit(parts.entry);
         },
@@ -533,7 +528,7 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
     // writes, and each write fails alone through `safeEmit`.
     let activitySeq = 0;
     const emitActivity = async (phase: StepPhase, activity: string, toolUseId?: string): Promise<void> => {
-        if (toolUseId !== undefined) lastToolActivity = { toolUseId, activity };
+        if (toolUseId !== undefined) toolActivities.set(toolUseId, activity);
         const key = toolUseId === undefined ? activitySeq++ : toolActivityKey(toolUseId);
         const at = new Date(await DBOS.now()).toISOString();
         const parts = activityEmission(input, key, phase, activity, at);
