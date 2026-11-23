@@ -94,24 +94,33 @@ CLI detects the fact:
 | macOS, Windows | docker | none | `vm`, `bindOwnership: "masked"` |
 | macOS, Windows | podman | none | `vm`, `bindOwnership: "host-preserved"` |
 | Linux | docker | `OperatingSystem` is `Docker Desktop` | `vm`, `bindOwnership: "masked"` |
-| Linux | docker | `SecurityOptions` has `name=rootless` | refused |
+| Linux | docker | `SecurityOptions` has `name=rootless` or `name=userns` | refused |
 | Linux | docker | each other daemon | `rootful`, with the uid, the gid, and the groups of the user, and `selinux` from `name=selinux` |
-| Linux | podman | `host.security.rootless` is true | `rootless-podman`, with `selinux` from `host.security.selinuxEnabled` |
+| Linux | podman | `host.security.rootless` is true | `rootless-podman`, with `selinux` from `host.security.selinuxEnabled`, and `keepId` from `version.Version`: `user-and-groups` from 5.1, `user` from 4.3, else `unsupported` |
 | Linux | podman | each other engine | `rootful`, with the uid, the gid, and the groups of the user |
 
 The Docker info MUST come from the daemon that dockerode dials: the `DOCKER_HOST`
 of the user, else the default socket of dockerode. It MUST NOT come from the
 current context of the Docker CLI.
 
-When the fact is `rootless-podman` and the OCI runtime of Podman is not crun,
-the boot MUST log a warning. The warning names the cause: a sandbox gets no
+When the fact is `rootless-podman` with `keepId: "unsupported"`, the boot MUST
+log a warning that names the Podman version, the fallback to uid 1000, and the
+fix: Podman 4.3 or later. A version that the CLI cannot parse counts as older.
+
+When the fact is `rootless-podman` with `keepId: "user"`, the boot MUST log a
+warning. The warning names the cause: before Podman 5.1, the compat API reads
+no container annotation, thus a sandbox cannot read the data of a project
+group. It also names the supported fix: Podman 5.1 or later, or rootful Docker.
+
+When the fact is `rootless-podman` with `keepId: "user-and-groups"` and the OCI
+runtime of Podman is not crun, the boot MUST log a warning. The warning names the cause: a sandbox gets no
 supplementary group of the user, thus it cannot read the data of a project
 group. The warning also names the fix: use crun.
 
 A failed socket resolution, a refused engine, or engine info that the CLI
 cannot read MUST fail the boot with the dedicated error variant, before a side
-effect. Setup MUST refuse rootless Docker with the same message, before it
-writes the configuration.
+effect. Setup MUST refuse rootless Docker and userns-remap with the same
+message, before it writes the configuration.
 
 #### Scenario: Podman pin wires the compat socket and the executor fact
 
@@ -126,8 +135,18 @@ writes the configuration.
 
 #### Scenario: Rootless Docker is refused
 
-- **WHEN** setup or the boot runs with `docker` pinned, and the daemon reports `name=rootless`
+- **WHEN** setup or the boot runs with `docker` pinned, and the daemon reports `name=rootless` or `name=userns`
 - **THEN** it fails with a message that names rootful Docker, Docker Desktop, and Podman as the supported engines
+
+#### Scenario: Podman before 4.3 keeps uid 1000 and warns
+
+- **WHEN** the runtime boots on rootless Podman 4.2
+- **THEN** `createSandboxClient` receives `rootless-podman` with `keepId: "unsupported"`, and the boot logs a warning that names the version and Podman 4.3
+
+#### Scenario: Podman 4.3 to 5.0 loses the project groups and warns
+
+- **WHEN** the runtime boots on rootless Podman 4.9
+- **THEN** `createSandboxClient` receives `rootless-podman` with `keepId: "user"`, and the boot logs a warning that names the project groups, Podman 5.1, and rootful Docker
 
 #### Scenario: Rootless Podman without crun warns
 

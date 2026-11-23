@@ -942,7 +942,17 @@ async function bootHarnessRuntimeOnce(
     if (engineResult.isErr()) return err({ type: "sandbox_engine_unresolved", message: engineResult.error.message });
     const { runtime: pinnedRuntime, socketPath: engineSocketPath, detected } = engineResult.value;
     const resourcePolicy = clampPolicyToEngine(cfg.resourcePolicy, engineResult.value.capacity);
-    if (detected.executor.kind === "rootless-podman" && detected.ociRuntime !== "crun") {
+    if (detected.executor.kind === "rootless-podman" && detected.executor.keepId === "unsupported") {
+        logger.warn(
+            `Podman ${detected.podmanVersion ?? "(no version)"} is older than 4.3 and has no keep-id user mapping, thus a sandbox runs as uid 1000 with a world-writable step tree and cannot read a file that only you can read — upgrade Podman to 4.3 or later`,
+            { podmanVersion: detected.podmanVersion },
+        );
+    } else if (detected.executor.kind === "rootless-podman" && detected.executor.keepId === "user") {
+        logger.warn(
+            `Podman ${detected.podmanVersion ?? "(no version)"} does not keep your supplementary groups for a sandbox: its Docker-compat API reads no container annotation before Podman 5.1, thus a sandbox under rootless Podman cannot read the data of a project group — use Podman 5.1 or later, or rootful Docker`,
+            { podmanVersion: detected.podmanVersion },
+        );
+    } else if (detected.executor.kind === "rootless-podman" && detected.ociRuntime !== "crun") {
         logger.warn(
             'the OCI runtime of rootless Podman is not crun, thus a sandbox gets no supplementary group of the user and cannot read the data of a project group — set runtime = "crun" in containers.conf',
             { ociRuntime: detected.ociRuntime },

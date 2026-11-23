@@ -410,10 +410,12 @@ export type DetectedExecutor = {
     readonly executor: SandboxExecutor;
     /** The OCI runtime of a Linux Podman engine. Only crun keeps the groups of the user for rootless Podman. */
     readonly ociRuntime: string | undefined;
+    /** The version of a Linux Podman engine, for the boot warning of a Podman with no keep-id user mapping. */
+    readonly podmanVersion: string | undefined;
 };
 
 /** Why no executor fact comes from the engine. */
-export type SandboxExecutorError = { type: "rootless_docker"; message: string } | { type: "engine_info_failed"; message: string };
+export type SandboxExecutorError = { type: "unsupported_docker"; message: string } | { type: "engine_info_failed"; message: string };
 
 /**
  * The socket that dockerode (docker-modem) dials when no `DOCKER_HOST` names one: the socket of a
@@ -434,7 +436,24 @@ const podmanInfoSchema = z.looseObject({
         security: z.looseObject({ rootless: z.boolean().optional(), selinuxEnabled: z.boolean().optional() }).optional(),
         ociRuntime: z.looseObject({ name: z.string().optional() }).optional(),
     }),
+    // A version that is not a string reads as absent: the engine info stays usable, and the version counts as old.
+    version: z.looseObject({ Version: z.string().optional().catch(undefined) }).optional(),
 });
+
+/**
+ * What the Docker-compat API of a Podman version takes for the user of the sandbox. Podman 4.3
+ * added `--userns=keep-id:uid=,gid=`. The compat create endpoint reads `HostConfig.Annotations`,
+ * and with it the annotation that keeps the groups of the user, only from Podman 5.1. A version
+ * that does not parse counts as the oldest: the fallback still runs a sandbox, and the keep-id
+ * option stops each create on an engine that does not know it.
+ */
+function podmanKeepIdLevel(version: string | undefined): "unsupported" | "user" | "user-and-groups" {
+    const [major, minor] = (version ?? "").split(".").map(Number);
+    if (major === undefined || minor === undefined || !Number.isInteger(major) || !Number.isInteger(minor)) return "unsupported";
+    const atLeast = (wantMajor: number, wantMinor: number): boolean => major > wantMajor || (major === wantMajor && minor >= wantMinor);
+    if (atLeast(5, 1)) return "user-and-groups";
+    return atLeast(4, 3) ? "user" : "unsupported";
+}
 
 /** True when a `SecurityOptions` entry of the Docker info is `name=<name>`, with or without its settings. */
 function hasSecurityOption(options: readonly string[], name: string): boolean {
@@ -449,9 +468,11 @@ function hasSecurityOption(options: readonly string[], name: string): boolean {
  *   of a shared file. A Podman machine shows the true owner.
  * - **Docker on Linux** reads the info of the daemon that the harness dials: the `DOCKER_HOST`
  *   of the user, else the default socket of dockerode, not the current context of the CLI.
- *   `Docker Desktop` is a VM. `name=rootless` is refused: there the container root is the user,
- *   and each other container uid is a subordinate uid, thus no drop reaches the files of the
+ *   `Docker Desktop` is a VM. `name=rootless` and `name=userns` (userns-remap) are refused: there
+ *   each container uid other than root is a subordinate uid, thus no drop reaches the files of the
  *   user. Each other daemon is rootful.
+ * - **Podman on Linux** gives the keep-id level of its version: before 4.3 no `keep-id:uid=,gid=`,
+ *   and before 5.1 no annotation that keeps the groups of the user.
  * - **Podman on Linux** reads `podman info`, the engine of the user that serves the socket of
  *   the harness.
  *
@@ -469,7 +490,11 @@ export async function resolveSandboxExecutor(
     },
 ): Promise<Result<DetectedExecutor, SandboxExecutorError>> {
     if (probes.platform !== "linux") {
-        return ok({ executor: { kind: "vm", bindOwnership: rt.id === "podman" ? "host-preserved" : "masked" }, ociRuntime: undefined });
+        return ok({
+            executor: { kind: "vm", bindOwnership: rt.id === "podman" ? "host-preserved" : "masked" },
+            ociRuntime: undefined,
+            podmanVersion: undefined,
+        });
     }
     const hostUser = (): Result<ExecutorUser, SandboxExecutorError> => {
         const user = probes.user();
@@ -489,15 +514,27 @@ export async function resolveSandboxExecutor(
                     message: `Could not read the Docker engine info at ${where}, the engine that the sandbox uses.\n  ${stderr.trim() || "The engine gave no readable info."}`,
                 });
             }
-            if (info.OperatingSystem === "Docker Desktop") return ok({ executor: { kind: "vm", bindOwnership: "masked" }, ociRuntime: undefined });
+            if (info.OperatingSystem === "Docker Desktop")
+                return ok({ executor: { kind: "vm", bindOwnership: "masked" }, ociRuntime: undefined, podmanVersion: undefined });
             const options = info.SecurityOptions ?? [];
-            if (hasSecurityOption(options, "rootless")) {
+            // Both modes map each container uid other than root to a subordinate uid, thus no drop
+            // reaches the files of the user.
+            const unsupported = hasSecurityOption(options, "rootless")
+                ? "Rootless Docker"
+                : hasSecurityOption(options, "userns")
+                  ? "Docker with user namespace remapping (userns-remap)"
+                  : null;
+            if (unsupported !== null) {
                 return err({
-                    type: "rootless_docker",
-                    message: `Rootless Docker at ${where} cannot run the sandbox: each container uid other than root is a subordinate uid, thus the sandbox cannot read your files.\n  Use rootful Docker, Docker Desktop, or Podman, then re-run.`,
+                    type: "unsupported_docker",
+                    message: `${unsupported} at ${where} cannot run the sandbox: each container uid other than root is a subordinate uid, thus the sandbox cannot read your files.\n  Use rootful Docker, Docker Desktop, or Podman, then re-run.`,
                 });
             }
-            return hostUser().map((user) => ({ executor: { kind: "rootful", user, selinux: hasSecurityOption(options, "selinux") }, ociRuntime: undefined }));
+            return hostUser().map((user) => ({
+                executor: { kind: "rootful", user, selinux: hasSecurityOption(options, "selinux") },
+                ociRuntime: undefined,
+                podmanVersion: undefined,
+            }));
         }
         case "podman": {
             const { code, stdout, stderr } = await probes.capture(rt, ["info", "--format", "json"]);
@@ -510,8 +547,11 @@ export async function resolveSandboxExecutor(
             }
             const selinux = info.host.security?.selinuxEnabled === true;
             const ociRuntime = info.host.ociRuntime?.name;
-            if (info.host.security?.rootless === true) return ok({ executor: { kind: "rootless-podman", selinux }, ociRuntime });
-            return hostUser().map((user) => ({ executor: { kind: "rootful", user, selinux }, ociRuntime }));
+            const podmanVersion = info.version?.Version;
+            if (info.host.security?.rootless === true) {
+                return ok({ executor: { kind: "rootless-podman", selinux, keepId: podmanKeepIdLevel(podmanVersion) }, ociRuntime, podmanVersion });
+            }
+            return hostUser().map((user) => ({ executor: { kind: "rootful", user, selinux }, ociRuntime, podmanVersion }));
         }
         default: {
             const exhaustive: never = rt.id;
