@@ -490,7 +490,7 @@ export const mockDataProfile: DataProfileState = {
         profiledAt: Date.ago(4 * 60_000),
     },
     workflowId: null,
-    seedInputFileIds: ["mock-input-counts", "mock-input-meta"],
+    seedInputCount: 2,
 };
 
 /** MOCK sample: one step of the newest run, with everything a step summary carries beside the named fields. */

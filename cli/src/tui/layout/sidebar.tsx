@@ -45,7 +45,7 @@ import { Sep } from "../components/separator.tsx";
 import { useWorkspace } from "../contexts/workspace.ts";
 import type { AnchorView } from "../../api/analyses.ts";
 import type { ThreadSummary } from "../../api/conversation.ts";
-import type { RunSummary } from "../../api/runs.ts";
+import type { RunSummary, StagingProgress } from "../../api/runs.ts";
 import { formatIecBytes } from "../../lib/bytes.ts";
 
 /** Props for {@link Sidebar}. Only the live message count is passed; analysis/session/project come from the workspace store, which repaints the sidebar on an in-place swap. */
@@ -267,6 +267,14 @@ function packageLinesOf(pending: readonly PendingAddLine[], flights: readonly St
 }
 
 /**
+ * The DATA PROFILE line while a drive stages the inputs: a large input set stages for minutes before the profile
+ * row moves, and without this line the rail reads "not profiled" or the previous profile for that whole time.
+ */
+function stagingLineOf(staging: StagingProgress): LiveLine {
+    return { glyph: GLYPHS.warning, role: "warning", text: `staging ${staging.done}/${staging.total} files` };
+}
+
+/**
  * Map a {@link ProfileSnapshot} to its display line: muted placeholders, warn "profiling…", success count+age, error
  * one-liner. A running profile that waits in a pause reads `paused` or `retrying…` instead, because its row still
  * reads `running` and "profiling…" would claim work that does not go on. The details view gives the cause.
@@ -278,8 +286,10 @@ function profileLineOf(snap: ReturnType<typeof profileSnapshot>, paused: PausedW
         case "unavailable":
             return { glyph: null, role: "fgMuted", text: "unavailable" };
         case "absent":
+            if (snap.staging !== undefined) return stagingLineOf(snap.staging);
             return { glyph: null, role: "fgMuted", text: "not profiled" };
         case "loaded": {
+            if (snap.staging !== undefined) return stagingLineOf(snap.staging);
             const p = snap.profile;
             switch (p.status) {
                 case "pending":

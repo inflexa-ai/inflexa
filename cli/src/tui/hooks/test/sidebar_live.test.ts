@@ -58,7 +58,7 @@ function profileState(over: Partial<DataProfileState> = {}): DataProfileState {
         completedAt: "2026-07-08T00:00:05.000Z",
         result: { summary: "s", files: [{ path: "a.csv", description: "d" }], profiledAt: "2026-07-08T00:00:05.000Z" },
         workflowId: null,
-        seedInputFileIds: null,
+        seedInputCount: null,
         ...over,
     };
 }
@@ -173,7 +173,7 @@ function loaded(over: Partial<DataProfileState> = {}, usage?: UsageTotals): Prof
                 profiledAt: "2026-07-08T00:00:05.000Z",
             },
             workflowId: null,
-            seedInputFileIds: ["i1", "i2", "i3"],
+            seedInputCount: 3,
             ...over,
         },
     };
@@ -1151,7 +1151,7 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
         for (const prefix of ["dataset ", "census ", "groups (", "dimensions (", "caveats ("]) {
             expect(lines.some((l) => l.startsWith(prefix))).toBe(false);
         }
-        // seedInputFileIds (3) wins over the profiled input-signature count.
+        // seedInputCount (3) wins over the profiled input-signature count.
         expect(lines[lines.length - 1]).toBe("3 seed inputs");
     });
 
@@ -1308,7 +1308,7 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
     });
 
     test("loaded failed → surfaces the multi-line error and a duration", () => {
-        const lines = profileDetailLines(loaded({ status: "failed", error: "boom\ndetails here", result: null, seedInputFileIds: null }));
+        const lines = profileDetailLines(loaded({ status: "failed", error: "boom\ndetails here", result: null, seedInputCount: null }));
         expect(lines[0]).toBe("status: failed");
         // The ledger stamps completedAt on the failure path too, so a failed profile still reports how
         // long it ran — a duration, not an elapsed age.
@@ -1335,7 +1335,7 @@ describe("profileDetailLines — one line set per snapshot kind", () => {
 
     test("loaded pending without a result → status, elapsed (not duration), seed count, no files section", () => {
         const lines = profileDetailLines(
-            loaded({ status: "pending", startedAt: "2026-07-08T00:00:00.000Z", completedAt: null, result: null, seedInputFileIds: ["only-one"] }),
+            loaded({ status: "pending", startedAt: "2026-07-08T00:00:00.000Z", completedAt: null, result: null, seedInputCount: 1 }),
         );
         expect(lines[0]).toBe("status: pending");
         expect(lines).toContain(`started ${new Date("2026-07-08T00:00:00.000Z").toLocaleString()}`);

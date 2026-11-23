@@ -27,6 +27,8 @@ import { resolveAnchor, resolvedPathOrCached } from "../anchor/anchor.ts";
 import { addInputs, findAnalysis, removeInput } from "../analysis/analysis.ts";
 import { expandAndResolve } from "../../lib/paths.ts";
 import { matchInputRefs } from "../analysis/input.ts";
+import { workspaceDataDir } from "../analysis/output.ts";
+import { probeHardlinks } from "../staging/staging.ts";
 
 const EXISTS_CHECK_WIDTH = 8;
 
@@ -44,6 +46,7 @@ type ManageInputsResult =
     | { readonly status: "no_anchor" }
     | { readonly status: "not_found"; readonly missing: readonly string[] }
     | { readonly status: "added"; readonly added: readonly string[] }
+    | { readonly status: "copy_warning"; readonly warning: string; readonly paths: readonly string[] }
     | { readonly status: "removed"; readonly removed: readonly string[]; readonly notInputs: readonly string[] }
     | { readonly status: "listed"; readonly inputs: readonly InputEntry[] }
     | { readonly status: "error"; readonly message: string };
@@ -123,14 +126,16 @@ export const DEFAULT_MANAGE_INPUTS_TOOL_OPTS: ManageInputsToolOpts = { removeInp
 /** Build the in-process `manage_inputs` conversation tool. */
 export function createManageInputsTool(
     opts: ManageInputsToolOpts = DEFAULT_MANAGE_INPUTS_TOOL_OPTS,
-): Tool<{ action: "add" | "remove" | "list"; paths?: string[] | undefined }, ManageInputsResult> {
+): Tool<{ action: "add" | "remove" | "list"; paths?: string[] | undefined; allowCopy?: boolean | undefined }, ManageInputsResult> {
     return defineTool({
         id: "manage_inputs",
         description:
             "Add, remove, or list this analysis's input files DURING the chat. Use `add` to register files the user " +
             "wants analyzed (discover candidates with list_launch_dir first); `remove` to drop inputs; `list` to see the " +
             "current inputs. Adding verifies each path EXISTS on disk and rejects a name that does not, so do not invent " +
-            "filenames — add only files you have confirmed. Removing matches the current input set (a file already deleted " +
+            "filenames — add only files you have confirmed. When staging would have to COPY the files into the analysis " +
+            "folder, an add returns `copy_warning` and adds nothing: tell the user the warning and ask; add again with " +
+            "`allowCopy: true` only when the user accepts the copy. Removing matches the current input set (a file already deleted " +
             "from disk can still be removed). Adds and removes ask the user to confirm. This registers inputs so the " +
             "analysis re-profiles them; it does not stage or run anything itself.",
         inputSchema: z.object({
@@ -139,6 +144,7 @@ export function createManageInputsTool(
                 .array(z.string())
                 .optional()
                 .describe("Files to add or remove (relative to the launch folder, or absolute). Required for add/remove; ignored for list."),
+            allowCopy: z.boolean().optional().describe("Add even when staging must copy the files. Set it only after the user accepted the copy."),
         }),
         view: {
             input: (input) => input,
@@ -210,6 +216,12 @@ export function createManageInputsTool(
                 );
                 const missing = paths.filter((_, i) => !exists[i]);
                 if (missing.length > 0) return ok({ status: "not_found" as const, missing });
+
+                if (input.allowCopy !== true) {
+                    const dataDir = await workspaceDataDir(found.value).unwrapOr(null);
+                    const warning = dataDir === null ? null : await probeHardlinks(paths.map((p) => expandAndResolve(cwd, p)), dataDir);
+                    if (warning !== null) return ok({ status: "copy_warning" as const, warning, paths });
+                }
 
                 const added = await addInputs(analysisId, paths, cwd);
                 if (added.isErr()) {

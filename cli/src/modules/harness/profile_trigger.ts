@@ -1,6 +1,7 @@
 import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import {
     clearDataProfile,
+    computeInputSignature,
     describeDataProfileStartError,
     loadDataProfileStatus,
     makeLocalAuth,
@@ -11,13 +12,14 @@ import {
     upsertAnalysis,
     type DataProfileTriggerParams,
     type DbError,
+    type StagedInputSummary,
 } from "@inflexa-ai/harness";
 import type { Querier } from "@inflexa-ai/harness/state/db.js";
 
 import { getLogger } from "../../lib/log.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { workspaceDataDir } from "../analysis/output.ts";
-import { enumerateInputPaths, isInputSetMaterialized, stageInputs, type StagedInput } from "../staging/staging.ts";
+import { enumerateInputPaths, isInputSetMaterialized, stageInputs, type InputEnumeration, type StagedInput } from "../staging/staging.ts";
 import { noteDataProfileState } from "./agent_switch.ts";
 import type { HarnessRuntime } from "./runtime.ts";
 
@@ -41,22 +43,23 @@ import type { HarnessRuntime } from "./runtime.ts";
 // from the workspace tree while the database happily recorded them. A live `running` profile is the one
 // state that still suppresses it, because staging reconcile-deletes a tree that run's sandbox is reading.
 
+/** The fixed-width summary of a staged manifest that the trigger takes: the count, the bytes, and the input signature. */
+export function summarizeStagedInputs(staged: readonly StagedInput[]): StagedInputSummary {
+    return { count: staged.length, totalBytes: staged.reduce((sum, f) => sum + f.size, 0), signature: computeInputSignature(staged) };
+}
+
 /**
  * Seed the harness ledger row and build the {@link DataProfileTriggerParams} for `staged` — the ONE
  * construction each drive below shares. The field mapping IS the ledger contract, so it lives in
  * exactly one place, and drift between two copies would corrupt the ledger.
  *
  * `context` stays null — no drive has goal text at profile time, and a fabricated one would
- * pollute the agent prompt. `inputFileIds` is the staged manifest's file ids, the auth is the local
- * OSS value, and the manifest rides into the trigger params verbatim.
+ * pollute the agent prompt. The seed is the count of the staged manifest, the auth is the local
+ * OSS value, and the summary of the manifest rides into the trigger params.
  */
 export function seedProfileLedger(pool: Querier, analysisId: string, staged: readonly StagedInput[]): ResultAsync<DataProfileTriggerParams, DbError> {
-    return upsertAnalysis(
-        pool,
-        analysisId,
-        null,
-        staged.map((f) => f.fileId),
-    ).map(() => ({ auth: makeLocalAuth(), analysisId, stagedInputs: staged }));
+    const inputSummary = summarizeStagedInputs(staged);
+    return upsertAnalysis(pool, analysisId, null, inputSummary.count).map(() => ({ auth: makeLocalAuth(), analysisId, inputSummary }));
 }
 
 /**
@@ -100,14 +103,21 @@ export function seedProfileLedger(pool: Querier, analysisId: string, staged: rea
  * re-deriving one. Populated and tested on every variant so that consumer inherits a correct value, not
  * a retrofit.
  */
-export type ProfileParityOutcome =
+export type ProfileParityOutcome = (
     | { kind: "triggered"; restarted: boolean; materialized: true }
     | { kind: "already_profiled"; materialized: true }
     | { kind: "already_running"; materialized: boolean }
     | { kind: "cleared"; materialized: false }
     | { kind: "skipped_failed"; materialized: true }
     | { kind: "no_inputs"; materialized: false }
-    | { kind: "failed"; reason: string; materialized: boolean };
+    | { kind: "failed"; reason: string; materialized: boolean }
+) & {
+    /**
+     * Present when the drive met a source that it could not read or reach: each line names one. Staging skipped
+     * such a source and kept the files that an earlier pass staged for it, and the profile stays.
+     */
+    warnings?: readonly string[];
+};
 
 /** The part of the runtime that the drives read: the ledger pool, and the dependencies that they hand to the trigger. */
 export type ProfileRuntime = Pick<HarnessRuntime, "triggerDeps"> & { readonly pool: Querier };
@@ -121,7 +131,7 @@ export type ProfileRuntime = Pick<HarnessRuntime, "triggerDeps"> & { readonly po
 export type ProfileParitySeams = {
     /** Reset an orphaned `running` ledger row (best-effort self-heal). */
     readonly reconcile: typeof reconcileOrphanedDataProfile;
-    /** Cheap (stat/readdir) read of the analysis's current input paths — the "are there inputs" gate. */
+    /** Cheap (stat/readdir) read of the analysis's current input paths — the "are there inputs" gate. Takes the staging target, or `null`. */
     readonly enumerate: typeof enumerateInputPaths;
     /** Read the ledger status (its lifecycle state, and any result preserved on the row). */
     readonly loadStatus: typeof loadDataProfileStatus;
@@ -131,7 +141,7 @@ export type ProfileParitySeams = {
     readonly dataDir: typeof workspaceDataDir;
     /** Is the current input set already on disk under the workspace tree? Stat/readdir cost, no hashing. */
     readonly materialized: typeof isInputSetMaterialized;
-    /** Content-hash + link the inputs into the workspace tree — the only step that writes the tree. */
+    /** Link the inputs into the workspace tree — the only step that writes the tree. Reads no file content. */
     readonly stage: typeof stageInputs;
     /** Seed the ledger row + build the trigger params (refer to {@link seedProfileLedger}). */
     readonly seed: typeof seedProfileLedger;
@@ -174,7 +184,7 @@ function resolveDataDir(analysis: Analysis, seams: ProfileParitySeams): ResultAs
  * manifest — {@link enumerateInputPaths} is the gate and staging shares its walk. Returns the
  * manifest (the seed's and the trigger's input), or a one-line failure reason.
  */
-async function materializeInputs(analysis: Analysis, dataDir: string, seams: ProfileParitySeams): Promise<Result<StagedInput[], string>> {
+async function materializeInputs(analysis: Analysis, dataDir: string, seams: ProfileParitySeams, warnings: Set<string>): Promise<Result<StagedInput[], string>> {
     // TODO(robustness): exclude restaging against a live `executeAnalysis` run on this analysis. `stage`
     // (`stageInputs`) rm/relinks the shared `data/inputs` tree and reconciles it against its own manifest
     // (`reconcileStagedTree`'s `rmSync`), so an input edit (parity edge 2) that restages while a sandbox
@@ -183,7 +193,12 @@ async function materializeInputs(analysis: Analysis, dataDir: string, seams: Pro
     // flight); it wants the run-liveness read the ledger already exposes and is left out now to keep this
     // change scoped to the parity/staging convergence fix.
     const stageResult = await seams.stage(analysis.id, dataDir);
-    return stageResult.mapErr((e) => `staging inputs failed (${e.type})`);
+    return stageResult
+        .map((outcome) => {
+            for (const warning of outcome.warnings) warnings.add(warning);
+            return outcome.staged;
+        })
+        .mapErr((e) => `staging inputs failed (${e.type})`);
 }
 
 /**
@@ -286,8 +301,9 @@ async function dispatchProfileWorkflow(
     seams: ProfileParitySeams,
     rowFailedAtRead: boolean,
     resolveFailedRow: FailedRowPolicy,
+    warnings: Set<string>,
 ): Promise<ProfileParityOutcome> {
-    const stagedResult = await materializeInputs(analysis, dataDir, seams);
+    const stagedResult = await materializeInputs(analysis, dataDir, seams, warnings);
     if (stagedResult.isErr()) return { kind: "failed", reason: stagedResult.error, materialized: false };
 
     const paramsResult = await seedFromManifest(runtime, analysis, stagedResult.value, seams);
@@ -339,12 +355,13 @@ export type ProfileDriveCause = "open" | "inputs_changed";
  *      and its DBOS workflow insert leaves the row wedged at `running` with nothing to resume; boot has
  *      run DBOS recovery, so a still-`running` row with no workflow is genuinely orphaned. Reset it so
  *      the status read below sees the real state.
- *   1. Enumerate the analysis's current input paths at stat/readdir cost (no hashing). An enumerate
+ *   1. Enumerate the analysis's current input paths at stat/readdir cost. An enumerate
  *      fault is `failed` (nothing can be decided without knowing whether inputs exist).
  *   2. Read the ledger status. A ledger read fault is `failed`.
  *   3. Branch on the input set:
  *      - EMPTY — never profiled (`null`) → `no_inputs`; a live run → `already_running` (never clear a
- *        live run); otherwise the profile now describes files that are gone, so {@link clearDataProfile}
+ *        live run); a source that is not reachable now keeps its profile → `no_inputs`; otherwise the
+ *        profile now describes files that are gone, so {@link clearDataProfile}
  *        nulls it → `cleared` (or `already_running` if the row raced into `running` — the guard's only
  *        skip; a clear fault is `failed`).
  *      - NON-EMPTY — a live run → `already_running`, the ONLY state that also suppresses materialization.
@@ -352,7 +369,7 @@ export type ProfileDriveCause = "open" | "inputs_changed";
  *      `already_profiled`. The profile is NOT re-run: nothing here claims the input set changed, and the
  *      party that would know invokes this with `"inputs_changed"` instead. Materialization still runs
  *      because the workspace tree is what the agent reads, and it is not conditioned on the profile.
- *   5. Materialize the current input set (content hashing) — for a `failed` row on an `"open"` drive only
+ *   5. Materialize the current input set (links, no content reads) — for a `failed` row on an `"open"` drive only
  *      when the staged tree says it is not already on disk, since every other state below (re-)profiles
  *      and seeding needs the manifest anyway. A staging fault is `failed` and stops here: no seed, no
  *      trigger.
@@ -371,6 +388,42 @@ async function runProfileLadder(
     cause: ProfileDriveCause,
     seams: ProfileParitySeams,
 ): Promise<ProfileParityOutcome> {
+    const warnings = new Set<string>();
+    return withWarnings(await profileLadder(runtime, analysis, cause, seams, warnings), warnings);
+}
+
+/** `outcome` with the warnings of its drive, when the drive met any. */
+function withWarnings(outcome: ProfileParityOutcome, warnings: ReadonlySet<string>): ProfileParityOutcome {
+    return warnings.size === 0 ? outcome : { ...outcome, warnings: [...warnings] };
+}
+
+/**
+ * The staging target of a drive, read before the enumeration: the enumeration carries the staged files of a source
+ * that is not reachable from it. A target that does not resolve carries none, and the drive fails at the step that
+ * writes the tree, as before.
+ */
+async function enumerateCurrentInputs(
+    analysis: Analysis,
+    seams: ProfileParitySeams,
+    warnings: Set<string>,
+): Promise<{ dataDir: Result<string, string>; enumeration: Result<InputEnumeration, string> }> {
+    const dataDir = await resolveDataDir(analysis, seams);
+    const enumeration = (await seams.enumerate(analysis.id, dataDir.unwrapOr(null)))
+        .map((found) => {
+            for (const warning of found.warnings) warnings.add(warning);
+            return found;
+        })
+        .mapErr((e) => `could not enumerate inputs (${e.type})`);
+    return { dataDir, enumeration };
+}
+
+async function profileLadder(
+    runtime: ProfileRuntime,
+    analysis: Analysis,
+    cause: ProfileDriveCause,
+    seams: ProfileParitySeams,
+    warnings: Set<string>,
+): Promise<ProfileParityOutcome> {
     // Best-effort self-heal of a wedged `running` row (step 0 above); a reconcile hiccup must not abort
     // parity — the status read still runs and the trigger's CAS remains the final arbiter.
     (await seams.reconcile(runtime.pool, analysis.id)).match(
@@ -378,9 +431,9 @@ async function runProfileLadder(
         (e) => getLogger("harness").warn({ analysisId: analysis.id, err: e }, "orphaned-profile reconcile failed"),
     );
 
-    const enumerateResult = await seams.enumerate(analysis.id);
-    if (enumerateResult.isErr()) return { kind: "failed", reason: `could not enumerate inputs (${enumerateResult.error.type})`, materialized: false };
-    const currentPaths = enumerateResult.value;
+    const { dataDir: dataDirResult, enumeration } = await enumerateCurrentInputs(analysis, seams, warnings);
+    if (enumeration.isErr()) return { kind: "failed", reason: enumeration.error, materialized: false };
+    const currentPaths = enumeration.value.paths;
 
     const statusResult = await seams.loadStatus(runtime.pool, analysis.id);
     if (statusResult.isErr()) return { kind: "failed", reason: `could not read the profile ledger (${statusResult.error.type})`, materialized: false };
@@ -393,6 +446,9 @@ async function runProfileLadder(
         // describes files that are gone, so clear it.
         if (status === null) return { kind: "no_inputs", materialized: false };
         if (status.status === "running") return { kind: "already_running", materialized: false };
+        // A source that is not reachable now is not a removal: the profile describes files that come back
+        // when the volume does, thus it stays. The warnings name the source.
+        if (enumeration.value.unreachable > 0) return { kind: "no_inputs", materialized: false };
         const clearResult = await seams.clear(runtime.pool, analysis.id);
         if (clearResult.isErr()) return { kind: "failed", reason: `could not clear the stale profile (${clearResult.error.type})`, materialized: false };
         // `clearDataProfile` skips (`ok(false)`) ONLY on a live `running` row — and we returned above
@@ -412,7 +468,6 @@ async function runProfileLadder(
         // re-runs the check when the run reaches either terminal state.
         return { kind: "already_running", materialized: false };
     }
-    const dataDirResult = await resolveDataDir(analysis, seams);
     if (dataDirResult.isErr()) return { kind: "failed", reason: dataDirResult.error, materialized: false };
     const dataDir = dataDirResult.value;
 
@@ -430,13 +485,13 @@ async function runProfileLadder(
             return { kind: "failed", reason: `could not check the staged inputs (${materializedResult.error.type})`, materialized: false };
         }
         if (materializedResult.value) return { kind: "already_profiled", materialized: true };
-        const restaged = await materializeInputs(analysis, dataDir, seams);
+        const restaged = await materializeInputs(analysis, dataDir, seams, warnings);
         if (restaged.isErr()) return { kind: "failed", reason: restaged.error, materialized: false };
         return { kind: "already_profiled", materialized: true };
     }
 
     // A `failed` row is the one state where materialization is conditional rather than implied: every
-    // other state below (re-)profiles, and seeding needs the manifest's content hashes, which only
+    // other state below (re-)profiles, and seeding needs the manifest, which only
     // staging produces — so consulting the predicate there would cost a walk and change nothing.
     //
     // On an "open" drive it doubles as the "is there anything new to try" signal. The staged tree is the
@@ -456,7 +511,7 @@ async function runProfileLadder(
         if (materializedResult.value) return { kind: "skipped_failed", materialized: true };
     }
 
-    return await dispatchProfileWorkflow(runtime, analysis, dataDir, seams, status?.status === "failed", parityReportsTriggerFailure);
+    return await dispatchProfileWorkflow(runtime, analysis, dataDir, seams, status?.status === "failed", parityReportsTriggerFailure, warnings);
 }
 
 /**
@@ -502,14 +557,19 @@ export async function reprofileForInputChange(
  * recovery the input-mutation drive reaches for a `failed` row.
  */
 export async function forceReprofile(runtime: ProfileRuntime, analysis: Analysis, seams: ProfileParitySeams = realParitySeams): Promise<ProfileParityOutcome> {
+    const warnings = new Set<string>();
+    return withWarnings(await forceSteps(runtime, analysis, seams, warnings), warnings);
+}
+
+async function forceSteps(runtime: ProfileRuntime, analysis: Analysis, seams: ProfileParitySeams, warnings: Set<string>): Promise<ProfileParityOutcome> {
     (await seams.reconcile(runtime.pool, analysis.id)).match(
         () => {},
         (e) => getLogger("harness").warn({ analysisId: analysis.id, err: e }, "orphaned-profile reconcile failed"),
     );
 
-    const enumerateResult = await seams.enumerate(analysis.id);
-    if (enumerateResult.isErr()) return { kind: "failed", reason: `could not enumerate inputs (${enumerateResult.error.type})`, materialized: false };
-    if (enumerateResult.value.size === 0) return { kind: "no_inputs", materialized: false };
+    const { dataDir: dataDirResult, enumeration } = await enumerateCurrentInputs(analysis, seams, warnings);
+    if (enumeration.isErr()) return { kind: "failed", reason: enumeration.error, materialized: false };
+    if (enumeration.value.paths.size === 0) return { kind: "no_inputs", materialized: false };
 
     const statusResult = await seams.loadStatus(runtime.pool, analysis.id);
     if (statusResult.isErr()) return { kind: "failed", reason: `could not read the profile ledger (${statusResult.error.type})`, materialized: false };
@@ -518,8 +578,7 @@ export async function forceReprofile(runtime: ProfileRuntime, analysis: Analysis
     // and already-materialized gates the open drive applies, because the user asked for it.
     if (statusResult.value?.status === "running") return { kind: "already_running", materialized: false };
 
-    const dataDirResult = await resolveDataDir(analysis, seams);
     if (dataDirResult.isErr()) return { kind: "failed", reason: dataDirResult.error, materialized: false };
 
-    return await dispatchProfileWorkflow(runtime, analysis, dataDirResult.value, seams, false, forceTakesRetryClaim(runtime, analysis, seams));
+    return await dispatchProfileWorkflow(runtime, analysis, dataDirResult.value, seams, false, forceTakesRetryClaim(runtime, analysis, seams), warnings);
 }

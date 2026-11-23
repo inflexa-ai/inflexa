@@ -461,7 +461,10 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
 
     s.start("Staging inputs");
     const staged = (await stageInputs(analysis.id, workspaceDataRoot)).match(
-        (files) => files,
+        (outcome) => {
+            for (const warning of outcome.warnings) log.warn(warning);
+            return outcome.staged;
+        },
         (e) => {
             s.error("Staging failed");
             return fail("Failed to stage inputs", e);
@@ -480,7 +483,7 @@ export async function runAnalysis(flags: ContextFlags, planPath: string | undefi
             runtime.pool,
             analysis.id,
             null,
-            staged.map((f) => f.fileId),
+            staged.length,
         )
     ).match(
         () => {},

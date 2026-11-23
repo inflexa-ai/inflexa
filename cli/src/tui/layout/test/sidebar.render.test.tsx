@@ -213,7 +213,7 @@ function completedProfile(fileCount: number): DataProfileState {
         completedAt: "2026-07-08T00:00:05.000Z",
         result: { summary: "s", files, profiledAt: "2026-07-08T00:00:05.000Z" },
         workflowId: null,
-        seedInputFileIds: null,
+        seedInputCount: null,
     };
 }
 
@@ -255,6 +255,16 @@ describe("Sidebar DATA PROFILE / RUNS live sections", () => {
         // compact relative age. Assert the same absolute token the row computes.
         expect(frame).toContain(absTime("2026-07-08T00:00:05.000Z"));
         expect(frame).toContain("no runs");
+    });
+
+    test("a staging pass shows its progress in place of the profile line", async () => {
+        await refreshSidebarData("A", refreshOpts({ status: null, workPending: true, staging: { done: 120, total: 600 } }, []));
+        const frame = await renderFrame(liveNode(), { width: 44, height: 24 });
+        expect(frame).toContain("staging 120/600 files");
+        expect(frame).not.toContain("not profiled");
+
+        await refreshSidebarData("A", refreshOpts({ ...completedProfile(3), workPending: true, staging: { done: 1, total: 2 } }, []));
+        expect(await renderFrame(liveNode(), { width: 44, height: 24 })).toContain("staging 1/2 files");
     });
 
     test("a running profile shows 'profiling…'", async () => {

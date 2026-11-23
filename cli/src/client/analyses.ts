@@ -5,10 +5,13 @@ import type {
     AnalysisList,
     AnalysisView,
     CreateAnalysisRequest,
+    CreateAnalysisResponse,
     DeleteAnalysisResponse,
     DeleteExportFormat,
     InputList,
     InputsChange,
+    LinkProbeRequest,
+    LinkProbeResult,
     OutputDirView,
     ResolveAnalysisRequest,
     ResolvedContextView,
@@ -63,8 +66,13 @@ export function fetchAnalyses(page: PageQuery & { project?: string }, opts: Clie
 }
 
 /** `POST /api/v1/analyses`: make an analysis anchored at `folder`. */
-export function createAnalysis(body: CreateAnalysisRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<AnalysisDetail, ClientError> {
-    return request<AnalysisDetail>("POST", "/api/v1/analyses", { body }, opts);
+export function createAnalysis(body: CreateAnalysisRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<CreateAnalysisResponse, ClientError> {
+    return request<CreateAnalysisResponse>("POST", "/api/v1/analyses", { body }, opts);
+}
+
+/** `POST /api/v1/analyses/link-probe`: will staging copy these inputs of a new analysis in `folder`? */
+export function probeNewAnalysisInputs(body: LinkProbeRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<LinkProbeResult, ClientError> {
+    return request<LinkProbeResult>("POST", "/api/v1/analyses/link-probe", { body }, opts);
 }
 
 /**
@@ -112,6 +120,11 @@ export function fetchInputs(analysisId: string, page: PageQuery, opts: ClientOpt
 /** `PUT {A}/inputs`: replace the input set with `paths`, each one absolute. */
 export function replaceInputs(analysisId: string, paths: string[], opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<InputsChange, ClientError> {
     return request<InputsChange>("PUT", `${analysisPath(analysisId)}/inputs`, { body: { paths } }, opts);
+}
+
+/** `POST {A}/inputs/link-probe`: will staging copy these inputs, each one absolute, of the analysis? */
+export function probeInputs(analysisId: string, paths: string[], opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<LinkProbeResult, ClientError> {
+    return request<LinkProbeResult>("POST", `${analysisPath(analysisId)}/inputs/link-probe`, { body: { paths } }, opts);
 }
 
 /** `POST {A}/inputs`: add `paths`, each one absolute. 400 `validation_error` names each path that does not exist. */

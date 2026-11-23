@@ -216,11 +216,19 @@ export async function driveProfileParity(
     );
 }
 
+/** One warn toast for the sources that a drive could not read or reach, beside the toast of its outcome. */
+function notifyWarnings(outcome: ProfileOutcome, notify: (notice: Notice) => void): void {
+    const [first, ...rest] = outcome.warnings ?? [];
+    if (first === undefined) return;
+    notify({ kind: "warn", text: rest.length === 0 ? first : `${first} (and ${rest.length} more)` });
+}
+
 /**
  * The parity outcome mapping. What the user should be told about a trigger, a clear, or a fault does
  * not depend on which edge asked, only on what the drive did.
  */
 function applyParityOutcome(analysis: Analysis, outcome: ProfileOutcome, opts: ParityDriverOpts): void {
+    notifyWarnings(outcome, opts.notify);
     switch (outcome.kind) {
         case "triggered":
             opts.notify(profilingNotice(analysis, outcome.restarted));
@@ -302,6 +310,7 @@ export async function driveForceReprofile(
         return;
     }
     const outcome = result.value.outcome;
+    notifyWarnings(outcome, opts.notify);
     switch (outcome.kind) {
         case "triggered":
             opts.notify(profilingNotice(analysis, outcome.restarted));
