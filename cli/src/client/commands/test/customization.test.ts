@@ -124,6 +124,7 @@ describe("inflexa mcp auth", () => {
         expect(opened).toEqual(["https://auth.example/authorize?client_id=c"]);
         expect(lines[0]).toContain("https://auth.example/authorize?client_id=c");
         expect(lines.join("\n")).toContain("ssh -N -L 43123:127.0.0.1:43123 ");
+        expect(lines.join("\n")).toContain("If the browser cannot reach http://127.0.0.1:43123/ after the sign-in");
         expect(pasted).toEqual(["http://127.0.0.1:43123/callback?code=the-code"]);
         expect(lines.at(-1)).toBe('Signed in to "remote".');
     });
