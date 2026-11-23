@@ -712,8 +712,9 @@ spec is the contract.
   each 5 s with active work, and each 15 s when idle. A tick probes the server, and
   it reads the runs, the analysis, the usage, the open thread, and the paused work.
 - **The Host and Origin check.** The server answers only a request whose `Host`
-  header is `127.0.0.1:<port>` or `localhost:<port>`. An `Origin` header must name
-  the same address. Each other request gets 403 `forbidden`. The one exception is
+  header names `127.0.0.1`, `localhost`, or `[::1]`, with any port, because an SSH
+  port-forward changes the port. An `Origin` header must name one of these
+  addresses. Each other request gets 403 `forbidden`. The one exception is
   `Origin: null` on a `GET` or `HEAD` under `/report-sessions/`, because a sandboxed
   report page has an opaque origin. `/api/*` keeps the full check. A route test that
   calls `request()` on the app sends no socket, thus it passes the check.

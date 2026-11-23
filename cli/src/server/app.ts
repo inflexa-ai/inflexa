@@ -5,6 +5,7 @@ import { Hono, type MiddlewareHandler } from "hono";
 import { getCookie } from "hono/cookie";
 
 import { getLogger } from "../lib/log.ts";
+import { isAsciiDigits } from "../lib/text.ts";
 import { createCustomizationService, defaultCustomizationOpts } from "../modules/customization/service.ts";
 import type { ServerBoot } from "./boot.ts";
 import { createBrowserSessionStore, SIGN_IN_AGAIN_MESSAGE, SIGN_IN_PATH, sessionCookieName, type BrowserSessionStore } from "./browser_session.ts";
@@ -98,35 +99,46 @@ export function buildApp(deps: AppDeps, opts: AppOpts = DEFAULT_APP_OPTS): Hono<
     return app;
 }
 
+/** The loopback names that a request to this server can carry in `Host` and `Origin`, each with any port. */
+const LOOPBACK_HOST_NAMES = ["127.0.0.1", "localhost", "[::1]"];
+
+/** Whether `host` (a `Host` header, or the host part of an origin) is a loopback name with an optional port. */
+function isLoopbackHost(host: string): boolean {
+    return LOOPBACK_HOST_NAMES.some((name) => host === name || (host.startsWith(`${name}:`) && isAsciiDigits(host.slice(name.length + 1))));
+}
+
 /**
- * 403 `forbidden` unless the request names this server. The `Host` header must be `127.0.0.1:<port>` or
- * `localhost:<port>`, and an `Origin` header must be `http://` with one of the two, or absent. This stops a DNS
- * rebind: a page whose host name now points at 127.0.0.1 still sends its own host name, and its own origin on a
- * POST. A page cannot change the two headers.
+ * 403 `forbidden` unless the request names a loopback address. The `Host` header must be `127.0.0.1`,
+ * `localhost`, or `[::1]`, and an `Origin` header must be `http://` with one of the three, or absent. This stops
+ * a DNS rebind: a page whose host name now points at 127.0.0.1 still sends its own host name, and its own origin
+ * on a POST. A page cannot change the two headers.
+ *
+ * The port can be any port. The rebind protection depends on the host name only, and an SSH port-forward
+ * (`ssh -L 9000:127.0.0.1:<port>`) gives the browser a different local port. A page of a different local server
+ * passes this check, but it has no bearer token, and `credentialAuth` refuses its cookie on a cross-port fetch.
  *
  * The one exception is `Origin: null` on a `GET` or `HEAD` under `/report-sessions/`. A report page runs in a
  * sandbox, thus its origin is opaque, and it sends `null` when it fetches a font. The `Host` check still runs there,
  * and the route gives a guarded file only to a page grant. `/api/*` keeps the full check.
  *
- * The port is the port that the listener bound. A request with no Bun server is an in-process `app.request()`
- * of a test. No socket carried it, thus no browser sent it, and it passes.
+ * A request with no Bun server is an in-process `app.request()` of a test. No socket carried it, thus no browser
+ * sent it, and it passes.
  */
 function hostOriginGuard(): MiddlewareHandler<ServerEnv> {
+    const names = LOOPBACK_HOST_NAMES.join(", ");
     return async (c, next) => {
-        const port = listenerPort(c);
-        if (port !== undefined) {
-            const hosts = [`127.0.0.1:${port}`, `localhost:${port}`];
+        if (listenerPort(c) !== undefined) {
             const host = c.req.header("Host")?.toLowerCase();
-            if (host === undefined || !hosts.includes(host)) {
-                return apiError(c, "forbidden", `The Host header must be ${hosts.join(" or ")}. The server answers only a request to its own address.`);
+            if (host === undefined || !isLoopbackHost(host)) {
+                return apiError(c, "forbidden", `The Host header must be ${names}, with any port. The server answers only a request to a loopback address.`);
             }
             const origin = c.req.header("Origin")?.toLowerCase();
             const opaquePageFetch = origin === "null" && (c.req.method === "GET" || c.req.method === "HEAD") && c.req.path.startsWith("/report-sessions/");
-            if (origin !== undefined && !opaquePageFetch && !hosts.some((name) => origin === `http://${name}`)) {
+            if (origin !== undefined && !opaquePageFetch && !(origin.startsWith("http://") && isLoopbackHost(origin.slice("http://".length)))) {
                 return apiError(
                     c,
                     "forbidden",
-                    `The Origin header must be http://${hosts.join(" or http://")}, or absent. The server answers no page of a different origin.`,
+                    `The Origin header must be http:// with ${names}, or absent. The server answers no page of a different origin.`,
                 );
             }
         }

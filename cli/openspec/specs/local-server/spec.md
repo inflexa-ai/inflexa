@@ -631,7 +631,7 @@ The server MUST NOT keep a write queue for each thread, because the harness lock
 
 ### Requirement: The server answers only a request to its own address
 
-The `Host` header of each request MUST be `127.0.0.1:<port>` or `localhost:<port>`, where the port is the port that the server bound. Otherwise the server MUST answer 403 `forbidden`. An `Origin` header MUST be `http://` with one of the two, or absent. The check MUST run on each path, before the credential check. A web page whose host name points at 127.0.0.1 still sends its own host name, and a page cannot change the two headers. Thus the check stops a DNS rebind.
+The host name in the `Host` header of each request MUST be `127.0.0.1`, `localhost`, or `[::1]`, with any port or with no port. Otherwise the server MUST answer 403 `forbidden`. An `Origin` header MUST be `http://` with one of the three names and any port, or absent. The check MUST run on each path, before the credential check. A web page whose host name points at 127.0.0.1 still sends its own host name, and a page cannot change the two headers. Thus the check stops a DNS rebind. The protection depends on the host name, not on the port. An SSH port-forward gives the browser a different local port, and the server MUST accept that port.
 
 A `GET` or a `HEAD` request to a path under `/report-sessions/` MUST also pass with the `Origin` header `null`. The page of a report session has an opaque origin, because it runs in a sandbox, and it sends `Origin: null` when it fetches a font. The `Host` check still runs on that path. Each request to a path under `/api/` with `Origin: null` MUST get 403 `forbidden`.
 
@@ -641,6 +641,12 @@ A request that no socket carried, an `app.request()` call of a test, MUST pass t
 
 - **WHEN** a request to the server sends the `Host` header `evil.example:8436`
 - **THEN** the server answers 403 `forbidden`, and no route runs
+
+#### Scenario: A port-forward to a different local port
+
+- **GIVEN** the person runs `ssh -L 9000:127.0.0.1:8431` to the machine of the server
+- **WHEN** the browser sends the `Host` header `localhost:9000` and the `Origin` header `http://localhost:9000`
+- **THEN** the check passes
 
 #### Scenario: A page of a different origin
 
