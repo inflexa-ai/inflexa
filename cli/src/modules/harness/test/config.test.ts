@@ -11,6 +11,7 @@ import { unknownRecordSchema } from "../../../lib/json_record.ts";
 import { clearEnvVars } from "../../../test_support/env_vars.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import {
+    clampPolicyToEngine,
     DEFAULT_AGENT_EFFORTS,
     pickRequestBounds,
     resolveAgentEfforts,
@@ -662,16 +663,8 @@ describe("writeAgentModel — persists models.agents spread-preserving", () => {
     });
 
     test.each([
-        [
-            "a models block that is not an object",
-            "oops",
-            { agents: { conversation: "claude-opus-4-8" } },
-        ],
-        [
-            "an agents block that is not an object",
-            { agents: ["oops"] },
-            { agents: { conversation: "claude-opus-4-8" } },
-        ],
+        ["a models block that is not an object", "oops", { agents: { conversation: "claude-opus-4-8" } }],
+        ["an agents block that is not an object", { agents: ["oops"] }, { agents: { conversation: "claude-opus-4-8" } }],
         [
             "an agents block that is null",
             { connection: { mode: "cliproxy" }, agents: null },
@@ -721,9 +714,7 @@ describe("resolveAgentEfforts — defaults and overrides", () => {
 describe("writeAgentSelection — persists the model and the effort in one write, spread-preserving", () => {
     test("writes the agent's model and effort and round-trips through the resolvers", () => {
         writeConfigWithModels(undefined);
-        expect(
-            writeAgentSelection("utility", { model: "claude-haiku-4-5", effort: "low" }).isOk(),
-        ).toBe(true);
+        expect(writeAgentSelection("utility", { model: "claude-haiku-4-5", effort: "low" }).isOk()).toBe(true);
         expect(readModelsBlock()).toEqual({
             agents: { utility: "claude-haiku-4-5" },
             efforts: { utility: "low" },
@@ -742,9 +733,7 @@ describe("writeAgentSelection — persists the model and the effort in one write
             agents: { conversation: "claude-opus-4-8" },
             efforts: { conversation: "xhigh", sandbox: "low" },
         });
-        expect(
-            writeAgentSelection("sandbox", { model: "claude-sonnet-4-5", effort: "high" }).isOk(),
-        ).toBe(true);
+        expect(writeAgentSelection("sandbox", { model: "claude-sonnet-4-5", effort: "high" }).isOk()).toBe(true);
         expect(readModelsBlock()).toEqual({
             connection: { mode: "cliproxy", provider: "anthropic" },
             agents: { conversation: "claude-opus-4-8", sandbox: "claude-sonnet-4-5" },
@@ -817,5 +806,21 @@ describe("resolveHarnessConfig — an old config with bioKeys", () => {
         expect(resolved.configError).toBeUndefined();
         expect(resolved.sandboxImage).toBe("img:1");
         expect(JSON.stringify(resolved)).not.toContain("secret");
+    });
+});
+
+describe("clampPolicyToEngine", () => {
+    const policy = { perStep: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 }, budget: { cpu: 8, memoryGb: 32 } };
+
+    test("clamps the budget and the step ceilings to an engine that is smaller than the host", () => {
+        expect(clampPolicyToEngine(policy, { cpu: 2, memoryGb: 1 })).toEqual({
+            perStep: { maxCpu: 2, maxMemoryGb: 1, maxGpuCount: 0 },
+            budget: { cpu: 2, memoryGb: 1 },
+        });
+    });
+
+    test("keeps the policy under an engine that is larger, and with no capacity", () => {
+        expect(clampPolicyToEngine(policy, { cpu: 16, memoryGb: 64 })).toEqual(policy);
+        expect(clampPolicyToEngine(policy, undefined)).toEqual(policy);
     });
 });

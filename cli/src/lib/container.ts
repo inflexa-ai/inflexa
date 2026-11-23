@@ -11,6 +11,7 @@ import { z } from "zod";
 
 import { env } from "./env.ts";
 import { messageOf } from "./cause.ts";
+import { runAfter } from "./timer.ts";
 
 /**
  * Ordered id list — single source of truth for the picker order, the
@@ -98,12 +99,39 @@ export class ContainerRuntimeError extends Error {}
 /** Captured result of a container command. */
 export type CaptureResult = { code: number; stdout: string; stderr: string };
 
-/** Run a container command and capture its stdout/stderr/exit code. */
-export async function capture(rt: ContainerRuntime, args: string[]): Promise<CaptureResult> {
+/**
+ * The deadline of a query of the engine, for example `info` or `image inspect`. Such a query answers in a second,
+ * but an engine that hangs, for example Docker Desktop after a sleep of the host, answers never.
+ */
+export const ENGINE_QUERY_TIMEOUT_MS = 30_000;
+
+/** The exit code of a command that {@link capture} stopped at its deadline. It is the code of `timeout(1)`. */
+export const CAPTURE_TIMEOUT_CODE = 124;
+
+/**
+ * Run a container command and capture its stdout/stderr/exit code. With `timeoutMs`, a command that has not ended
+ * at the deadline is killed and gives {@link CAPTURE_TIMEOUT_CODE}, thus each caller reads it as a failed command.
+ * A pull or a compose run takes as long as its bytes, thus only a query sets a deadline.
+ */
+export async function capture(rt: ContainerRuntime, args: string[], opts: { readonly timeoutMs?: number } = {}): Promise<CaptureResult> {
     const proc = Bun.spawn({ cmd: [rt.bin, ...args], stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-    const code = await proc.exited;
-    return { code, stdout, stderr };
+    const timeoutMs = opts.timeoutMs;
+    const deadline = { passed: false };
+    const stop =
+        timeoutMs === undefined
+            ? () => {}
+            : runAfter(timeoutMs, () => {
+                  deadline.passed = true;
+                  proc.kill("SIGKILL");
+              });
+    try {
+        const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+        const code = await proc.exited;
+        if (!deadline.passed) return { code, stdout, stderr };
+        return { code: CAPTURE_TIMEOUT_CODE, stdout, stderr: `${stderr}${rt.bin} ${args.join(" ")} did not end within ${String(timeoutMs)} ms.\n` };
+    } finally {
+        stop();
+    }
 }
 
 /**
@@ -177,9 +205,28 @@ export async function ensureReady(rt: ContainerRuntime): Promise<Result<void, Co
     if (!Bun.which(rt.bin)) return err(new ContainerRuntimeError(rt.notFoundHint));
     // `info` exits non-zero when the runtime is installed but not reachable. A socket that refuses this user
     // (EACCES) also exits non-zero, and a "start the daemon" hint then sends the person to a daemon that runs.
-    const { code, stderr } = await capture(rt, ["info"]);
+    const { code, stderr } = await capture(rt, ["info"], { timeoutMs: ENGINE_QUERY_TIMEOUT_MS });
     if (code !== 0) return err(new ContainerRuntimeError(stderr.toLowerCase().includes("permission denied") ? rt.deniedHint : rt.notReadyHint));
     return ok(undefined);
+}
+
+/** What the engine can give its containers: its cores, and its memory in whole GB. */
+export type EngineCapacity = { readonly cpu: number; readonly memoryGb: number };
+
+/**
+ * Read the cores and the memory of the engine. A podman machine or a Docker Desktop VM can be smaller than the host,
+ * and a container can never use more than its engine has. `undefined` when the engine gives no answer that parses:
+ * the caller then keeps the figures of the host.
+ */
+export async function engineCapacity(rt: ContainerRuntime, run: typeof capture = capture): Promise<EngineCapacity | undefined> {
+    const format = rt.id === "podman" ? "{{.Host.CPUs}},{{.Host.MemTotal}}" : "{{.NCPU}},{{.MemTotal}}";
+    const { code, stdout } = await run(rt, ["info", "--format", format], { timeoutMs: ENGINE_QUERY_TIMEOUT_MS });
+    if (code !== 0) return undefined;
+    const [cpu, memoryBytes] = stdout.trim().split(",").map(Number);
+    if (cpu === undefined || memoryBytes === undefined || !Number.isInteger(cpu) || cpu < 1 || !Number.isFinite(memoryBytes) || memoryBytes <= 0) {
+        return undefined;
+    }
+    return { cpu, memoryGb: Math.max(1, Math.floor(memoryBytes / 1024 ** 3)) };
 }
 
 /**
@@ -229,7 +276,14 @@ export type EngineSocketProbes = {
      * path for).
      */
     readonly exists: (path: string) => boolean;
+    /** The `DOCKER_HOST` that the user set. It wins over the current Docker context, as in the Docker CLI. */
+    readonly dockerHost: string | undefined;
 };
+
+/** The path of a `unix://` daemon address, or `undefined` for each other scheme (`tcp://`, `ssh://`, `npipe://`). */
+function unixSocketPath(address: string): string | undefined {
+    return address.startsWith("unix://") ? address.slice("unix://".length) : undefined;
+}
 
 /**
  * Resolve the Docker-API socket the embedded harness dials to create sandbox
@@ -237,9 +291,13 @@ export type EngineSocketProbes = {
  * divergence on the descriptor surface (the `mountArg` `:z` precedent) rather than
  * as a conditional in the harness composition root.
  *
- * - **Docker** resolves to `undefined` — no explicit socket, so the harness's
- *   dockerode client keeps its default resolution and any `DOCKER_HOST` the user
- *   already relies on.
+ * - **Docker** obeys the order of the Docker CLI: a `DOCKER_HOST` wins over the
+ *   current context. A `DOCKER_HOST` that is not a unix socket gives `undefined`
+ *   without a look at the context, because dockerode reads that `DOCKER_HOST`
+ *   itself. With no `DOCKER_HOST`, `docker context inspect` gives the endpoint of
+ *   the current context, which covers Docker Desktop, Colima, and rootless Docker.
+ *   The path counts only when it exists on disk. Each other case gives `undefined`,
+ *   and dockerode then dials `/var/run/docker.sock`.
  * - **Podman/macOS** resolves the running machine's host-forwarded compat socket
  *   (`podman machine inspect`), gated on that socket EXISTING on disk. Inspect
  *   reports the persisted socket path on a zero exit even for a stopped machine, so
@@ -262,11 +320,22 @@ export type EngineSocketProbes = {
  */
 export async function resolveEngineSocket(
     rt: ContainerRuntime,
-    probes: EngineSocketProbes = { platform: process.platform, capture, exists: existsSync },
+    probes: EngineSocketProbes = {
+        platform: process.platform,
+        capture: (runtime, args) => capture(runtime, args, { timeoutMs: ENGINE_QUERY_TIMEOUT_MS }),
+        exists: existsSync,
+        dockerHost: env.dockerHost,
+    },
 ): Promise<Result<string | undefined, ContainerRuntimeError>> {
     switch (rt.id) {
-        case "docker":
-            return ok(undefined);
+        case "docker": {
+            const fromHost = probes.dockerHost === undefined || probes.dockerHost === "" ? null : unixSocketPath(probes.dockerHost);
+            if (fromHost !== null) return ok(fromHost !== undefined && probes.exists(fromHost) ? fromHost : undefined);
+            const { code, stdout } = await probes.capture(rt, ["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"]);
+            if (code !== 0) return ok(undefined);
+            const socket = unixSocketPath(stdout.trim());
+            return ok(socket !== undefined && probes.exists(socket) ? socket : undefined);
+        }
         case "podman": {
             if (probes.platform === "darwin") {
                 const { code, stdout } = await probes.capture(rt, ["machine", "inspect", "--format", "{{.ConnectionInfo.PodmanSocket.Path}}"]);
@@ -305,48 +374,13 @@ export async function resolveEngineSocket(
     }
 }
 
-/** The {@link EngineSocketProbes}, plus the `DOCKER_HOST` that the user set. */
-export type EngineApiSocketProbes = EngineSocketProbes & { readonly dockerHost: string | undefined };
-
-/** The path of a `unix://` daemon address, or `undefined` for each other scheme (`tcp://`, `ssh://`, `npipe://`). */
-function unixSocketPath(address: string): string | undefined {
-    return address.startsWith("unix://") ? address.slice("unix://".length) : undefined;
-}
-
 /**
- * Resolve the Docker-API socket that the image pull dials for its byte progress, or `undefined` when the pull
- * must go through the CLI. Only the pull reads this: the harness keeps {@link resolveEngineSocket}, which leaves
- * the Docker resolution of dockerode as it is.
- *
- * - **Docker** obeys the order of the Docker CLI: a `DOCKER_HOST` wins over the current context. A
- *   `DOCKER_HOST` that is not a unix socket gives `undefined` without a look at the context, because the CLI
- *   does not use the context either. With no `DOCKER_HOST`, `docker context inspect` gives the endpoint of the
- *   current context, which covers Docker Desktop, colima, and `/var/run/docker.sock`. The path counts only
- *   when it exists on disk.
- * - **Podman** gives the socket of {@link resolveEngineSocket}, and `undefined` when the engine is not ready.
- *
- * It never fails: a socket that is absent costs only the byte readout.
+ * The socket of {@link resolveEngineSocket} for the image pull, which dials it for its byte progress, or
+ * `undefined` when the pull must go through the CLI. It never fails: a socket that is absent costs only the byte
+ * readout.
  */
-export async function resolveEngineApiSocket(
-    rt: ContainerRuntime,
-    probes: EngineApiSocketProbes = { platform: process.platform, capture, exists: existsSync, dockerHost: env.dockerHost },
-): Promise<string | undefined> {
-    switch (rt.id) {
-        case "docker": {
-            const fromHost = probes.dockerHost === undefined || probes.dockerHost === "" ? null : unixSocketPath(probes.dockerHost);
-            if (fromHost !== null) return fromHost !== undefined && probes.exists(fromHost) ? fromHost : undefined;
-            const { code, stdout } = await probes.capture(rt, ["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"]);
-            if (code !== 0) return undefined;
-            const socket = unixSocketPath(stdout.trim());
-            return socket !== undefined && probes.exists(socket) ? socket : undefined;
-        }
-        case "podman":
-            return (await resolveEngineSocket(rt, probes)).unwrapOr(undefined);
-        default: {
-            const exhaustive: never = rt.id;
-            throw new Error(`unhandled runtime: ${JSON.stringify(exhaustive)}`);
-        }
-    }
+export async function resolveEngineApiSocket(rt: ContainerRuntime, probes?: EngineSocketProbes): Promise<string | undefined> {
+    return (await resolveEngineSocket(rt, probes)).unwrapOr(undefined);
 }
 
 /** The docker-API architecture name of this host, for the manifest-index pick. */

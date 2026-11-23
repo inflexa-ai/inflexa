@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { err, ok, type Result } from "neverthrow";
 
 import {
+    CAPTURE_TIMEOUT_CODE,
+    capture,
     ContainerRuntimeError,
+    engineCapacity,
     ensureReady,
     firstReadyRuntime,
     pullImageThroughEngine,
@@ -73,12 +76,26 @@ describe("resolveEngineSocket", () => {
         };
     }
 
-    test("docker resolves to no socket and never spawns a probe", async () => {
+    test("docker gives the socket of the current context to the sandbox client, thus Colima and rootless Docker work", async () => {
+        const spawned: string[][] = [];
+        const result = await resolveEngineSocket(runtimes.docker, {
+            platform: "darwin",
+            capture: captureReturning({ code: 0, stdout: "unix:///Users/ana/.colima/default/docker.sock\n", stderr: "" }, spawned),
+            exists: () => true,
+            dockerHost: undefined,
+        });
+
+        expect(result._unsafeUnwrap()).toBe("/Users/ana/.colima/default/docker.sock");
+        expect(spawned).toEqual([["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"]]);
+    });
+
+    test("docker with a DOCKER_HOST that is not a unix socket gives no socket, thus dockerode reads the DOCKER_HOST", async () => {
         const spawned: string[][] = [];
         const result = await resolveEngineSocket(runtimes.docker, {
             platform: "linux",
-            capture: captureReturning({ code: 0, stdout: "irrelevant", stderr: "" }, spawned),
+            capture: captureReturning({ code: 0, stdout: "unix:///var/run/docker.sock\n", stderr: "" }, spawned),
             exists: () => true,
+            dockerHost: "tcp://10.0.0.2:2375",
         });
 
         expect(result._unsafeUnwrap()).toBeUndefined();
@@ -92,6 +109,7 @@ describe("resolveEngineSocket", () => {
             capture: captureReturning({ code: 0, stdout: "/var/folders/xy/podman-machine-default-api.sock\n", stderr: "" }, spawned),
             // A running machine's gvproxy forward is live, so the reported socket exists on disk.
             exists: () => true,
+            dockerHost: undefined,
         });
 
         expect(result._unsafeUnwrap()).toBe("/var/folders/xy/podman-machine-default-api.sock");
@@ -103,6 +121,7 @@ describe("resolveEngineSocket", () => {
             platform: "darwin",
             capture: captureReturning({ code: 125, stdout: "", stderr: "VM does not exist" }),
             exists: () => true,
+            dockerHost: undefined,
         });
 
         expect(result._unsafeUnwrapErr().message).toContain("podman machine start");
@@ -115,6 +134,7 @@ describe("resolveEngineSocket", () => {
             // machine is stopped; the gvproxy forward is torn down, so the file is absent.
             capture: captureReturning({ code: 0, stdout: "/var/folders/xy/podman-machine-default-api.sock\n", stderr: "" }),
             exists: () => false,
+            dockerHost: undefined,
         });
 
         expect(result._unsafeUnwrapErr().message).toContain("podman machine start");
@@ -125,6 +145,7 @@ describe("resolveEngineSocket", () => {
             platform: "darwin",
             capture: captureReturning({ code: 0, stdout: "   \n", stderr: "" }),
             exists: () => true,
+            dockerHost: undefined,
         });
 
         expect(result._unsafeUnwrapErr().message).toContain("podman machine start");
@@ -140,6 +161,7 @@ describe("resolveEngineSocket", () => {
                 stated.push(p);
                 return true;
             },
+            dockerHost: undefined,
         });
 
         expect(result._unsafeUnwrap()).toBe("/run/user/1000/podman/podman.sock");
@@ -154,6 +176,7 @@ describe("resolveEngineSocket", () => {
             capture: captureReturning({ code: 0, stdout: "/run/user/1000/podman/podman.sock\n", stderr: "" }),
             // A reachable CLI reported a path, but nothing is listening on it.
             exists: () => false,
+            dockerHost: undefined,
         });
 
         expect(result._unsafeUnwrapErr().message).toContain("systemctl --user enable --now podman.socket");
@@ -164,6 +187,7 @@ describe("resolveEngineSocket", () => {
             platform: "linux",
             capture: captureReturning({ code: 1, stdout: "", stderr: "Cannot connect to Podman" }),
             exists: () => true,
+            dockerHost: undefined,
         });
 
         expect(result._unsafeUnwrapErr().message).toContain("systemctl --user enable --now podman.socket");
@@ -432,5 +456,48 @@ describe("resolveImageTotalBytes", () => {
 
         expect(await resolveImageTotalBytes(rt, "postgres:16")).toBe(15);
         expect(calls()).toEqual(["manifest inspect postgres:16"]);
+    });
+});
+
+describe("capture with a deadline", () => {
+    test("kills a command that does not end at the deadline, and gives the timeout code", async () => {
+        const hung: ContainerRuntime = { ...runtimes.docker, bin: "sleep" };
+        const started = Date.now();
+
+        const result = await capture(hung, ["30"], { timeoutMs: 100 });
+
+        expect(result.code).toBe(CAPTURE_TIMEOUT_CODE);
+        expect(result.stderr).toContain("did not end within 100 ms");
+        expect(Date.now() - started).toBeLessThan(5_000);
+    });
+});
+
+describe("engineCapacity", () => {
+    function answering(result: CaptureResult, seen: string[][] = []): typeof capture {
+        return (_rt, args) => {
+            seen.push(args);
+            return Promise.resolve(result);
+        };
+    }
+
+    test("reads the cores and the memory of a Docker engine in whole GB", async () => {
+        const seen: string[][] = [];
+        const capacity = await engineCapacity(runtimes.docker, answering({ code: 0, stdout: "4,8233451520\n", stderr: "" }, seen));
+
+        expect(capacity).toEqual({ cpu: 4, memoryGb: 7 });
+        expect(seen).toEqual([["info", "--format", "{{.NCPU}},{{.MemTotal}}"]]);
+    });
+
+    test("reads the host of a podman machine, and gives at least 1 GB", async () => {
+        const seen: string[][] = [];
+        const capacity = await engineCapacity(runtimes.podman, answering({ code: 0, stdout: "2,1023410176\n", stderr: "" }, seen));
+
+        expect(capacity).toEqual({ cpu: 2, memoryGb: 1 });
+        expect(seen).toEqual([["info", "--format", "{{.Host.CPUs}},{{.Host.MemTotal}}"]]);
+    });
+
+    test("gives no capacity for a failed or an unreadable answer", async () => {
+        expect(await engineCapacity(runtimes.docker, answering({ code: 1, stdout: "", stderr: "daemon down" }))).toBeUndefined();
+        expect(await engineCapacity(runtimes.docker, answering({ code: 0, stdout: "<no value>\n", stderr: "" }))).toBeUndefined();
     });
 });

@@ -124,6 +124,20 @@ function resolvePolicy(cfg: z.infer<typeof harnessConfigSchema> | undefined): Re
     };
 }
 
+/**
+ * Clamp a resource policy to the capacity of the container engine. The budget comes from the host, but a podman
+ * machine or a Docker Desktop VM can be smaller, and a sandbox can never use more than its engine has. A budget
+ * above the engine would admit a sandbox that the engine kills for its memory. No capacity keeps the policy.
+ */
+export function clampPolicyToEngine(policy: ResourcePolicy, capacity: { readonly cpu: number; readonly memoryGb: number } | undefined): ResourcePolicy {
+    if (capacity === undefined) return policy;
+    const budget = { cpu: Math.min(policy.budget.cpu, capacity.cpu), memoryGb: Math.min(policy.budget.memoryGb, capacity.memoryGb) };
+    return {
+        perStep: { ...policy.perStep, maxCpu: Math.min(policy.perStep.maxCpu, budget.cpu), maxMemoryGb: Math.min(policy.perStep.maxMemoryGb, budget.memoryGb) },
+        budget,
+    };
+}
+
 /** All-defaults resolved config, used when the `harness` key is absent or when it failed validation. */
 function defaultsWith(cfg: z.infer<typeof harnessConfigSchema> | undefined, configError?: { issues: string }): ResolvedHarnessConfig {
     const resourcePolicy = resolvePolicy(cfg);

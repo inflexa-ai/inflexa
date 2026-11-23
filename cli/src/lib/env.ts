@@ -529,7 +529,7 @@ export const env = Object.freeze({
      */
     contentHash: process.env.INFLEXA_CONTENT_HASH,
     /**
-     * The Docker daemon address that the user set, for the engine-API image pull (`resolveEngineApiSocket` of
+     * The Docker daemon address that the user set, for the sandbox client and the engine-API image pull (`resolveEngineSocket` of
      * lib/container.ts). It is a variable of Docker, not of Inflexa, thus it is not in envDoc/--help.
      */
     dockerHost: process.env.DOCKER_HOST,
