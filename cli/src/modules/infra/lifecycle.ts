@@ -3,7 +3,7 @@ import { rmSync } from "node:fs";
 import { ensureRuntime, resolveConnectionMode, resolvePostgresConfig } from "../../lib/config.ts";
 import { env } from "../../lib/env.ts";
 import { promptText } from "../../lib/cli.ts";
-import { composeDown, composeAvailable, postgresDataLocation, removePostgresVolume } from "./compose.ts";
+import { composeDown, composeAvailable, composeMissingMessage, postgresDataLocation, removePostgresVolume } from "./compose.ts";
 import { ensureProxyReady } from "./setup.ts";
 
 // `inflexa up` / `inflexa down` — explicit lifecycle commands for the infra
@@ -24,7 +24,7 @@ export async function up(): Promise<boolean> {
     const rt = rtResult.value;
 
     if (!(await composeAvailable(rt))) {
-        console.error(`\n  ${rt.label} Compose is not available.\n  Install it (https://docs.docker.com/compose/install/) and re-run.\n`);
+        console.error(`\n  ${composeMissingMessage(rt)}\n`);
         return false;
     }
 

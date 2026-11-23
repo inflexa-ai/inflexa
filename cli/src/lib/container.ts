@@ -38,6 +38,8 @@ export type ContainerRuntime = {
     notFoundHint: string;
     /** Actionable message when the runtime is installed but not usable. */
     notReadyHint: string;
+    /** Actionable message when the runtime refuses this user access to its socket ("permission denied"). */
+    deniedHint: string;
     /**
      * Build a `-v` bind-mount argument. Podman appends `:z` (shared SELinux
      * relabel) because the proxy and the one-shot login container mount the same
@@ -57,6 +59,9 @@ export const runtimes: Record<ContainerRuntimeId, ContainerRuntime> = {
         label: "Docker",
         notFoundHint: "Docker is required but was not found.\n  Install Docker Desktop (https://docs.docker.com/get-docker/) and re-run `inflexa setup`.",
         notReadyHint: "Docker is installed but the daemon isn't running.\n  Start Docker (Docker Desktop, or `sudo systemctl start docker`) and re-run.",
+        deniedHint:
+            "Docker runs, but this user may not use its socket (permission denied).\n" +
+            "  Add the user to the `docker` group (`sudo usermod -aG docker $USER`), then sign out and in again, and re-run.",
         mountArg(host: string, ctr: string): string {
             return `${host}:${ctr}`;
         },
@@ -71,6 +76,8 @@ export const runtimes: Record<ContainerRuntimeId, ContainerRuntime> = {
         notFoundHint: "Podman is required but was not found.\n  Install Podman (https://podman.io/docs/installation) and re-run `inflexa setup`.",
         notReadyHint:
             "Podman is installed but not ready.\n  On macOS, start the Podman machine (`podman machine start`); on Linux, ensure rootless Podman is configured, then re-run.",
+        deniedHint:
+            "Podman refused this user access to its socket (permission denied).\n  Run Podman rootless as this user, or ask the administrator for access to the socket, then re-run.",
         mountArg(host: string, ctr: string): string {
             return `${host}:${ctr}:z`;
         },
@@ -163,14 +170,15 @@ export async function inherit(rt: ContainerRuntime, args: string[]): Promise<num
 /**
  * Verify the runtime is installed and usable before issuing commands. Returns
  * a {@link ContainerRuntimeError} on the error channel with runtime-specific
- * guidance: `notFoundHint` when the binary is absent, `notReadyHint` when
- * `info` fails (daemon down / Podman machine not started).
+ * guidance: `notFoundHint` when the binary is absent, `deniedHint` when `info` fails with "permission denied"
+ * on the socket, and `notReadyHint` when `info` fails otherwise (daemon down / Podman machine not started).
  */
 export async function ensureReady(rt: ContainerRuntime): Promise<Result<void, ContainerRuntimeError>> {
     if (!Bun.which(rt.bin)) return err(new ContainerRuntimeError(rt.notFoundHint));
-    // `info` exits non-zero when the runtime is installed but not reachable.
-    const { code } = await capture(rt, ["info"]);
-    if (code !== 0) return err(new ContainerRuntimeError(rt.notReadyHint));
+    // `info` exits non-zero when the runtime is installed but not reachable. A socket that refuses this user
+    // (EACCES) also exits non-zero, and a "start the daemon" hint then sends the person to a daemon that runs.
+    const { code, stderr } = await capture(rt, ["info"]);
+    if (code !== 0) return err(new ContainerRuntimeError(stderr.toLowerCase().includes("permission denied") ? rt.deniedHint : rt.notReadyHint));
     return ok(undefined);
 }
 

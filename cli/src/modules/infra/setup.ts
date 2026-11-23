@@ -69,6 +69,7 @@ import {
     composePull,
     composePullIfMissing,
     composeAvailable,
+    composeMissingMessage,
     composeProxyRunning,
     composeRestartProxy,
     PROXY_IMAGE,
@@ -650,7 +651,7 @@ export async function setup(options: SetupOptions): Promise<void> {
             pgConn = resolvedPostgres.value;
 
             if (!(await composeAvailable(rt))) {
-                log.error(`${rt.label} Compose is not available.\n  Install it: https://docs.docker.com/compose/install/`);
+                log.error(composeMissingMessage(rt));
                 process.exitCode = 1;
                 return;
             }

@@ -11,6 +11,7 @@ import {
     SEARXNG_IMAGE,
     POSTGRES_VOLUME_NAME,
     PROXY_CONTAINER_NAME,
+    composeMissingMessage,
     ensureMountSources,
     generateComposeFile,
     mountManifest,
@@ -725,5 +726,24 @@ describe("composePullIfMissing", () => {
         });
 
         expect(run.logs).toEqual(["  Pulling container images (this may take a moment)…", "  The pull of the container images failed."]);
+    });
+});
+
+describe("composeMissingMessage", () => {
+    test("Docker names the Compose v2 plugin package", () => {
+        const message = composeMissingMessage(container.runtimes.docker, () => null);
+        expect(message).toContain("`docker compose`");
+        expect(message).toContain("docker-compose-plugin");
+        expect(message).toContain("docker-compose-v2");
+        expect(message).not.toContain("v1 command");
+    });
+
+    test("a docker-compose v1 on the PATH is named, and the message still asks for v2", () => {
+        const message = composeMissingMessage(container.runtimes.docker, (bin) => (bin === "docker-compose" ? "/usr/bin/docker-compose" : null));
+        expect(message).toContain("The `docker-compose` v1 command is on the PATH, but Inflexa needs Compose v2.");
+    });
+
+    test("Podman names podman-compose", () => {
+        expect(composeMissingMessage(container.runtimes.podman, () => null)).toContain("podman-compose");
     });
 });
