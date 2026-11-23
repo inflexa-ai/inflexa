@@ -48,9 +48,10 @@ export type Workspace = {
     /**
      * Read the open analysis and its project, anchor, and input count again: after an input change of this
      * client, at the end of a turn, whose agent can change the inputs, and at each tick of the poll, which
-     * shows a rename or an input change of a different client. The server pushes nothing.
+     * shows a rename or an input change of a different client. The server pushes nothing. It settles when the
+     * read lands or fails, thus the poll can hold its in-flight guard over it.
      */
-    refreshScope: () => void;
+    refreshScope: () => Promise<void>;
     /** Quit the app cleanly (restore the terminal, then exit). */
     quit: () => Promise<void>;
 };
@@ -114,15 +115,14 @@ export function createWorkspace(init: WorkspaceInit, opts: WorkspaceOpts = DEFAU
     // `reconcile` writes only the fields that changed, and keeps each object. The poll reads the scope at
     // each tick, and a new `analysis` object would run again each effect keyed on `workspace.analysis`,
     // for example the transcript load and the profile drive.
-    const refreshScope = (analysisId: string, touch: boolean): void => {
-        void opts.fetchDetail(analysisId, touch).then((detail) => {
+    const refreshScope = (analysisId: string, touch: boolean): Promise<void> =>
+        opts.fetchDetail(analysisId, touch).then((detail) => {
             if (detail === null || store.analysis?.id !== analysisId) return;
             setStore("analysis", reconcile(toAnalysis(detail)));
             setStore("project", reconcile(detail.project));
             setStore("anchor", reconcile(detail.anchor));
             setStore("inputCount", detail.inputCount);
         });
-    };
     const [store, setStore] = createStore<Workspace>({
         analysis: init.analysis,
         sessionId: init.sessionId,
@@ -145,15 +145,15 @@ export function createWorkspace(init: WorkspaceInit, opts: WorkspaceOpts = DEFAU
             if (prev?.id === analysis.id) setStore({ analysis, sessionId: threadId, workingDir });
             else setStore({ analysis, sessionId: threadId, workingDir, project: null, anchor: null, inputCount: null });
             // Read again for the same analysis too: a set-project or a rename swaps in place.
-            refreshScope(analysis.id, true);
+            void refreshScope(analysis.id, true);
         },
-        refreshScope() {
-            const a = store.analysis;
-            if (a !== null) refreshScope(a.id, false);
+        refreshScope(): Promise<void> {
+            const a: Analysis | null = store.analysis;
+            return a === null ? Promise.resolve() : refreshScope(a.id, false);
         },
     });
     // The launch opened the analysis before the screen, thus this first read is not an open.
-    if (init.analysis !== null) refreshScope(init.analysis.id, false);
+    if (init.analysis !== null) void refreshScope(init.analysis.id, false);
     return store;
 }
 

@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runCliAsync } from "../../../test_support/cli.ts";
+import { captureConsole } from "../../../test_support/console_capture.ts";
 import { freshDb } from "../../../test_support/db.ts";
+import { replaceProperty } from "../../../test_support/replace_property.ts";
 import { startTestServer, type TestServer } from "../../../test_support/server.ts";
 import { createAnalysis, fetchAnalyses } from "../../analyses.ts";
 import { createProject } from "../../projects.ts";
-import { resolveResumeTarget } from "../analyses.ts";
+import { resolveDefaultTarget, resolveNewTarget, resolveResumeTarget } from "../analyses.ts";
 
 // The analysis commands are clients of the local server. Each case seeds through the routes of a test
 // server in this process, then drives a command: in this process for a resolver that returns a value, and
@@ -62,6 +64,43 @@ describe("resolveResumeTarget", () => {
         await resolveResumeTarget(a.id, server.clientOpts);
         expect((await fetchAnalyses({ page: 0, perPage: 10 }, server.clientOpts))._unsafeUnwrap().total).toBe(1);
     });
+});
+
+// In this process: the bare launch and `inflexa new` take over the terminal, thus a child with no TTY stops
+// before them. `fail` ends the process, so the exit throws here and the test reads what was printed.
+describe("a new analysis in a folder that is not writable", () => {
+    class Exited extends Error {}
+    let readOnly = "";
+
+    beforeEach(() => {
+        readOnly = tmp();
+        chmodSync(readOnly, 0o555);
+        replaceProperty(process, "cwd", () => readOnly);
+        replaceProperty(process, "exit", (() => {
+            throw new Exited();
+        }) satisfies () => never);
+    });
+
+    afterEach(() => {
+        chmodSync(readOnly, 0o755);
+    });
+
+    const refusal = (dir: string): string => `${dir} is not writable, so an analysis cannot start there. Start Inflexa from a writable folder.`;
+
+    test("bare `inflexa` says so before it offers to start an analysis", async () => {
+        const printed = await captureConsole(async () => {
+            await expect(resolveDefaultTarget({}, server.clientOpts)).rejects.toBeInstanceOf(Exited);
+        });
+        expect(printed.stderr).toContain(refusal(readOnly));
+        expect(printed.stdout).toContain(`context: empty — ${readOnly}`);
+    }, 2_000);
+
+    test("`inflexa new` says so before it asks for a name", async () => {
+        const printed = await captureConsole(async () => {
+            await expect(resolveNewTarget({ paths: [] }, server.clientOpts)).rejects.toBeInstanceOf(Exited);
+        });
+        expect(printed.stderr).toContain(refusal(readOnly));
+    }, 2_000);
 });
 
 describe("inflexa inputs (e2e)", () => {

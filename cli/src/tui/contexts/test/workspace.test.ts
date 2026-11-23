@@ -82,7 +82,7 @@ describe("openSession — analysis swap", () => {
         const ws = createWorkspace(initFor(A), t.opts);
         await t.settle("a1", detail(VIEW_A, null, 1));
 
-        ws.refreshScope();
+        void ws.refreshScope();
         await t.settle("a1", detail(VIEW_A, null, 2));
 
         expect(t.reads).toEqual(["a1", "a1"]);
@@ -93,7 +93,7 @@ describe("openSession — analysis swap", () => {
         // The poll reads the scope at each tick, and a sighting is a write of the anchor row.
         const t = makeOpts();
         const ws = createWorkspace(initFor(A), t.opts);
-        ws.refreshScope();
+        void ws.refreshScope();
         ws.openSession("s2", "/dir2", B);
 
         expect(t.reads).toEqual(["a1", "a1", "b1"]);
@@ -105,7 +105,7 @@ describe("openSession — analysis swap", () => {
         const ws = createWorkspace(initFor(A), t.opts);
         await t.settle("a1", detail(VIEW_A, null, 1));
 
-        ws.refreshScope();
+        void ws.refreshScope();
         await t.settle("a1", detail({ ...VIEW_A, name: "Alpha renamed", slug: "alpha-renamed", updatedAt: "2026-10-03T00:00:00.000Z" }, null, 1));
 
         expect(ws.analysis?.name).toBe(asStr256("Alpha renamed"));
@@ -118,7 +118,7 @@ describe("openSession — analysis swap", () => {
         await t.settle("a1", detail(VIEW_A, null, 1));
         const before = ws.analysis;
 
-        ws.refreshScope();
+        void ws.refreshScope();
         await t.settle("a1", detail({ ...VIEW_A, name: "Alpha renamed" }, null, 1));
 
         expect(ws.analysis?.name).toBe(asStr256("Alpha renamed"));

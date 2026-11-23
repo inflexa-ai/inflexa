@@ -1,15 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
 import type { AnalysisInput } from "../../../types/analysis.ts";
 import { getAnchor } from "../../../db/primary_query.ts";
-import { deleteAnchor } from "../../../db/primary_mutation.ts";
+import { deleteAnchor, insertAnchor } from "../../../db/primary_mutation.ts";
 import { expandAndResolve } from "../../../lib/paths.ts";
 import { classifyInputPath, matchInputRefs } from "../input.ts";
 import { canonicalPathAsync } from "../../../lib/paths.ts";
-import { writeMarker } from "../../anchor/marker.ts";
+import { markerPath, writeMarker } from "../../anchor/marker.ts";
 
 const created: string[] = [];
 
@@ -57,6 +57,28 @@ describe("classifyInputPath", () => {
         // the insert of the ref no longer trips the anchor foreign key.
         expect(ref.anchorId).toBe("GHOST-ANCHOR");
         expect(getAnchor("GHOST-ANCHOR")._unsafeUnwrap()?.cachedPath).toBe(await canonicalPathAsync(dir));
+    });
+
+    test("a corrupt marker in a parent folder reads as no marker, and the add goes on", async () => {
+        const dir = tmp();
+        mkdirSync(join(dir, ".inflexa"));
+        writeFileSync(markerPath(dir), "{ trunc");
+        mkdirSync(join(dir, "src"));
+        const ref = (await classifyInputPath("ana1", "src", dir))._unsafeUnwrap();
+        expect(ref).toEqual({ path: await canonicalPathAsync(join(dir, "src")), isDir: true, analysisId: "ana1", anchorId: null });
+    });
+
+    test("inside a copy of a tracked folder → an absolute ref, and the anchor stays at the original", async () => {
+        const original = await canonicalPathAsync(tmp());
+        const copy = tmp();
+        (await writeMarker(original, "A1"))._unsafeUnwrap();
+        (await writeMarker(copy, "A1"))._unsafeUnwrap();
+        insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: original, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        mkdirSync(join(copy, "src"));
+
+        const ref = (await classifyInputPath("ana1", "src", copy))._unsafeUnwrap();
+        expect(ref).toEqual({ path: await canonicalPathAsync(join(copy, "src")), isDir: true, analysisId: "ana1", anchorId: null });
+        expect(getAnchor("A1")._unsafeUnwrap()?.cachedPath).toBe(original);
     });
 
     test("not under any anchor → an absolute ref with no anchor", async () => {

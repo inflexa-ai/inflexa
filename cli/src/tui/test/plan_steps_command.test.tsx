@@ -50,7 +50,7 @@ describe("plan.explore-steps", () => {
             openDialog: (render) => opened.push(render),
             closeDialog: () => closeCount++,
             openSession: () => {},
-            refreshScope: () => {},
+            refreshScope: () => Promise.resolve(),
             quit: async () => {},
         };
         const command = commands.find((candidate) => candidate.id === "plan.explore-steps");

@@ -1865,7 +1865,7 @@ function AddInputDialog(props: { inputs: InputView[] }): JSX.Element {
                         (change) => {
                             if (change.added.length === 0 && change.removed.length === 0) notify({ kind: "info", text: "Inputs unchanged" });
                             else notify({ kind: "info", text: `Inputs updated: +${change.added.length} -${change.removed.length}` });
-                            ws.refreshScope();
+                            void ws.refreshScope();
                             // The server re-profiles the new set, and the read arms the poll of the sidebar until the row shows it.
                             void refreshSidebarData(a.id);
                         },
@@ -1959,7 +1959,7 @@ function RemoveInputsDialog(props: { inputs: InputView[]; client: ClientOpts }):
                     (change) => {
                         const removed = change.removed.length;
                         notify({ kind: "info", text: `Removed ${removed} input${removed === 1 ? "" : "s"}` });
-                        ws.refreshScope();
+                        void ws.refreshScope();
                         void refreshSidebarData(a.id);
                     },
                     (e) => notify({ kind: "error", text: `Input removal failed (${clientErrorText(e)})` }),

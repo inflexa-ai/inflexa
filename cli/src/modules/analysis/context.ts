@@ -15,7 +15,7 @@ export type ResolvedContext =
     | { kind: "analysis"; analysis: Analysis; anchorPath: string } // a single clear target
     | { kind: "anchor"; anchorPath: string; analyses: Analysis[] } // a folder with 0+ analyses → pick/new
     | { kind: "pick"; analyses: Analysis[] } // ambiguous → interactive picker
-    | { kind: "copy"; cwd: string; marker: AnchorMarker } // folder is a copy → command prompts re-mint vs fork
+    | { kind: "copy"; cwd: string; dir: string; original: string; marker: AnchorMarker } // `dir` is a copy of `original` → the command offers a new identity
     | { kind: "empty"; cwd: string }; // nothing here → offer to start one
 
 /** Flags that override cwd-based resolution; each is an id-or-name reference. */
@@ -64,29 +64,27 @@ export function resolveContext(cwd: string, flags: ContextFlags, opts?: ContextO
     }
 
     // 2. The folder (or an ancestor) is an anchor.
-    return findMarkerUpwards(cwd)
-        .mapErr((cause): DbError => ({ type: "query_failed", op: "resolveContext:marker", cause }))
-        .andThen((found): ResultAsync<ResolvedContext, DbError> => {
-            if (!found) return okAsync({ kind: "empty", cwd }); // 3. Nothing here.
+    return findMarkerUpwards(cwd).andThen((found): ResultAsync<ResolvedContext, DbError> => {
+        if (!found) return okAsync({ kind: "empty", cwd }); // 3. Nothing here.
 
-            const marker = found.marker;
-            return classifyMarkerSighting(found.dir, marker).andThen((sighting): ResultAsync<ResolvedContext, DbError> => {
-                // Copy guard: never auto-resolve a copied folder — let the command prompt.
-                if (sighting === "copy") return okAsync({ kind: "copy", cwd, marker });
-                // A marker on disk whose anchor row the DB no longer has (e.g. the user deleted the DB) is a
-                // routine desync, not an error: fall back to the marker's own directory for the anchor path and
-                // carry on — listAnalysesForAnchorAt returns nothing, so this resolves to an empty anchor the
-                // user can start an analysis in (which re-establishes the row from the marker).
-                return resolveAnchor(marker.anchorId, { searchRoots: [cwd], ...opts }).andThen((resolved) => {
-                    const anchorPath = resolvedPathOrCached(resolved) ?? found.dir;
-                    return listAnalysesForAnchorAt(cwd).map((analyses): ResolvedContext => {
-                        const [only] = analyses;
-                        if (analyses.length === 1 && only) return { kind: "analysis", analysis: only, anchorPath };
-                        return { kind: "anchor", anchorPath, analyses };
-                    });
+        const marker = found.marker;
+        return classifyMarkerSighting(found.dir, marker).andThen((sighting): ResultAsync<ResolvedContext, DbError> => {
+            // Copy guard: never auto-resolve a copied folder — let the command prompt.
+            if (sighting.kind === "copy") return okAsync({ kind: "copy", cwd, dir: found.dir, original: sighting.original, marker });
+            // A marker on disk whose anchor row the DB no longer has (e.g. the user deleted the DB) is a
+            // routine desync, not an error: fall back to the marker's own directory for the anchor path and
+            // carry on — listAnalysesForAnchorAt returns nothing, so this resolves to an empty anchor the
+            // user can start an analysis in (which re-establishes the row from the marker).
+            return resolveAnchor(marker.anchorId, { searchRoots: [cwd], ...opts }).andThen((resolved) => {
+                const anchorPath = resolvedPathOrCached(resolved) ?? found.dir;
+                return listAnalysesForAnchorAt(cwd).map((analyses): ResolvedContext => {
+                    const [only] = analyses;
+                    if (analyses.length === 1 && only) return { kind: "analysis", analysis: only, anchorPath };
+                    return { kind: "anchor", anchorPath, analyses };
                 });
             });
         });
+    });
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -103,7 +101,7 @@ export function describeContext(ctx: ResolvedContext): string {
         case "pick":
             return `context: pick (${plural(ctx.analyses.length, "candidate", "candidates")})`;
         case "copy":
-            return `context: copied folder ${ctx.cwd} — re-mint or fork before use`;
+            return `context: ${ctx.dir} is a copy of ${ctx.original} — give it a new identity before use`;
         case "empty":
             return `context: empty — ${ctx.cwd} (no analysis here; start one?)`;
     }
@@ -140,7 +138,7 @@ export async function resolveSingleAnalysis(flags: ContextFlags, emptyHint: stri
             fail(emptyHint);
             break;
         case "copy":
-            fail("This folder is a copied anchor — run `inflexa repair` or `inflexa relocate` first.");
+            fail(`${ctx.dir} is a copy of ${ctx.original}. Run \`inflexa\` there to give the copy a new identity first.`);
             break;
         default: {
             const exhaustive: never = ctx;

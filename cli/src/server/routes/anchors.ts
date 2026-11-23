@@ -3,7 +3,14 @@ import { errAsync } from "neverthrow";
 import { z } from "zod";
 
 import { describeBusyReason, type BusyReason } from "../../api/analyses.ts";
-import type { DeadAnchorView, PruneAnchorsResponse, RelocateAnchorResponse, RepairAnchorResponse, SkippedAnchorView } from "../../api/anchors.ts";
+import type {
+    DeadAnchorView,
+    NewIdentityResponse,
+    PruneAnchorsResponse,
+    RelocateAnchorResponse,
+    RepairAnchorResponse,
+    SkippedAnchorView,
+} from "../../api/anchors.ts";
 import { getLogger } from "../../lib/log.ts";
 import {
     analysesOfAnchors,
@@ -14,6 +21,7 @@ import {
     repairAnchorAt,
     type PurgeAnalysisFn,
 } from "../../modules/anchor/backstop.ts";
+import { giveCopyNewIdentity } from "../../modules/anchor/anchor.ts";
 import { analysisPurgeFor } from "../../modules/harness/purge.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import type { ServerBoot } from "../boot.ts";
@@ -41,6 +49,8 @@ export const DEFAULT_ANCHOR_ROUTE_OPTS: AnchorRouteOpts = {
 };
 
 const repairBody = z.object({ path: absolutePath });
+
+const newIdentityBody = z.object({ path: absolutePath });
 
 const relocateBody = z.union([
     z.object({ fromPath: absolutePath, toPath: absolutePath, dryRun: z.boolean().optional() }),
@@ -70,11 +80,41 @@ export function anchorRoutes<R>(boot: ServerBoot<R>, opts: AnchorRouteOpts<R>): 
                         return apiError(c, "not_found", `Marker ${e.anchorId} has no anchor row; cannot repair.`);
                     case "marker_unreadable":
                         return apiError(c, "conflict", `Could not read the marker at ${e.dir} (corrupt?).`);
+                    case "folder_is_copy":
+                        return apiError(
+                            c,
+                            "conflict",
+                            `${e.dir} is a copy of ${e.original}, which still holds the same marker. A repair would take the identity of the original. Run \`inflexa\` in ${e.dir} to give the copy a new identity.`,
+                        );
                     case "db_failed":
                         return internalError(c, e.cause, "repair the anchor");
                     default: {
                         const exhaustive: never = e;
                         throw new Error(`unhandled repair error: ${JSON.stringify(exhaustive)}`);
+                    }
+                }
+            },
+        );
+    });
+
+    routes.post("/new-identity", async (c) => {
+        const body = await readBody(c, newIdentityBody);
+        if (body.isErr()) return body.error;
+        return giveCopyNewIdentity(body.value.path).match(
+            (outcome) => c.json(outcome satisfies NewIdentityResponse),
+            (e) => {
+                switch (e.type) {
+                    case "not_a_copy":
+                        return apiError(c, "conflict", `${e.dir} is not a copy of a tracked folder. Nothing was changed.`);
+                    case "marker_unreadable":
+                        return apiError(c, "conflict", `Could not read the marker at ${e.dir} (corrupt?).`);
+                    case "marker_write_failed":
+                        return apiError(c, "conflict", `Could not write a new marker at ${e.dir}. Nothing was changed in the database.`);
+                    case "db_failed":
+                        return internalError(c, e.cause, "record the new identity of the copy");
+                    default: {
+                        const exhaustive: never = e;
+                        throw new Error(`unhandled new identity error: ${JSON.stringify(exhaustive)}`);
                     }
                 }
             },

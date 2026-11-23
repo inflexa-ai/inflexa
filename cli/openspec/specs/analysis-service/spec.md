@@ -7,7 +7,7 @@ The analysis lifecycle — create (writable anchor + unique slug + inputs), rena
 
 ### Requirement: Create an analysis
 
-The system SHALL provide `createAnalysis(opts)` returning `Result<Analysis, WorkspaceError>` (the `DbError` union widened by the actionable `workspace_unavailable` variant) in `src/modules/analysis/analysis.ts` that: ensures `opts.cwd` is a tracked anchor; requires the anchor folder to be writable — a non-writable folder SHALL fail creation with an actionable error before any row is inserted (the workspace at `.inflexa/analyses/<slug>/` is where everything the analysis touches will live, so writability is a precondition of the analysis existing); generates a slug from `opts.name` (kebab-case, lowercased) or a generated handle, unique within the anchor; mints and inserts the `Analysis` with `id = randomUUIDv7()` (inline), `anchorId` = the anchor id, `projectId = opts.projectId ?? null`, `name` the validated `Str256`, and `createdAt`/`updatedAt` timestamps; and adds inputs from `opts.inputPaths` when provided and SHALL NOT enroll any input by default (an omitted/empty `opts.inputPaths` yields an analysis with zero inputs — inputs are user-driven, never the anchor/cwd). There SHALL be no output override (`opts.outputOverride` does not exist) and no persisted output path — the workspace root is always derived from anchor + slug. The `Analysis` SHALL carry no `goals`, `syncedAnalysisId`, or `archivedAt` field.
+The system SHALL provide `createAnalysis(opts)` returning `Result<Analysis, WorkspaceError>` (the `DbError` union widened by the actionable `workspace_unavailable` variant) in `src/modules/analysis/analysis.ts` that: ensures `opts.cwd` is a tracked anchor; requires the anchor folder to be writable — a non-writable folder SHALL fail creation with an actionable error before any row is inserted (the workspace at `.inflexa/analyses/<slug>/` is where everything the analysis touches will live, so writability is a precondition of the analysis existing); generates a slug from `opts.name` (kebab-case, lowercased) or a generated handle, unique within the anchor, where a slug is also taken when its workspace folder exists on disk with no row (the user can delete or restore the database while the folders stay); refuses a folder that is a copy of a tracked folder with `workspace_unavailable` and a message that tells the user to give the copy a new identity; mints and inserts the `Analysis` with `id = randomUUIDv7()` (inline), `anchorId` = the anchor id, `projectId = opts.projectId ?? null`, `name` the validated `Str256`, and `createdAt`/`updatedAt` timestamps; and adds inputs from `opts.inputPaths` when provided and SHALL NOT enroll any input by default (an omitted/empty `opts.inputPaths` yields an analysis with zero inputs — inputs are user-driven, never the anchor/cwd). There SHALL be no output override (`opts.outputOverride` does not exist) and no persisted output path — the workspace root is always derived from anchor + slug. The `Analysis` SHALL carry no `goals`, `syncedAnalysisId`, or `archivedAt` field.
 
 #### Scenario: Create with a name yields a kebab slug and an anchor
 
@@ -20,6 +20,12 @@ The system SHALL provide `createAnalysis(opts)` returning `Result<Analysis, Work
 
 - **WHEN** a second `createAnalysis({ cwd, name: "Batch 42" })` runs in the same directory
 - **THEN** its slug is `batch-42-2`
+
+#### Scenario: A workspace folder on disk takes its slug
+
+- **GIVEN** a folder that holds `.inflexa/analyses/batch-42/` from an analysis of a database that the user deleted
+- **WHEN** `createAnalysis({ cwd, name: "Batch 42" })` runs there
+- **THEN** its slug is `batch-42-2`, and it does not take the old `data/` and `runs/`
 
 #### Scenario: Symbol-only name yields a generated handle
 
@@ -106,7 +112,7 @@ The analysis service SHALL NOT print, call `process.exit`, or render any TUI; it
 
 Renaming an analysis regenerates its slug, and the workspace directory is keyed by slug — so the rename action (`renameAnalysisAndMoveWorkspace` in `src/modules/analysis/analysis.ts`) SHALL move `.inflexa/analyses/<old-slug>/` to `.inflexa/analyses/<new-slug>/` in the same deliberate action that updates the row. The row updates first: the row is authoritative and the tree derived, so a crash or failed move leaves a missing tree at the new slug (the healable desync condition) plus a visible leftover at the old slug — never a row pointing at bytes the rename lost. A missing source directory (never created, or user-deleted) SHALL NOT fail the rename — the row updates and the workspace materializes at the new slug on next use, per the local-state desync rule.
 
-The new slug SHALL be computed with the renamed analysis excluded from the collision set (`uniqueSlugForAnchor(anchorId, name, { excludeAnalysisId })`). An analysis MUST NOT collide with its own slug: renaming to the current name — or to any name that slugifies identically — SHALL keep the slug, update only the row's `name`, and move nothing.
+The new slug SHALL be computed with the renamed analysis excluded from the collision set (`uniqueSlugForAnchor({ id, path }, name, { excludeAnalysisId })`). The anchor resolves before the slug, thus a slug whose folder exists on disk is taken, and the rename does not move the tree onto it. The workspace folder of the renamed analysis is not a collision. An analysis MUST NOT collide with its own slug: renaming to the current name — or to any name that slugifies identically — SHALL keep the slug, update only the row's `name`, and move nothing.
 
 The outcome SHALL distinguish three cases rather than collapsing them: the tree moved; there was nothing to move (no tree yet, or an unchanged slug); or a tree may exist and could not be moved. The third case SHALL carry a `moveError` — including when the anchor could not be resolved, which is not the same as "there was no tree" and SHALL NOT be reported as success.
 

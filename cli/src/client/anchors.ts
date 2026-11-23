@@ -1,6 +1,8 @@
 import type { ResultAsync } from "neverthrow";
 
 import type {
+    NewIdentityRequest,
+    NewIdentityResponse,
     PruneAnchorsRequest,
     PruneAnchorsResponse,
     RelocateAnchorRequest,
@@ -13,6 +15,11 @@ import { DEFAULT_CLIENT_OPTS, request, type ClientError, type ClientOpts } from 
 /** `POST /api/v1/anchors/repair`: point the anchor of the marker at `path` back at that folder. */
 export function repairAnchor(body: RepairAnchorRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<RepairAnchorResponse, ClientError> {
     return request<RepairAnchorResponse>("POST", "/api/v1/anchors/repair", { body }, opts);
+}
+
+/** `POST /api/v1/anchors/new-identity`: give a copied folder its own marker UUID and anchor. */
+export function giveCopyNewIdentity(body: NewIdentityRequest, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<NewIdentityResponse, ClientError> {
+    return request<NewIdentityResponse>("POST", "/api/v1/anchors/new-identity", { body }, opts);
 }
 
 /** `POST /api/v1/anchors/relocate`: point a moved anchor, or each anchor under a moved tree, at its new path. */

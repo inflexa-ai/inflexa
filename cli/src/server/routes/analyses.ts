@@ -216,30 +216,41 @@ const exportQuery = z.enum(["none", "prov-json", "prov-n"]);
  */
 export function analysisCollectionRoutes<R extends PoolRuntime>(boot: ServerBoot<R>, opts: AnalysisListOpts<R>): Hono<ServerEnv<R>> {
     const routes = new Hono<ServerEnv<R>>();
+    // The recovery of each anchor that a launch starts in the background, or `null` when none runs. One at a time:
+    // a second launch during a recovery adds no second walk over the same anchors.
+    let recovery: Promise<void> | null = null;
 
     routes.post("/resolve", async (c) => {
         const body = await readBody(c, resolveBody);
         if (body.isErr()) return body.error;
         const { cwd, ref, project, recover, touch } = body.value;
-        // Recovery only, never creation (no-litter): an anchor whose folder moved under `cwd` heals in place.
-        if (recover) {
-            await recoverAnchors([cwd]).match(
-                ({ recovered, unresolved }) => {
-                    if (recovered || unresolved) getLogger("anchor").info({ recovered, unresolved }, "recovered anchors at a launch");
-                },
-                (e) => getLogger("anchor").warn({ err: e }, "anchor recovery failed"),
-            );
-        }
         const resolved = resolveContext(cwd, { analysis: ref, project }, { touch: touch ?? true }).andThen((ctx) =>
             ctx.kind === "analysis" && ref !== undefined
                 ? // The same id-first, newest-first order as the resolve, thus row 0 is the resolved analysis.
                   findAnalysesByRefWithAnchor(ref).map((rows) => toContextView(ctx, rows[0]?.analysis.id === ref ? [] : rows.slice(1)))
                 : ok<ResolvedContextView, DbError>(toContextView(ctx, [])),
         );
-        return await resolved.match(
+        const response = await resolved.match(
             (view) => c.json(view),
             (e) => internalError(c, e, "resolve the context"),
         );
+        // Recovery only, never creation (no-litter): an anchor whose folder moved under `cwd` heals in place.
+        // The resolve above already reconciles the anchor of the marker above `cwd`, which is the one that the
+        // launch opens. The recovery of each other anchor can search each known folder and its parents, thus it
+        // runs after the answer, and a folder on a hung share never holds the launch.
+        if (recover && recovery === null) {
+            recovery = recoverAnchors([cwd])
+                .match(
+                    ({ recovered, unresolved }) => {
+                        if (recovered || unresolved) getLogger("anchor").info({ recovered, unresolved }, "recovered anchors after a launch");
+                    },
+                    (e) => getLogger("anchor").warn({ err: e }, "anchor recovery failed"),
+                )
+                .finally(() => {
+                    recovery = null;
+                });
+        }
+        return response;
     });
 
     // Before a create with inputs: will staging copy them? The workspace of the new analysis will be under
@@ -651,7 +662,7 @@ function toContextView(ctx: ResolvedContext, others: { analysis: Analysis; ancho
         case "pick":
             return { kind: "pick", describe, analyses: views(ctx.analyses) };
         case "copy":
-            return { kind: "copy", describe, cwd: ctx.cwd };
+            return { kind: "copy", describe, cwd: ctx.cwd, dir: ctx.dir, original: ctx.original };
         case "empty":
             return { kind: "empty", describe, cwd: ctx.cwd };
         default: {

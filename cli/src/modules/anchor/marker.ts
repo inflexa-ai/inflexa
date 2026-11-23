@@ -1,10 +1,9 @@
-import { constants } from "node:fs";
-import { access } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { z } from "zod";
 import type { AnchorMarker, AnchorId } from "../../types/anchor.ts";
-import { mkdirResultAsync, pathExistsAsync, readFileResultAsync, writeFileResultAsync } from "../../lib/fs.ts";
+import { mkdirResultAsync, pathExistsAsync, readFileResultAsync, renameResultAsync, writeFileResultAsync } from "../../lib/fs.ts";
+import { getLogger } from "../../lib/log.ts";
 
 /** Marker-layer failure. Covers I/O (FS read/write) and data integrity (corrupt marker file). */
 export type MarkerError =
@@ -75,34 +74,49 @@ export function writeMarker(dir: string, anchorId: AnchorId): ResultAsync<Anchor
 }
 
 /**
- * True when files can be created under `dir`. Uses access(W_OK) rather than a
- * temp-file probe so it never leaves litter; any error (missing dir, read-only mount,
- * foreign ownership) is treated as not writable.
+ * Give the folder a new identity: write `anchorId` over the marker that is there. The write goes to a
+ * temporary file first and then a rename, thus a crash leaves the old marker or the new one, never a
+ * truncated file. The only caller is the deliberate re-mint of a copied folder, where the copy carries the
+ * marker of its original.
  */
-export function isDirWritable(dir: string): Promise<boolean> {
-    return access(dir, constants.W_OK).then(
-        () => true,
-        () => false,
-    );
+export function replaceMarker(dir: string, anchorId: AnchorId): ResultAsync<AnchorMarker, MarkerError> {
+    const marker: AnchorMarker = { schemaVersion: 1, anchorId: anchorId };
+    const path = markerPath(dir);
+    const temporary = `${path}.${anchorId}.tmp`;
+    return mkdirResultAsync(join(dir, ".inflexa"), "replaceMarker:mkdir")
+        .andThen(() => writeFileResultAsync(temporary, `${JSON.stringify(marker, null, 2)}\n`, "replaceMarker:write"))
+        .andThen(() => renameResultAsync(temporary, path, "replaceMarker:rename"))
+        .mapErr((e): MarkerError => ({ type: "marker_write_failed", path, cause: e.cause }))
+        .map(() => marker);
 }
 
 /**
  * Walk up from startDir to the filesystem root, returning the nearest ancestor
  * (including startDir) that holds a valid marker. Stops at the root (parent === dir)
- * instead of looping. A corrupt marker mid-walk propagates via readMarker — corruption
- * at a candidate anchor is a real error, not something to skip past.
+ * instead of looping.
+ *
+ * A marker that cannot be read or fails its schema reads as "no marker", with a warning in the log, and the
+ * walk goes on to the parent. The walk runs on each launch and each input add below a folder, and that folder
+ * can be a parent that the user does not own, for example a share where a colleague's marker has mode 0600.
+ * An error there would stop each folder below it, and the user could not repair a file that is not theirs.
+ * A deliberate repair reads the marker with {@link readMarker} and keeps the error.
  *
  * The reads run one at a time, from the start folder up: the nearest marker wins, thus a read of a
  * parent is wasted work once a nearer folder answers.
  */
-export function findMarkerUpwards(startDir: string): ResultAsync<{ dir: string; marker: AnchorMarker } | null, MarkerError> {
-    function step(dir: string): ResultAsync<{ dir: string; marker: AnchorMarker } | null, MarkerError> {
-        return readMarker(dir).andThen((marker) => {
-            if (marker) return okAsync({ dir, marker });
-            const parent = dirname(dir);
-            if (parent === dir) return okAsync(null);
-            return step(parent);
-        });
+export function findMarkerUpwards(startDir: string): ResultAsync<{ dir: string; marker: AnchorMarker } | null, never> {
+    function step(dir: string): ResultAsync<{ dir: string; marker: AnchorMarker } | null, never> {
+        return readMarker(dir)
+            .orElse((e) => {
+                getLogger("anchor").warn({ err: e, dir }, "skipped an unreadable anchor marker");
+                return okAsync<AnchorMarker | null>(null);
+            })
+            .andThen((marker) => {
+                if (marker) return okAsync({ dir, marker });
+                const parent = dirname(dir);
+                if (parent === dir) return okAsync(null);
+                return step(parent);
+            });
     }
     return step(resolve(startDir));
 }

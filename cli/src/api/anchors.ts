@@ -14,6 +14,20 @@ export type RepairAnchorResponse = {
     after: string;
 };
 
+/** The body of `POST /api/v1/anchors/new-identity`. */
+export type NewIdentityRequest = {
+    /** The absolute folder of the copy, which holds the `.inflexa/id` marker of its original. */
+    path: string;
+};
+
+/** The body of a `POST /api/v1/anchors/new-identity` response: the copy at `path` has the new anchor `anchorId`, and `original` keeps `previousAnchorId`. */
+export type NewIdentityResponse = {
+    anchorId: string;
+    previousAnchorId: string;
+    path: string;
+    original: string;
+};
+
 /**
  * The body of `POST /api/v1/anchors/relocate`: one tracked folder (`fromPath`, `toPath`), or each anchor
  * under a moved tree (`from`, `to`). Each path is absolute. With `dryRun`, the server changes nothing and

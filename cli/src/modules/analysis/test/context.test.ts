@@ -32,9 +32,9 @@ describe("describeContext", () => {
         expect(describeContext({ kind: "pick", analyses: [] })).toContain("0 candidates");
     });
 
-    test("copy: flags the copied folder for re-mint/fork", () => {
-        const ctx: ResolvedContext = { kind: "copy", cwd: "/c", marker: { schemaVersion: 1, anchorId: "anchor1" } };
-        expect(describeContext(ctx)).toContain("re-mint or fork");
+    test("copy: names the copy, its original, and the new identity", () => {
+        const ctx: ResolvedContext = { kind: "copy", cwd: "/c/sub", dir: "/c", original: "/o", marker: { schemaVersion: 1, anchorId: "anchor1" } };
+        expect(describeContext(ctx)).toBe("context: /c is a copy of /o — give it a new identity before use");
     });
 
     test("empty: reports nothing-here for the cwd", () => {

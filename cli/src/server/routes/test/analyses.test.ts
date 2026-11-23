@@ -22,6 +22,7 @@ import { writeMarker } from "../../../modules/anchor/marker.ts";
 import type { Analysis } from "../../../types/analysis.ts";
 import type { BusEvent } from "../../../types/events.ts";
 import { freshDb } from "../../../test_support/db.ts";
+import { hungMarker, releaseHungMarker } from "../../../test_support/hung_marker.ts";
 import { errorBody, jsonBody } from "../../../test_support/response_body.ts";
 import { idleBoot, idleLifecycle } from "../../../test_support/server.ts";
 import { buildApp } from "../../app.ts";
@@ -168,6 +169,37 @@ describe("POST /api/v1/analyses/resolve", () => {
 
         await appWith(idleBoot()).request("/api/v1/analyses/resolve", json("POST", { cwd: tmp(), ref: a.id }));
         expect(getAnchor(a.anchorId)._unsafeUnwrap()?.lastSeen).toBeGreaterThan(1);
+    });
+
+    test("a launch answers before the recovery of the other anchors, thus a folder on a hung share cannot hold it", async () => {
+        const dir = tmp();
+        const a = await seedAnalysis(dir);
+        const hung = tmp();
+        const pipe = hungMarker(hung);
+        insertAnchor({ id: "HUNG", createdAt: 1, updatedAt: 1, cachedPath: hung, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        try {
+            const started = Date.now();
+            const view = await jsonBody(appWith(idleBoot()).request("/api/v1/analyses/resolve", json("POST", { cwd: dir, recover: true })));
+            expect(view).toMatchObject({ kind: "analysis", analysis: { id: a.id } });
+            expect(Date.now() - started).toBeLessThan(1_000);
+        } finally {
+            releaseHungMarker(pipe);
+        }
+    });
+
+    test("a copied folder resolves to `copy`, with the folder of the copy and its original", async () => {
+        const original = tmp();
+        const a = await seedAnalysis(original);
+        const copy = tmp();
+        (await writeMarker(copy, a.anchorId))._unsafeUnwrap();
+        const view = await jsonBody(appWith(idleBoot()).request("/api/v1/analyses/resolve", json("POST", { cwd: copy })));
+        expect(view).toEqual({
+            kind: "copy",
+            cwd: copy,
+            dir: copy,
+            original,
+            describe: `context: ${copy} is a copy of ${original} — give it a new identity before use`,
+        });
     });
 
     test("an untracked folder resolves to `empty`, and a relative cwd is a 400", async () => {

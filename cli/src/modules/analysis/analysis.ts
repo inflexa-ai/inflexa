@@ -10,10 +10,10 @@ import { currentUserActor } from "../prov/prov.ts";
 import { analysisFarmPath, describeFarmCompositionError, makeEmptyFarm } from "../libs/composition.ts";
 import { Bus } from "../../lib/bus.ts";
 import { env } from "../../lib/env.ts";
-import { pathExistsAsync, renameResultAsync } from "../../lib/fs.ts";
+import { isDirWritable, pathExistsAsync, renameResultAsync } from "../../lib/fs.ts";
 import { ASCII_DIGITS, ASCII_LOWERCASE, consistsOf } from "../../lib/text.ts";
 import { getOrCreateAnchorForCwd, resolveAnchor } from "../anchor/anchor.ts";
-import { findMarkerUpwards, isDirWritable } from "../anchor/marker.ts";
+import { findMarkerUpwards } from "../anchor/marker.ts";
 import { classifyInputPath } from "./input.ts";
 import { defaultOutputSubdir, invalidateWorkspaceRoot, type WorkspaceError } from "./output.ts";
 
@@ -53,22 +53,35 @@ export function makeBaseSlug(name: string): string {
 }
 
 /**
- * A slug free for `name` within `anchorId`, suffixing `-2`, `-3`, … past collisions. The whole
+ * A slug free for `name` within the anchor `anchor.id`, suffixing `-2`, `-3`, … past collisions. The whole
  * workspace lives at `<anchor>/.inflexa/analyses/<slug>/`, so two analyses sharing an anchor must
  * not share a slug.
  *
+ * A slug whose workspace folder exists under `anchor.path` is also taken, though no row names it: the database
+ * can be deleted or restored while the folders stay, and a new analysis must not inherit the `data/` and `runs/`
+ * of an old one. `anchor.path` is `null` for an anchor folder that cannot be located, and then only the rows count.
+ *
  * `excludeAnalysisId` drops one analysis from the collision set — the analysis being renamed.
  * Without it an analysis collides with its own slug and a rename to the SAME name (or to any name
- * that slugifies the same way) yields `<slug>-2` and drags the on-disk tree along with it.
+ * that slugifies the same way) yields `<slug>-2` and drags the on-disk tree along with it. Its own
+ * folder on disk is not a collision for the same reason.
  */
-export function uniqueSlugForAnchor(anchorId: string, name: string, opts?: { excludeAnalysisId?: string }): Result<string, DbError> {
+export function uniqueSlugForAnchor(
+    anchor: { id: string; path: string | null },
+    name: string,
+    opts?: { excludeAnalysisId?: string },
+): ResultAsync<string, DbError> {
     const base = makeBaseSlug(name);
-    return listAnalysesByAnchor(anchorId).map((existing) => {
+    return listAnalysesByAnchor(anchor.id).asyncMap(async (existing) => {
+        const own = existing.find((a) => a.id === opts?.excludeAnalysisId)?.slug ?? null;
         const taken = new Set(existing.filter((a) => a.id !== opts?.excludeAnalysisId).map((a) => a.slug));
-        if (!taken.has(base)) return base;
-        for (let i = 2; ; i++) {
-            const candidate = `${base}-${i}`;
-            if (!taken.has(candidate)) return candidate;
+        const anchorPath = anchor.path;
+        // One candidate at a time: each `stat` is a miss except the last, and the count of folders left behind is small.
+        for (let i = 1; ; i++) {
+            const candidate = i === 1 ? base : `${base}-${i}`;
+            if (taken.has(candidate)) continue;
+            if (candidate === own || anchorPath === null) return candidate;
+            if (!(await pathExistsAsync(join(anchorPath, defaultOutputSubdir(candidate))))) return candidate;
         }
     });
 }
@@ -243,8 +256,15 @@ export async function createAnalysis(opts: CreateAnalysisInput): Promise<Result<
         });
     }
     const anchor = await getOrCreateAnchorForCwd(opts.cwd);
-    if (anchor.isErr()) return err(anchor.error);
-    const slug = uniqueSlugForAnchor(anchor.value.id, opts.name);
+    if (anchor.isErr()) {
+        const e = anchor.error;
+        if (e.type !== "folder_is_copy") return err(e);
+        return err({
+            type: "workspace_unavailable",
+            message: `${e.dir} is a copy of ${e.original}. Run \`inflexa\` in ${e.dir} to give the copy its own identity, then create the analysis.`,
+        });
+    }
+    const slug = await uniqueSlugForAnchor({ id: anchor.value.id, path: anchor.value.cachedPath }, opts.name);
     if (slug.isErr()) return err(slug.error);
 
     const now = Date.now();
@@ -322,40 +342,42 @@ export type RenameOutcome = {
  * instance lock does not help — it excludes other PROCESSES, while the runs live in this one.
  */
 export function renameAnalysisAndMoveWorkspace(analysis: Analysis, name: Str256): ResultAsync<RenameOutcome, DbError> {
-    return uniqueSlugForAnchor(analysis.anchorId, name, { excludeAnalysisId: analysis.id }).asyncAndThen((slug) =>
-        renameAnalysis(analysis.id, name, slug).asyncAndThen((): ResultAsync<RenameOutcome, DbError> => {
-            const renamed: Analysis = { ...analysis, name, slug };
-            invalidateWorkspaceRoot(analysis.id);
+    // The anchor resolves before the slug, because a slug whose folder exists on disk is taken. Writability is
+    // irrelevant here — a read-only anchor still renames the row, and the move then fails visibly.
+    // A storage fault is NOT folded into "no tree": the tree may well exist and we
+    // simply cannot say where, which the caller must be able to tell the user.
+    return resolveAnchor(analysis.anchorId, { touch: false }).andThen((resolved) => {
+        const anchorPath = resolved?.path ?? null;
+        return uniqueSlugForAnchor({ id: analysis.anchorId, path: anchorPath }, name, { excludeAnalysisId: analysis.id }).andThen((slug) =>
+            renameAnalysis(analysis.id, name, slug).asyncAndThen((): ResultAsync<RenameOutcome, DbError> => {
+                const renamed: Analysis = { ...analysis, name, slug };
+                invalidateWorkspaceRoot(analysis.id);
 
-            // A name that slugifies to the slug it already has: the row's `name` changed, the
-            // directory's identity did not. Nothing to move, and nothing went wrong.
-            if (slug === analysis.slug) return okAsync({ analysis: renamed, workspaceMoved: false });
+                // A name that slugifies to the slug it already has: the row's `name` changed, the
+                // directory's identity did not. Nothing to move, and nothing went wrong.
+                if (slug === analysis.slug) return okAsync({ analysis: renamed, workspaceMoved: false });
 
-            // Anchor resolution after the row update; writability is irrelevant here — a
-            // read-only anchor still renames the row, and the move then fails visibly.
-            // A storage fault is NOT folded into "no tree": the tree may well exist and we
-            // simply cannot say where, which the caller must be able to tell the user.
-            return resolveAnchor(analysis.anchorId, { touch: false }).map(async (resolved): Promise<RenameOutcome> => {
-                const anchorPath = resolved?.path ?? null;
                 if (anchorPath === null) {
-                    return { analysis: renamed, workspaceMoved: false, moveError: { type: "anchor_unresolved", anchorId: analysis.anchorId } };
+                    return okAsync({ analysis: renamed, workspaceMoved: false, moveError: { type: "anchor_unresolved", anchorId: analysis.anchorId } });
                 }
                 const oldRoot = join(anchorPath, defaultOutputSubdir(analysis.slug));
-                if (!(await pathExistsAsync(oldRoot))) return { analysis: renamed, workspaceMoved: false };
-                return renameResultAsync(oldRoot, join(anchorPath, defaultOutputSubdir(slug)), "renameAnalysisWorkspace").match(
-                    (): RenameOutcome => ({ analysis: renamed, workspaceMoved: true }),
-                    (e): RenameOutcome => ({ analysis: renamed, workspaceMoved: false, moveError: e.cause }),
+                return ResultAsync.fromSafePromise(
+                    (async (): Promise<RenameOutcome> => {
+                        if (!(await pathExistsAsync(oldRoot))) return { analysis: renamed, workspaceMoved: false };
+                        return renameResultAsync(oldRoot, join(anchorPath, defaultOutputSubdir(slug)), "renameAnalysisWorkspace").match(
+                            (): RenameOutcome => ({ analysis: renamed, workspaceMoved: true }),
+                            (e): RenameOutcome => ({ analysis: renamed, workspaceMoved: false, moveError: e.cause }),
+                        );
+                    })(),
                 );
-            });
-        }),
-    );
+            }),
+        );
+    });
 }
 
 /** Analyses anchored at the nearest marker for `dir`; empty when there is no marker. */
 export function listAnalysesForAnchorAt(dir: string): ResultAsync<Analysis[], DbError> {
-    return findMarkerUpwards(dir)
-        .mapErr((cause): DbError => ({ type: "query_failed", op: "listAnalysesForAnchorAt:marker", cause }))
-        .andThen((found) => (found ? listAnalysesByAnchor(found.marker.anchorId) : ok([])));
+    return findMarkerUpwards(dir).andThen((found): Result<Analysis[], DbError> => (found ? listAnalysesByAnchor(found.marker.anchorId) : ok([])));
 }
 
 /** All analyses, or those for `opts.projectId` when given — most-recent-first. */

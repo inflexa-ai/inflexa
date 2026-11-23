@@ -10,7 +10,7 @@ import type { ServerBootState } from "../../../api/server.ts";
 import { insertAnalysis, insertAnalysisInput, insertAnchor } from "../../../db/primary_mutation.ts";
 import { getAnchor, listAnalysesByAnchor, listAnalysisInputs } from "../../../db/primary_query.ts";
 import { asStr256 } from "../../../lib/types.ts";
-import { writeMarker } from "../../../modules/anchor/marker.ts";
+import { readMarker, writeMarker } from "../../../modules/anchor/marker.ts";
 import { freshDb } from "../../../test_support/db.ts";
 import { errorBody, jsonBody } from "../../../test_support/response_body.ts";
 import { idleBoot } from "../../../test_support/server.ts";
@@ -105,6 +105,44 @@ describe("POST /api/v1/anchors/repair", () => {
         expect(none.status).toBe(404);
         expect(await errorBody(none)).toHaveProperty("message", `No marker at ${dir}. Nothing to repair.`);
         expect((await post(routes, "/repair", { path: "here" })).status).toBe(400);
+    });
+});
+
+describe("a duplicated project folder", () => {
+    /** `cp -r original copy`: the copy carries the marker of the original, and the row points at the original. */
+    async function duplicate(): Promise<{ original: string; copy: string }> {
+        const original = tmp();
+        const copy = tmp();
+        (await writeMarker(original, "A1"))._unsafeUnwrap();
+        (await writeMarker(copy, "A1"))._unsafeUnwrap();
+        insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: original, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        return { original, copy };
+    }
+
+    test("a repair of the copy is refused with 409, and the anchor stays at the original", async () => {
+        const { original, copy } = await duplicate();
+        const routes = anchorRoutes(idleBoot<Handle>(), opts().opts);
+        const refused = await post(routes, "/repair", { path: copy });
+        expect(refused.status).toBe(409);
+        const body = await errorBody(refused);
+        expect(body.error).toBe("conflict");
+        expect(body.message).toContain(`${copy} is a copy of ${original}`);
+        expect(getAnchor("A1")._unsafeUnwrap()?.cachedPath).toBe(original);
+    });
+
+    test("a new identity gives the copy its own anchor, and a second call is refused with 409", async () => {
+        const { original, copy } = await duplicate();
+        const routes = anchorRoutes(idleBoot<Handle>(), opts().opts);
+        const outcome = await jsonBody(post(routes, "/new-identity", { path: copy }));
+        expect(outcome).toMatchObject({ previousAnchorId: "A1", path: copy, original });
+        const anchorId = (await readMarker(copy))._unsafeUnwrap()?.anchorId;
+        expect(outcome).toHaveProperty("anchorId", anchorId);
+        expect(getAnchor(anchorId ?? "")._unsafeUnwrap()?.cachedPath).toBe(copy);
+        expect(getAnchor("A1")._unsafeUnwrap()?.cachedPath).toBe(original);
+
+        const again = await post(routes, "/new-identity", { path: copy });
+        expect(again.status).toBe(409);
+        expect(await errorBody(again)).toHaveProperty("message", `${copy} is not a copy of a tracked folder. Nothing was changed.`);
     });
 });
 

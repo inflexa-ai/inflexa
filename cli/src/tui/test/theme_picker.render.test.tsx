@@ -54,7 +54,7 @@ function stubWorkspace(onClose: () => void): Workspace {
         openDialog: () => {},
         closeDialog: onClose,
         openSession: () => {},
-        refreshScope: () => {},
+        refreshScope: () => Promise.resolve(),
         quit: async () => {},
     };
 }

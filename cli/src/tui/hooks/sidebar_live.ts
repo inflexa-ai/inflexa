@@ -1038,11 +1038,14 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
         if (!(await seams.checkServer())) return;
         // The probe was an await: an analysis swap in that time re-armed the poll for the new analysis.
         if (workspace.analysis?.id !== analysisId) return;
-        workspace.refreshScope();
+        // Awaited at the end, thus the read of the scope stays under the in-flight guard: a scope read that the
+        // server answers slowly, for example the search for a missing anchor folder, holds the next tick.
+        const scope = workspace.refreshScope();
         setPollTick((n) => n + 1);
         const threadId = workspace.sessionId;
         if (threadId !== null) await seams.pollThread(analysisId, threadId);
         await seams.pollPaused(analysisId, threadId);
+        await scope;
     }
 
     /**

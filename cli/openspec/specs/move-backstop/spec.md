@@ -1,7 +1,7 @@
 # move-backstop Specification
 
 ## Purpose
-Explicit move/rename recovery addressed by filesystem path — `repair`, `relocate` (single pair and `--from/--to` prefix batch), and `prune` — plus the surfacing of copied folders (clone/fork resolution deferred).
+Explicit move/rename recovery addressed by filesystem path — `repair`, `relocate` (single pair and `--from/--to` prefix batch), and `prune` — plus a new identity for a copied folder (clone/fork resolution deferred).
 
 ## Requirements
 
@@ -9,10 +9,18 @@ Explicit move/rename recovery addressed by filesystem path — `repair`, `reloca
 
 The system SHALL register `inflexa repair [<path>]` as a client of `POST /api/v1/anchors/repair`. The command SHALL resolve `<path>` (default cwd) against its own working folder and send the absolute path. The server SHALL read the marker at that path, look up its anchors row by id, update the row's `cachedPath` to the canonical path, and report the before and after paths. It SHALL report when the row already points there, and the command SHALL error clearly when the path has no marker or the id has no anchors row.
 
+When the `cachedPath` of the row still holds the same marker, the path is a copy. The server MUST refuse the repair with 409 `conflict`, and it MUST NOT change the row. A repair of a copy gives the identity of the original to the copy, and then the original reads as the copy. The message MUST tell the user to run `inflexa` in the copy to give it a new identity.
+
 #### Scenario: Repair self-heals the cached path
 
 - **WHEN** `inflexa repair` runs in a marked directory whose anchors row has a stale `cachedPath`
 - **THEN** the row's `cachedPath` is updated to the directory and the before/after is printed
+
+#### Scenario: A repair of a copy is refused
+
+- **GIVEN** a copy of a project folder, and the original still holds the same marker
+- **WHEN** `inflexa repair` runs in the copy
+- **THEN** it prints the refusal and exits non-zero, and the row still points at the original
 
 #### Scenario: No marker errors
 
@@ -93,14 +101,19 @@ The server MUST run the busy gate of each analysis again directly before its pur
 - **WHEN** the prune reaches the second analysis
 - **THEN** the server answers 409 `busy` with the analysis and the work, it does not purge the second analysis, and every SQLite row remains
 
-### Requirement: Copied folders are surfaced; clone/fork resolution is deferred
+### Requirement: Copied folders get a new identity; clone/fork resolution is deferred
 
-A copied folder SHALL be detected (`classifyMarkerSighting` → `"copy"`, surfaced as a `copy` context) and SHALL NEVER be auto-resolved or auto-merged into the original. Full re-mint-and-clone vs fork resolution is deferred (marked `TODO(extend)`); until it lands, the default command directs the user to `inflexa repair` / `inflexa relocate`.
+A copied folder SHALL be detected (`classifyMarkerSighting` → `copy`, surfaced as a `copy` context) and SHALL NEVER be auto-resolved or auto-merged into the original. The server MUST give a copy a new identity through `POST /api/v1/anchors/new-identity` with the absolute folder of the copy, per `anchor-resolve`. A folder that is not a copy MUST get 409 `conflict`. The default command MUST name the copy and its original, and ask to give the copy a new identity. When the user agrees, the command MUST send that request and then resolve the folder again. The clone or the fork of the analyses of the original is deferred (marked `TODO(extend)`).
 
 #### Scenario: Copy is detected and surfaced, never merged
 
 - **WHEN** a copied folder is encountered
-- **THEN** it is reported as a copy and the user is directed to the backstop, with the original anchor's records untouched
+- **THEN** it is reported as a copy of its original, and the command asks to give it a new identity, with the original anchor's records untouched
+
+#### Scenario: A copy gets its own identity
+
+- **WHEN** the user agrees to a new identity for a copy
+- **THEN** the copy has a new marker id and anchors row, the original keeps its own, and the command resolves the copy as a folder with no analysis
 
 #### Scenario: Clone/fork resolution not yet built
 

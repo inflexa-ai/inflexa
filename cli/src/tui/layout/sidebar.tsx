@@ -683,7 +683,7 @@ export function Sidebar(props: SidebarProps): JSX.Element {
         if (prevStatus === "busy" && status !== "busy") {
             setUsageVersion((v) => v + 1);
             // The agent of the turn can change the inputs (`manage_inputs`), and the server pushes nothing.
-            ws.refreshScope();
+            void ws.refreshScope();
         }
         prevStatus = status;
     });

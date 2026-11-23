@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { freshDb } from "../../../test_support/db.ts";
-import { classifyMarkerSighting, resolveAnchor } from "../anchor.ts";
+import { hungMarker, releaseHungMarker } from "../../../test_support/hung_marker.ts";
+import { classifyMarkerSighting, getOrCreateAnchorForCwd, giveCopyNewIdentity, resolveAnchor } from "../anchor.ts";
 import { canonicalPathAsync } from "../../../lib/paths.ts";
-import { writeMarker } from "../marker.ts";
+import { readMarker, writeMarker } from "../marker.ts";
 import { insertAnchor } from "../../../db/primary_mutation.ts";
 import { getAnchor } from "../../../db/primary_query.ts";
 import type { Anchor, AnchorMarker } from "../../../types/anchor.ts";
@@ -72,24 +73,59 @@ describe("resolveAnchor", () => {
 
         expect((await resolveAnchor("A1", { searchRoots: [elsewhere] }))._unsafeUnwrap()?.path).toBeNull();
     });
+
+    test("a marker read that does not answer counts as no match, and the resolve ends", async () => {
+        const hung = tmp();
+        const pipe = hungMarker(hung);
+        insertAnchorRow("A1", hung);
+        try {
+            expect((await resolveAnchor("A1", { searchRoots: [tmp()] }))._unsafeUnwrap()?.path).toBeNull();
+        } finally {
+            releaseHungMarker(pipe);
+        }
+    }, 10_000);
+
+    test("step 3 — a miss is remembered: the same resolve does not search the known folders again", async () => {
+        const gone = tmp();
+        insertAnchorRow("A1", gone);
+        rmSync(gone, { recursive: true, force: true });
+        const known = tmp();
+        insertAnchorRow("B1", known);
+        const elsewhere = tmp();
+        expect((await resolveAnchor("A1", { searchRoots: [elsewhere] }))._unsafeUnwrap()?.path).toBeNull();
+
+        // The folder of A1 now sits at a known anchor folder, which only the search reads.
+        (await writeMarker(known, "A1"))._unsafeUnwrap();
+        expect((await resolveAnchor("A1", { searchRoots: [elsewhere] }))._unsafeUnwrap()?.path).toBeNull();
+        // A resolve from different roots searches a different set of folders.
+        expect((await resolveAnchor("A1", { searchRoots: [tmp()] }))._unsafeUnwrap()?.path).toBe(await canonicalPathAsync(known));
+    });
 });
 
 describe("classifyMarkerSighting", () => {
     test("ok — no existing anchor row to conflict with", async () => {
-        expect((await classifyMarkerSighting(tmp(), marker("ghost")))._unsafeUnwrap()).toBe("ok");
+        expect((await classifyMarkerSighting(tmp(), marker("ghost")))._unsafeUnwrap()).toEqual({ kind: "ok" });
     });
 
     test("ok — the marker is sighted at the anchor's known location", async () => {
         const dir = tmp();
         insertAnchorRow("A1", dir);
-        expect((await classifyMarkerSighting(dir, marker("A1")))._unsafeUnwrap()).toBe("ok");
+        expect((await classifyMarkerSighting(dir, marker("A1")))._unsafeUnwrap()).toEqual({ kind: "ok" });
     });
 
-    test("copy — the original cached path still exists elsewhere", async () => {
+    test("copy — the original cached path still holds the same marker", async () => {
         const original = tmp();
         const copy = tmp();
-        insertAnchorRow("A1", original); // original still on disk
-        expect((await classifyMarkerSighting(copy, marker("A1")))._unsafeUnwrap()).toBe("copy");
+        (await writeMarker(original, "A1"))._unsafeUnwrap();
+        insertAnchorRow("A1", original);
+        expect((await classifyMarkerSighting(copy, marker("A1")))._unsafeUnwrap()).toEqual({ kind: "copy", original: await canonicalPathAsync(original) });
+    });
+
+    test("move — a new folder at the old path, with no marker, is not the original", async () => {
+        const reused = tmp();
+        const moved = tmp();
+        insertAnchorRow("A1", reused);
+        expect((await classifyMarkerSighting(moved, marker("A1")))._unsafeUnwrap()).toEqual({ kind: "move" });
     });
 
     test("move — the original cached path is gone", async () => {
@@ -97,6 +133,52 @@ describe("classifyMarkerSighting", () => {
         const moved = tmp();
         insertAnchorRow("A1", gone);
         rmSync(gone, { recursive: true, force: true });
-        expect((await classifyMarkerSighting(moved, marker("A1")))._unsafeUnwrap()).toBe("move");
+        expect((await classifyMarkerSighting(moved, marker("A1")))._unsafeUnwrap()).toEqual({ kind: "move" });
+    });
+});
+
+describe("a duplicated project folder", () => {
+    /** `cp -r original copy`: the copy carries the marker of the original, and the row still points at the original. */
+    async function duplicate(): Promise<{ original: string; copy: string }> {
+        const original = await canonicalPathAsync(tmp());
+        const copy = await canonicalPathAsync(tmp());
+        (await writeMarker(original, "A1"))._unsafeUnwrap();
+        (await writeMarker(copy, "A1"))._unsafeUnwrap();
+        insertAnchorRow("A1", original);
+        return { original, copy };
+    }
+
+    test("the ensure of the copy refuses it and leaves the anchor at the original", async () => {
+        const { original, copy } = await duplicate();
+        expect((await getOrCreateAnchorForCwd(copy))._unsafeUnwrapErr()).toEqual({ type: "folder_is_copy", dir: copy, original });
+        expect(getAnchor("A1")._unsafeUnwrap()?.cachedPath).toBe(original);
+    });
+
+    test("the ensure of a moved folder still heals the cached path", async () => {
+        const reused = tmp();
+        const moved = await canonicalPathAsync(tmp());
+        (await writeMarker(moved, "A1"))._unsafeUnwrap();
+        insertAnchorRow("A1", reused);
+        expect((await getOrCreateAnchorForCwd(moved))._unsafeUnwrap().cachedPath).toBe(moved);
+    });
+
+    test("a new identity gives the copy its own marker and anchor, and the original keeps its own", async () => {
+        const { original, copy } = await duplicate();
+        const outcome = (await giveCopyNewIdentity(copy))._unsafeUnwrap();
+        expect(outcome).toMatchObject({ previousAnchorId: "A1", path: copy, original });
+        expect(outcome.anchorId).not.toBe("A1");
+        expect((await readMarker(copy))._unsafeUnwrap()?.anchorId).toBe(outcome.anchorId);
+        expect((await readMarker(original))._unsafeUnwrap()).toEqual(marker("A1"));
+        expect(getAnchor(outcome.anchorId)._unsafeUnwrap()?.cachedPath).toBe(copy);
+        expect(getAnchor("A1")._unsafeUnwrap()?.cachedPath).toBe(original);
+        expect((await classifyMarkerSighting(copy, marker(outcome.anchorId)))._unsafeUnwrap()).toEqual({ kind: "ok" });
+    });
+
+    test("a new identity refuses a folder that is not a copy, and changes nothing", async () => {
+        const dir = await canonicalPathAsync(tmp());
+        (await writeMarker(dir, "A1"))._unsafeUnwrap();
+        insertAnchorRow("A1", dir);
+        expect((await giveCopyNewIdentity(dir))._unsafeUnwrapErr()).toEqual({ type: "not_a_copy", dir });
+        expect((await readMarker(dir))._unsafeUnwrap()?.anchorId).toBe("A1");
     });
 });

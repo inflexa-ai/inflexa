@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
-import { mkdir, readFile, readlink, rename, rm, stat, writeFile } from "node:fs/promises";
+import { constants, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type Stats } from "node:fs";
+import { access, mkdir, readFile, readlink, rename, rm, stat, writeFile } from "node:fs/promises";
 import { type Result, ResultAsync, ok, err } from "neverthrow";
 import PQueue from "p-queue";
 
@@ -107,6 +107,18 @@ export function statResultAsync(path: string, op: string): ResultAsync<Stats, Fs
  */
 export function pathExistsAsync(path: string): Promise<boolean> {
     return stat(path).then(
+        () => true,
+        () => false,
+    );
+}
+
+/**
+ * True when files can be created under `dir`. Uses access(W_OK) rather than a
+ * temp-file probe so it never leaves litter; any error (missing dir, read-only mount,
+ * foreign ownership) is treated as not writable.
+ */
+export function isDirWritable(dir: string): Promise<boolean> {
+    return access(dir, constants.W_OK).then(
         () => true,
         () => false,
     );
