@@ -15,19 +15,26 @@ const LOOPBACK_HOST_NAMES = ["127.0.0.1", "localhost", "[::1]"];
 /** How long a delivery of a pasted callback waits for the listener. A loopback listener answers in milliseconds. */
 const DELIVERY_TIMEOUT_MS = 10_000;
 
+/** The port of a callback URL, with the default port of `http` when the URL names none. */
+function portOf(url: URL): number {
+    return url.port === "" ? 80 : Number(url.port);
+}
+
 /**
- * The request that a pasted callback URL stands for, sent to `port` of this machine, or why the text is not such
- * a URL. The host is always `127.0.0.1`: a listener that publishes on IPv4 only does not answer `localhost` when
- * it resolves to `::1`.
+ * The request that a pasted callback URL stands for, sent to the port of `callback` on this machine, or why the
+ * text is not such a URL. `callback` is the redirect URL of the sign-in, and the messages name its address. The
+ * host of the request is always `127.0.0.1`: a listener that publishes on IPv4 only does not answer `localhost`
+ * when it resolves to `::1`.
  */
-export function pastedCallbackUrl(pasted: string, port: number): Result<URL, string> {
+export function pastedCallbackUrl(pasted: string, callback: URL): Result<URL, string> {
+    const port = portOf(callback);
     const text = pasted.trim();
     if (!URL.canParse(text)) return err("the text is not a URL. Paste the full URL from the address bar of the browser.");
     const url = new URL(text);
     if (url.protocol !== "http:" || !LOOPBACK_HOST_NAMES.includes(url.hostname)) {
-        return err(`the URL does not point at the sign-in callback. Paste the URL that starts with http://localhost:${port}/.`);
+        return err(`the URL does not point at the sign-in callback. Paste the URL that starts with ${callback.origin}/.`);
     }
-    if ((url.port === "" ? 80 : Number(url.port)) !== port) return err(`the URL names port ${url.port || "80"}, but the sign-in waits on port ${port}.`);
+    if (portOf(url) !== port) return err(`the URL names port ${url.port || "80"}, but the sign-in waits on port ${port}.`);
     if (!url.searchParams.has("code") && !url.searchParams.has("error")) {
         return err("the URL holds no `code`. Paste the URL from the address bar after the sign-in, not the sign-in link.");
     }
@@ -56,14 +63,14 @@ export type PastedCallbackOpts = {
 };
 
 /**
- * Read lines from the terminal while a sign-in waits, and send each pasted callback URL to `port` of this
- * machine. Gives the stop, which the caller runs when the sign-in settles. An empty line is ignored.
+ * Read lines from the terminal while a sign-in waits, and send each pasted callback URL to the port of
+ * `callback` on this machine. Gives the stop, which the caller runs when the sign-in settles. An empty line is ignored.
  */
-export function acceptPastedCallbacks(port: number, opts: PastedCallbackOpts): () => void {
+export function acceptPastedCallbacks(callback: URL, opts: PastedCallbackOpts): () => void {
     const lines = createInterface({ input: opts.input, terminal: false });
     lines.on("line", (line) => {
         if (line.trim() === "") return;
-        const url = pastedCallbackUrl(line, port);
+        const url = pastedCallbackUrl(line, callback);
         if (url.isErr()) {
             opts.say(`Not sent: ${url.error}`);
             return;
@@ -78,10 +85,10 @@ export function acceptPastedCallbacks(port: number, opts: PastedCallbackOpts): (
     return () => lines.close();
 }
 
-/** The line that tells the person how to paste the callback URL, for the sign-in on `port`. */
-export function pasteCallbackHint(port: number): string {
+/** The line that tells the person how to paste the callback URL, for the sign-in that redirects to `callback`. */
+export function pasteCallbackHint(callback: URL): string {
     return (
-        `If the browser cannot reach http://localhost:${port}/ after the sign-in (an error page), copy the URL from its ` +
+        `If the browser cannot reach ${callback.origin}/ after the sign-in (an error page), copy the URL from its ` +
         "address bar, paste it here, and push Enter."
     );
 }

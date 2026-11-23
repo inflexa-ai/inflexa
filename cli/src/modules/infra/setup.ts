@@ -2743,10 +2743,13 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
                     console.log();
                     if (copied.isOk()) log.info("Copied to clipboard.");
                     if (port !== null && process.stdin.isTTY) {
+                        // The vendor redirects to `http://localhost:<port>/…` (the RedirectURI constants of its
+                        // Codex and Claude flows), thus the hint names that address.
+                        const callback = new URL(`http://localhost:${port}/`);
                         // No spinner while the person can paste: its frames would draw over the pasted text.
-                        log.info(pasteCallbackHint(port));
+                        log.info(pasteCallbackHint(callback));
                         log.info(`Waiting for the ${PROVIDER_LABEL[provider]} callback.`);
-                        shown.stopPaste = acceptPastedCallbacks(port, {
+                        shown.stopPaste = acceptPastedCallbacks(callback, {
                             input: process.stdin,
                             say: (said) => log.info(said),
                             deliver: (url) => deliverCallback(url),

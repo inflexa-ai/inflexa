@@ -3,26 +3,36 @@ import { PassThrough } from "node:stream";
 
 import type { Result } from "neverthrow";
 
-import { acceptPastedCallbacks, deliverCallback, pastedCallbackUrl } from "../oauth_callback.ts";
+import { acceptPastedCallbacks, deliverCallback, pasteCallbackHint, pastedCallbackUrl } from "../oauth_callback.ts";
+
+/** The redirect of the Codex login of the vendor. */
+const CODEX = new URL("http://localhost:1455/auth/callback");
 
 describe("pastedCallbackUrl", () => {
     test("a callback URL of the port becomes the same request to 127.0.0.1", () => {
-        const url = pastedCallbackUrl("  http://localhost:1455/auth/callback?code=c1&state=s1\n", 1455)._unsafeUnwrap();
+        const url = pastedCallbackUrl("  http://localhost:1455/auth/callback?code=c1&state=s1\n", CODEX)._unsafeUnwrap();
         expect(url.toString()).toBe("http://127.0.0.1:1455/auth/callback?code=c1&state=s1");
     });
 
     test("an error callback is sent too, so that the sign-in ends with the reason of the provider", () => {
-        expect(pastedCallbackUrl("http://127.0.0.1:54545/callback?error=access_denied", 54545).isOk()).toBe(true);
+        expect(pastedCallbackUrl("http://127.0.0.1:54545/callback?error=access_denied", new URL("http://localhost:54545/callback")).isOk()).toBe(true);
     });
 
     test("text that is not the callback of this sign-in is refused with the reason", () => {
-        expect(pastedCallbackUrl("the code is c1", 1455)._unsafeUnwrapErr()).toContain("not a URL");
-        expect(pastedCallbackUrl("https://auth.openai.com/authorize?code=c1", 1455)._unsafeUnwrapErr()).toContain("does not point at the sign-in callback");
-        expect(pastedCallbackUrl("http://evil.example:1455/auth/callback?code=c1", 1455)._unsafeUnwrapErr()).toContain(
+        expect(pastedCallbackUrl("the code is c1", CODEX)._unsafeUnwrapErr()).toContain("not a URL");
+        expect(pastedCallbackUrl("https://auth.openai.com/authorize?code=c1", CODEX)._unsafeUnwrapErr()).toContain("does not point at the sign-in callback");
+        expect(pastedCallbackUrl("http://evil.example:1455/auth/callback?code=c1", CODEX)._unsafeUnwrapErr()).toContain(
             "does not point at the sign-in callback",
         );
-        expect(pastedCallbackUrl("http://localhost:8085/auth/callback?code=c1", 1455)._unsafeUnwrapErr()).toContain("names port 8085");
-        expect(pastedCallbackUrl("http://localhost:1455/auth/callback?state=s1", 1455)._unsafeUnwrapErr()).toContain("holds no `code`");
+        expect(pastedCallbackUrl("http://localhost:8085/auth/callback?code=c1", CODEX)._unsafeUnwrapErr()).toContain("names port 8085");
+        expect(pastedCallbackUrl("http://localhost:1455/auth/callback?state=s1", CODEX)._unsafeUnwrapErr()).toContain("holds no `code`");
+    });
+
+    test("the messages name the address of the real redirect", () => {
+        const mcp = new URL("http://127.0.0.1:43123/callback");
+        expect(pastedCallbackUrl("https://auth.example/x?code=c", mcp)._unsafeUnwrapErr()).toContain("starts with http://127.0.0.1:43123/");
+        expect(pasteCallbackHint(mcp)).toContain("cannot reach http://127.0.0.1:43123/");
+        expect(pasteCallbackHint(CODEX)).toContain("cannot reach http://localhost:1455/");
     });
 });
 
@@ -70,7 +80,7 @@ describe("deliverCallback and acceptPastedCallbacks", () => {
         const input = new PassThrough();
         const said: string[] = [];
         const delivered: Promise<Result<void, string>>[] = [];
-        const stop = acceptPastedCallbacks(port, {
+        const stop = acceptPastedCallbacks(new URL(`http://localhost:${port}/auth/callback`), {
             input,
             say: (line) => said.push(line),
             deliver: (url) => {
