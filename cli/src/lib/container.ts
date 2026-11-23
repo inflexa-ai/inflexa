@@ -6,8 +6,11 @@
 // lib/config.ts, not here. The proxy module is today's only caller of the spawn core.
 
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { type Result, ok, err } from "neverthrow";
 import { z } from "zod";
+import type { ExecutorUser, SandboxExecutor } from "@inflexa-ai/harness";
 
 import { env } from "./env.ts";
 import { messageOf } from "./cause.ts";
@@ -381,6 +384,140 @@ export async function resolveEngineSocket(
  */
 export async function resolveEngineApiSocket(rt: ContainerRuntime, probes?: EngineSocketProbes): Promise<string | undefined> {
     return (await resolveEngineSocket(rt, probes)).unwrapOr(undefined);
+}
+
+/** The user ids of this process, or `undefined` on a platform with no POSIX ids. */
+function processUser(): ExecutorUser | undefined {
+    if (process.getuid === undefined || process.getgid === undefined || process.getgroups === undefined) return undefined;
+    return { uid: process.getuid(), gid: process.getgid(), groups: [...new Set(process.getgroups())] };
+}
+
+/** The effectful probes of {@link resolveSandboxExecutor}, injectable so tests spawn no engine. */
+export type SandboxExecutorProbes = {
+    readonly platform: NodeJS.Platform;
+    readonly capture: (rt: ContainerRuntime, args: string[]) => Promise<CaptureResult>;
+    /** The `DOCKER_HOST` that the user set. dockerode in the harness dials it, else its default socket. */
+    readonly dockerHost: string | undefined;
+    /** True when `path` exists on disk. It selects the default socket of dockerode. */
+    readonly exists: (path: string) => boolean;
+    readonly homeDir: string;
+    /** The user that the sandbox acts for. The engine runs on this machine, thus its user is the user of this process. */
+    readonly user: () => ExecutorUser | undefined;
+};
+
+/** The executor fact, and the OCI runtime that Podman reports. */
+export type DetectedExecutor = {
+    readonly executor: SandboxExecutor;
+    /** The OCI runtime of a Linux Podman engine. Only crun keeps the groups of the user for rootless Podman. */
+    readonly ociRuntime: string | undefined;
+};
+
+/** Why no executor fact comes from the engine. */
+export type SandboxExecutorError = { type: "rootless_docker"; message: string } | { type: "engine_info_failed"; message: string };
+
+/**
+ * The socket that dockerode (docker-modem) dials when no `DOCKER_HOST` names one: the socket of a
+ * Docker Desktop install in the home directory when it exists, else the system socket.
+ */
+function dockerodeDefaultSocket(probes: SandboxExecutorProbes): string {
+    const desktop = join(probes.homeDir, ".docker", "run", "docker.sock");
+    return probes.exists(desktop) ? desktop : "/var/run/docker.sock";
+}
+
+const dockerInfoSchema = z.looseObject({
+    OperatingSystem: z.string().optional(),
+    SecurityOptions: z.array(z.string()).nullish(),
+});
+
+const podmanInfoSchema = z.looseObject({
+    host: z.looseObject({
+        security: z.looseObject({ rootless: z.boolean().optional(), selinuxEnabled: z.boolean().optional() }).optional(),
+        ociRuntime: z.looseObject({ name: z.string().optional() }).optional(),
+    }),
+});
+
+/** True when a `SecurityOptions` entry of the Docker info is `name=<name>`, with or without its settings. */
+function hasSecurityOption(options: readonly string[], name: string): boolean {
+    return options.some((option) => option.split(",")[0] === `name=${name}`);
+}
+
+/**
+ * Detect how the engine that runs the sandbox maps container ids onto the host files: the
+ * executor fact that the harness selects the workload user from.
+ *
+ * - **macOS and Windows** run the engine in a VM. Docker Desktop and OrbStack mask the owner
+ *   of a shared file. A Podman machine shows the true owner.
+ * - **Docker on Linux** reads the info of the daemon that the harness dials: the `DOCKER_HOST`
+ *   of the user, else the default socket of dockerode, not the current context of the CLI.
+ *   `Docker Desktop` is a VM. `name=rootless` is refused: there the container root is the user,
+ *   and each other container uid is a subordinate uid, thus no drop reaches the files of the
+ *   user. Each other daemon is rootful.
+ * - **Podman on Linux** reads `podman info`, the engine of the user that serves the socket of
+ *   the harness.
+ *
+ * `probes` is injectable for tests only.
+ */
+export async function resolveSandboxExecutor(
+    rt: ContainerRuntime,
+    probes: SandboxExecutorProbes = {
+        platform: process.platform,
+        capture,
+        dockerHost: env.dockerHost,
+        exists: existsSync,
+        homeDir: homedir(),
+        user: processUser,
+    },
+): Promise<Result<DetectedExecutor, SandboxExecutorError>> {
+    if (probes.platform !== "linux") {
+        return ok({ executor: { kind: "vm", bindOwnership: rt.id === "podman" ? "host-preserved" : "masked" }, ociRuntime: undefined });
+    }
+    const hostUser = (): Result<ExecutorUser, SandboxExecutorError> => {
+        const user = probes.user();
+        return user === undefined ? err({ type: "engine_info_failed", message: "Could not read the uid and the gids of this user." }) : ok(user);
+    };
+    switch (rt.id) {
+        case "docker": {
+            // dockerode reads an empty DOCKER_HOST, and a `unix://` with no path, as unset.
+            const dockerHost = probes.dockerHost === "" || probes.dockerHost === "unix://" ? undefined : probes.dockerHost;
+            const where = dockerHost !== undefined ? `DOCKER_HOST (${dockerHost})` : `unix://${dockerodeDefaultSocket(probes)}`;
+            const args = dockerHost !== undefined ? ["info", "--format", "{{json .}}"] : ["-H", where, "info", "--format", "{{json .}}"];
+            const { code, stdout, stderr } = await probes.capture(rt, args);
+            const info = code === 0 ? JSON.parseWith(stdout, dockerInfoSchema) : null;
+            if (info === null) {
+                return err({
+                    type: "engine_info_failed",
+                    message: `Could not read the Docker engine info at ${where}, the engine that the sandbox uses.\n  ${stderr.trim() || "The engine gave no readable info."}`,
+                });
+            }
+            if (info.OperatingSystem === "Docker Desktop") return ok({ executor: { kind: "vm", bindOwnership: "masked" }, ociRuntime: undefined });
+            const options = info.SecurityOptions ?? [];
+            if (hasSecurityOption(options, "rootless")) {
+                return err({
+                    type: "rootless_docker",
+                    message: `Rootless Docker at ${where} cannot run the sandbox: each container uid other than root is a subordinate uid, thus the sandbox cannot read your files.\n  Use rootful Docker, Docker Desktop, or Podman, then re-run.`,
+                });
+            }
+            return hostUser().map((user) => ({ executor: { kind: "rootful", user, selinux: hasSecurityOption(options, "selinux") }, ociRuntime: undefined }));
+        }
+        case "podman": {
+            const { code, stdout, stderr } = await probes.capture(rt, ["info", "--format", "json"]);
+            const info = code === 0 ? JSON.parseWith(stdout, podmanInfoSchema) : null;
+            if (info === null) {
+                return err({
+                    type: "engine_info_failed",
+                    message: `Could not read the Podman engine info.\n  ${stderr.trim() || "Podman gave no readable info."}`,
+                });
+            }
+            const selinux = info.host.security?.selinuxEnabled === true;
+            const ociRuntime = info.host.ociRuntime?.name;
+            if (info.host.security?.rootless === true) return ok({ executor: { kind: "rootless-podman", selinux }, ociRuntime });
+            return hostUser().map((user) => ({ executor: { kind: "rootful", user, selinux }, ociRuntime }));
+        }
+        default: {
+            const exhaustive: never = rt.id;
+            throw new Error(`unhandled runtime: ${JSON.stringify(exhaustive)}`);
+        }
+    }
 }
 
 /** The docker-API architecture name of this host, for the manifest-index pick. */
