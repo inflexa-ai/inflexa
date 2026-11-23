@@ -1,6 +1,6 @@
 /**
  * The tool-approval gateway: the ask ledger over the Postgres pool of an
- * embedder. A turn workflow raises an ask under a known id and waits for the
+ * embedder. A workflow raises an ask under a known id and waits for the
  * answer itself. `answer` is one guarded write, and `pending` and the boot-time
  * `sweepExpired` read and expire the ledger.
  */
@@ -18,6 +18,7 @@ import {
     markExpired,
     selectGrant,
     selectAskScope,
+    selectAskWorkflow,
     selectPending,
     selectPendingByAnalyses,
     sweepExpired as sweepExpiredRows,
@@ -42,13 +43,16 @@ export type AskScope = {
     /** The opaque identity of the person the ask goes to. The harness never reads it. */
     readonly userId: string;
     readonly threadId?: string;
+    /** The workflow that waits for the answer. The answer of the host goes to it. */
+    readonly workflowId?: string;
 };
 
 /** The gateway surface: the raise of a turn and the outward embedder-driven API. */
 export type AskGateway = {
     /**
-     * Raise an ask under a known id, for a turn workflow that waits for the answer itself. A standing grant settles
-     * it at once as `resolved`. Else the row waits as `pending`. A second raise of the same id changes nothing.
+     * Raise an ask under a known id, for a workflow that waits for the answer itself. A standing grant of the user,
+     * in the analysis or in each analysis, settles it at once as `resolved`. Else the row waits as `pending`. A second
+     * raise of the same id changes nothing.
      */
     raise(id: string, request: AskRequest, scope: AskScope): Promise<"granted" | "pending">;
     /** Mark a pending ask `expired`. */
@@ -69,6 +73,8 @@ export type AskGateway = {
      * unknown id.
      */
     scopeOf(askId: string): Promise<AskScopeOfRow | null>;
+    /** The workflow that waits for the ask with this id. `null` for an unknown id or an ask with no workflow. */
+    workflowOf(askId: string): Promise<string | null>;
     /** Expire pending asks older than `maxAgeMs` (default {@link DEFAULT_SWEEP_MAX_AGE_MS}). */
     sweepExpired(maxAgeMs?: number): Promise<number>;
 };
@@ -94,6 +100,8 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
             command: request.command,
             detail: request.detail ?? null,
             grantKey: request.grantKey ?? null,
+            grantScope: request.grantScope ?? null,
+            workflowId: scope.workflowId ?? null,
             createdAt: now,
         };
         if (unwrapOrThrow(await selectGrant(pool, scope.analysisId, scope.userId, request.grantKey ?? request.command))) {
@@ -128,12 +136,16 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
         return unwrapOrThrow(await selectAskScope(pool, askId));
     }
 
+    async function workflowOf(askId: string): Promise<string | null> {
+        return unwrapOrThrow(await selectAskWorkflow(pool, askId));
+    }
+
     async function sweepExpired(maxAgeMs: number = DEFAULT_SWEEP_MAX_AGE_MS): Promise<number> {
         const now = Date.now();
         return unwrapOrThrow(await sweepExpiredRows(pool, new Date(now).toISOString(), new Date(now - maxAgeMs).toISOString()));
     }
 
-    return { raise, expire, abort, answer, pending, pendingByAnalyses, scopeOf, sweepExpired };
+    return { raise, expire, abort, answer, pending, pendingByAnalyses, scopeOf, workflowOf, sweepExpired };
 }
 
 /** The `data-ask` part of an ask in one status. Each status of one ask reconciles under the same id. */

@@ -37,6 +37,7 @@ import { recordThePersonOfWork } from "./20261114120000_record_the_person_of_wor
 import { recordTheAgentOfAStep } from "./20261116120000_record_the_agent_of_a_step.js";
 import { recordTheTemplateOfAnArtifact } from "./20261116120000_record_the_template_of_an_artifact.js";
 import { countTheSeedInputs } from "./20261123120000_count_the_seed_inputs.js";
+import { recordTheWaiterAndTheUserGrants } from "./20261124120000_record_the_waiter_and_the_user_grants.js";
 
 export function cortexMigrations(logger: Logger): Record<string, Migration> {
     return {
@@ -72,5 +73,6 @@ export function cortexMigrations(logger: Logger): Record<string, Migration> {
         "20261116120000_record_the_agent_of_a_step": recordTheAgentOfAStep,
         "20261116120000_record_the_template_of_an_artifact": recordTheTemplateOfAnArtifact,
         "20261123120000_count_the_seed_inputs": countTheSeedInputs,
+        "20261124120000_record_the_waiter_and_the_user_grants": recordTheWaiterAndTheUserGrants,
     };
 }

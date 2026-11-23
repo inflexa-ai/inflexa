@@ -774,7 +774,13 @@ export type { FarmLock, FarmLockError } from "./sandbox/farm.js";
 export { IMAGE_PACKAGES_FILE } from "./sandbox/image-packages.js";
 // The pool-scope inventory seam: an embedder that binds `readPoolInventory`
 // builds these sections, and `list_available_packages` renders them.
-export type { EnvironmentStorePaths, PoolInventoryPackage, PoolInventoryRead, PoolInventorySection } from "./config/environment-stores.js";
+export type {
+    EnvironmentStorePaths,
+    PoolInventoryPackage,
+    PoolInventoryRead,
+    PoolInventorySection,
+    ReferenceDownloadOptions,
+} from "./config/environment-stores.js";
 export { MachineBudgetSchema, ResourceLimitsSchema, ResourcePolicySchema, ResourceSpecSchema, parseResourcePolicy } from "./config/resource-limits.js";
 export type { MachineBudget, ResourceLimits, ResourcePolicy, ResourceSpec } from "./config/resource-limits.js";
 export { createWorkspaceFilesystem } from "./workspace/filesystem.js";
@@ -872,30 +878,6 @@ export type { CortexRunRow, StepExecutionRow, RunStatus, TerminalRunStatus } fro
 // surface a trigger or ledger failure need it by name to map the `cause`;
 // without it they must re-derive it from a function signature.
 export type { DbError } from "./lib/db-result.js";
-
-// Host-neutral reference-data catalog and shared installation receipts. Each
-// artifact names the third-party upstream it is fetched from; embedders own all
-// transfer/storage behavior but never choose a different source.
-export {
-    REFERENCE_DATA_CATALOG,
-    REFERENCE_DATA_CATALOG_VERSION,
-    ReferenceArtifactPathSchema,
-    ReferenceArtifactSchema,
-    ReferenceDataCatalogSchema,
-    ReferenceDatasetSchema,
-    ReferenceSha256Schema,
-    UnknownReferenceDatasetError,
-    referenceArtifactKey,
-    resolveReferenceInstallPlan,
-} from "./reference-data/catalog.js";
-export type { ReferenceArtifact, ReferenceDataCatalog, ReferenceDataset, ReferenceInstallPlan, ReferenceInstallPlanDataset } from "./reference-data/catalog.js";
-export {
-    REFERENCE_INSTALL_RECEIPT_VERSION,
-    ReferenceInstallReceiptSchema,
-    parseReferenceInstallReceipt,
-    referenceReceiptContentDigest,
-} from "./reference-data/receipt.js";
-export type { ReferenceInstallReceipt, ReferenceReceiptArtifact, ReferenceReceiptContent } from "./reference-data/receipt.js";
 
 // Workspace-tree path convention — the root-relative step directory each
 // sandbox step confines its artifact writes to (join onto the resolved root).

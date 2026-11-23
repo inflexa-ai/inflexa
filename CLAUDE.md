@@ -343,7 +343,7 @@ mismatch shows as a failed analysis, not as a failed build.
 | Layer | Holds | Must never |
 | --- | --- | --- |
 | A skill in `skills/` | The work: the dataset by name, and its contract — the key columns, the identifier space, the organism | Name a path, a directory, a file name, a format, or the tool that finds one |
-| A prompt in `harness/src/prompts/` | Which tools exist, and when to use one | List a dataset, or promise a format that the catalog does not give |
+| A prompt in `harness/src/prompts/` | Which tools exist, and when to use one | List a dataset, or promise a format that the store does not hold |
 | A tool in `harness/src/tools/` | Makes a path from a description, with the metadata to select between candidates | Make the caller find the location first |
 
 Obey these rules:
@@ -356,12 +356,15 @@ Obey these rules:
 - **A dataset name is not a path.** `CollecTRI` and `MSigDB hallmark` are domain
   terms, and a skill can use them. The rule is about a location and a format, not
   about a name.
-- **Describe the data well enough for a search by meaning.** The `format`,
-  `contents`, and `organism` fields in `harness/src/reference-data/catalog.ts` do
-  this work. A dataset with no real `contents` text cannot be found.
+- **A file describes itself.** `list_available_refs` reads the start of each
+  file in the reference store: the format, the first lines, and the columns. A
+  search matches the path and that text. Thus a skill names the content of the
+  data, for example the gene-set names or the key columns.
 - **Absence is a normal condition, not an error.** Say what to do when a resource
-  is not there. Report it, then continue with the data that you have. Do not use a
-  different resource in its place. Do not invent a path.
+  is not there. If the agent can download, it gets the resource from a source that
+  the user gave or that a fetched page shows. Otherwise, report it, then continue
+  with the data that you have. Do not use a different resource in its place. Do
+  not invent a path or a URL.
 
 Layout is a detail of the installer. Content that holds a layout makes a private
 decision into a public interface.

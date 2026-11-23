@@ -90,8 +90,12 @@ before relying on it.
 - The code of a step runs with no network: it cannot download data, call an
   outside API, or install a package. A step uses the data of the analysis, the
   staged reference data and packages, and the live lookups of its agent.
+- A step agent that holds \`download_ref\` can add a missing reference to the
+  store, from a URL that the user gave or that a page it fetched shows. When the
+  user gave the source of a missing reference, put that URL in the description
+  of the step that needs it.
 - **When a reference the analysis genuinely cannot proceed without is absent,
-  do not plan around it — stop and ask.** Call \`request_clarification\`, naming
+  and no source of it is known, do not plan around it — stop and ask.** Call \`request_clarification\`, naming
   what is needed in terms of what the data IS and which step needs it. Name every
   missing reference and package in that one request, so one provisioning pass
   covers the plan. A plan whose central step can only report failure costs a full

@@ -26,6 +26,7 @@ import { createRunCanceler, type RunCanceler } from "../execution/run-canceler.j
 import { createReportSessionRuntime, type ReportSessionRuntime } from "../app/report-session-runtime.js";
 import { createNoopUsageRecorder } from "../billing/noop-usage-recorder.js";
 import type { UsageRecorder } from "../billing/usage-recorder.js";
+import type { ReferenceDownloadOptions } from "../config/environment-stores.js";
 import type { ResourcePolicy } from "../config/resource-limits.js";
 import { registerSubAgent, type SubAgentPauses, type SubAgentRegistrar } from "../loop/sub-agent.js";
 import { workPause } from "../workflows/pause.js";
@@ -81,11 +82,13 @@ export type SandboxStepCallable = (input: SandboxStepInput) => Promise<SandboxSt
  * the same memory that the conversation agent writes.
  */
 export type CoreWorkflowDeps = {
-    readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "services" | "toolOutputStore" | "runAuthorizer" | "leases">;
+    readonly sandboxStep: Omit<SandboxStepDeps, "usageRecorder" | "services" | "toolOutputStore" | "runAuthorizer" | "leases" | "askGateway" | "agentDeps"> & {
+        readonly agentDeps: Omit<SandboxStepDeps["agentDeps"], "referenceDownloads">;
+    };
     readonly buildExecuteAnalysis: (
         sandboxStep: SandboxStepCallable,
     ) => Omit<ExecuteAnalysisDeps, "usageRecorder" | "synthesisSetup" | "toolOutputStore" | "workingMemory" | "workspaceFs">;
-    readonly dataProfile: Omit<DataProfileDeps, "usageRecorder" | "toolOutputStore" | "leases" | "services">;
+    readonly dataProfile: Omit<DataProfileDeps, "usageRecorder" | "toolOutputStore" | "leases" | "services" | "referenceDownloads">;
 };
 
 /** The sandboxes of the runtime. The assembly builds the one sandbox module over the client. */
@@ -123,7 +126,15 @@ export type RegisteredWorkflows = {
  */
 export type ConversationAssemblyDeps = Omit<
     ConversationAgentDeps,
-    "executeAnalysisWorkflow" | "usageRecorder" | "services" | "anchorReportSession" | "eyes" | "toolOutputStore" | "registerSubAgent" | "syncSessionFile"
+    | "executeAnalysisWorkflow"
+    | "usageRecorder"
+    | "services"
+    | "anchorReportSession"
+    | "eyes"
+    | "toolOutputStore"
+    | "registerSubAgent"
+    | "syncSessionFile"
+    | "referenceDownloads"
 > & {
     /** The web-search engine of the host. The `web-search` connector uses it when its settings name no endpoint. */
     readonly webSearch?: WebSearchEngine;
@@ -258,6 +269,11 @@ export type CoreRuntimeDeps = {
     readonly credentialFor?: (turnId: string) => AuthContext | undefined;
     /** The delays of the timer of an outage, for each kind of work. Absent: the default of the pause. */
     readonly pauseRetryDelaysMs?: readonly number[];
+    /**
+     * The downloads of reference data. The assembly gives the one value to the conversation agent and to each step
+     * agent, thus a planner never tells a step that it can download when the step cannot. Absent, no agent can download.
+     */
+    readonly referenceDownloads?: ReferenceDownloadOptions;
 };
 
 /**
@@ -428,8 +444,11 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         dbosClient: () => dbosClientFor(conversation.pool, conversation.logger ?? createNoopLogger()),
     });
 
+    const askGateway = createAskGateway({ pool: conversation.pool });
     const sandboxStep = registerSandboxStep({
         ...wf.sandboxStep,
+        agentDeps: { ...wf.sandboxStep.agentDeps, referenceDownloads: deps.referenceDownloads },
+        askGateway,
         leases,
         services,
         usageRecorder,
@@ -480,6 +499,7 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         provenance: deps.provenance,
         syncSessionFile: deps.syncSessionFile,
         registerSubAgent: registerPausingSubAgent,
+        referenceDownloads: deps.referenceDownloads,
     });
 
     // The report agent is a singleton over the conversation deps, the same way the
@@ -543,7 +563,6 @@ export function assembleCoreRuntime(deps: CoreRuntimeDeps): CoreRuntime {
         report: reportAgent,
     };
     const agentResolver = createThreadAgentResolver(agents);
-    const askGateway = createAskGateway({ pool: conversation.pool });
     const chatTurns = registerChatTurns({
         pool: conversation.pool,
         logger: conversation.logger,

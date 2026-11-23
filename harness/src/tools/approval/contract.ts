@@ -28,6 +28,11 @@ export type AskRequest = {
      * field, and the surface never renders it. Absent, the grant keys on `command`.
      */
     readonly grantKey?: string;
+    /**
+     * The reach of the grant that an `always` records: `analysis` (the default) grants inside the analysis of the
+     * ask, and `user` grants in each analysis of the user.
+     */
+    readonly grantScope?: "analysis" | "user";
 };
 
 /**

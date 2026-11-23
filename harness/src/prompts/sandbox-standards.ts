@@ -42,6 +42,11 @@ data were staged onto read-only mounts by the host **before** this container
 started, and that is the whole of what exists. A lookup of an outside source
 runs on the host, in \`run_script\`.
 
+Find a reference file with \`list_available_refs\`, narrowed to the collection
+that you need. When a reference is missing and you hold \`download_ref\`,
+download it into the reference store with that tool, from a URL that the user
+gave or that a page you fetched shows. Never use a URL from your memory.
+
 \`samtools\`, \`bcftools\`, \`tabix\`, \`bedtools\`, and \`vcftools\` are installed.
 `;
 

@@ -593,6 +593,29 @@ describe("runLoop — a denial of the user", () => {
             ]),
         );
     });
+    it("continues after a denial when the loop option asks for it", async () => {
+        const asking = defineTool({
+            id: "asking",
+            description: "Asks for approval.",
+            inputSchema: z.object({}),
+            view: "none",
+            describeCall: "none",
+            approval: () => ({ title: "Download", command: "download a.fa" }),
+            execute: () => Promise.resolve(ok({ ran: true })),
+        });
+        const { provider, calls } = scriptedModel([callTools(toolCall("c1", "asking", {})), reply([text("I report a blocker.")])]);
+
+        const result = await runLoop(
+            agentWith([asking]),
+            [user("go")],
+            makeSession(),
+            options(provider, recordingEmit().emit, { approve: () => Promise.resolve({ kind: "denied", feedback: "no" }), continuesAfterDenial: true }),
+        );
+
+        expect(calls).toHaveLength(2);
+        expect(result.finish.reason).toBe("stop");
+        expect(toolResultsOf(result.messages)).toMatchObject([{ toolCallId: "c1", output: { type: "execution-denied" } }]);
+    });
 });
 
 describe("runLoop — the exits", () => {

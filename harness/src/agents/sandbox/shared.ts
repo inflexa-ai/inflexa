@@ -29,7 +29,7 @@ import { sandboxOrientCorePromptFor, sandboxAnalysisStepStandardsPrompt } from "
 import { composeSystemPrompt } from "../system-prompt.js";
 
 // Sandbox-environment introspection, plus the farm-extension seam face.
-import { createLinkPackagesTool, createListAvailablePackagesTool, createListAvailableRefsTool } from "../../tools/sandbox/index.js";
+import { createDownloadRefTool, createLinkPackagesTool, createListAvailablePackagesTool, createListAvailableRefsTool } from "../../tools/sandbox/index.js";
 
 // Data-profile retrieval (dependency-bearing) — always-on, see `createSandboxAgent`.
 import { createInspectDataProfileTool } from "../../tools/research/inspect-data-profile.js";
@@ -260,6 +260,8 @@ export function createSandboxAgent(deps: SandboxAgentDeps, spec: SandboxAgentSpe
           })
         : undefined;
     const workspaceTools = buildWorkspaceTools(deps, opts.readOnly ?? false, readLineage);
+    // The profiler describes the input data, and it never needs a reference, thus only a step agent downloads.
+    const downloads = deps.referenceDownloads !== undefined && spec.role === "executor";
     const tools: Tool[] = [
         ...workspaceTools,
         ...(deps.toolOutputStore ? [createReadToolOutputTool(deps.toolOutputStore)] : []),
@@ -281,7 +283,8 @@ export function createSandboxAgent(deps: SandboxAgentDeps, spec: SandboxAgentSpe
             // the listing must then stop at "absent", not at "missing".
             linkToolPresent: deps.extendAnalysisFarm !== undefined,
         }),
-        createListAvailableRefsTool({ refStorePath: deps.refStorePath }),
+        createListAvailableRefsTool({ refStorePath: deps.refStorePath, canDownload: downloads }),
+        ...(deps.referenceDownloads && downloads ? [createDownloadRefTool(deps.referenceDownloads)] : []),
         ...(spec.role === "profiler"
             ? [createScanInputsTool({ workspaceFs: deps.workspaceFs, analysisId: deps.step.analysisId, lease: deps.step.lease })]
             : []),
