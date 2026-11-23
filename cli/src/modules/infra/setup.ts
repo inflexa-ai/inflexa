@@ -28,6 +28,7 @@ import {
     isReservedPostgresPort,
     providerApiKeyVar,
     resolveModelApiKey,
+    terminalEnv,
     type ProviderEnvSnapshot,
 } from "../../lib/env.ts";
 import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialScheme } from "../../lib/credential.ts";
@@ -35,6 +36,8 @@ import { select, promptText, promptTextOptional, confirm, stdinIsTTY } from "../
 import { recordOrEmpty, unknownRecordSchema } from "../../lib/json_record.ts";
 import { isAsciiDigits, trimTrailing, withoutSuffix } from "../../lib/text.ts";
 import { isMember } from "../../lib/types.ts";
+import { acceptPastedCallbacks, deliverCallback, pasteCallbackHint } from "../../lib/oauth_callback.ts";
+import { sshForwardCommand } from "../../lib/open_external.ts";
 import {
     AGENT_NAMES,
     detectedMachine,
@@ -2616,14 +2619,43 @@ async function isAuthenticated(): Promise<boolean> {
     return hasProviderCredential(env.cliproxyAuthDir);
 }
 
+/** The last lines of the output of the login container that a failed login prints. The rest stays out of the terminal. */
+const LOGIN_OUTPUT_TAIL_LINES = 40;
+
+/**
+ * The message of a login container that exited with `code`, with the tail of its output. A callback port that a
+ * different process holds is named: the engine refuses the publish and gives only exit code 125, and the
+ * reason is in the output.
+ */
+export function describeLoginFailure(label: string, code: number, output: readonly string[], port: number | null): string {
+    const tail = output.slice(-LOGIN_OUTPUT_TAIL_LINES).join("\n").trim();
+    const lowered = tail.toLowerCase();
+    const portInUse = port !== null && (lowered.includes("port is already allocated") || lowered.includes("address already in use"));
+    const lines = [`${label} login failed (exit code ${code}).`];
+    if (portInUse) {
+        lines.push(
+            `The callback port ${port} is in use on this machine. Stop the process that holds it (\`lsof -i :${port}\` shows it), or an old login container (\`docker ps\`), then retry.`,
+        );
+    }
+    if (tail !== "") lines.push("The output of the login container:", tail);
+    return lines.join("\n");
+}
+
 /**
  * Run the proxy's OAuth flow in a throwaway container. Pipes stdout/stderr to
- * extract the auth URL (dropping `-t` — the `--no-browser` mode doesn't need a
+ * extract the auth URL (no `-t` — the `--no-browser` mode doesn't need a
  * PTY, it just prints a URL and waits for the HTTP callback on the published
- * port). The extracted URL is copied to the clipboard and shown in a clack
- * `note` box. stdin is still inherited (`-i`) so any interactive prompt the
- * container might issue still works. Returns whether the login succeeded (exit 0/null) so the caller
- * records the provider fact only on a real success, never when the flow errored out.
+ * port). The extracted URL is copied to the clipboard and shown as a plain line.
+ * Returns whether the login succeeded (exit 0) so the caller records the provider fact only on a real
+ * success, never when the flow errored out.
+ *
+ * Over SSH the browser runs on a different computer, and its redirect to `localhost:<port>` reaches that
+ * computer, not this one. Two paths serve that person: the `ssh -L` command for the callback port, printed
+ * before the URL, and a paste of the URL that the browser failed to load. The paste goes to the published port
+ * of this machine, where the callback server of the container listens on each interface.
+ *
+ * The container gets no stdin. The vendor reads a pasted URL from its own stdin after 15 s, but its prompt
+ * has no line end, and two readers of one terminal take turns at random. This process reads the paste.
  */
 async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promise<boolean> {
     // The login container bind-mounts the proxy config file (file-typed) and the auth dir
@@ -2644,30 +2676,30 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
 
     const port = PROVIDER_CALLBACK_PORT[provider];
     // Loopback-only: publish the OAuth callback port where only this host can reach it, never the LAN. A remote/SSH
-    // login still works — the SSH local-forward hinted below targets localhost on this host, which is the loopback bind.
+    // login still works — the SSH local-forward printed below targets 127.0.0.1 on this host, which is the loopback bind.
     const publish = port === null ? [] : ["-p", `127.0.0.1:${port}:${port}`];
     // No `-t`: the `--no-browser` flow doesn't need a PTY. Dropping it lets us
     // pipe stdout/stderr to capture the auth URL without hanging.
     // The login container runs the same pinned image as the compose proxy service (PROXY_IMAGE).
-    const args = ["run", "--rm", "-i", ...volumeArgs(rt), ...publish, PROXY_IMAGE, CONTAINER_BINARY, PROVIDER_LOGIN_FLAG[provider], "--no-browser"];
+    const args = ["run", "--rm", ...volumeArgs(rt), ...publish, PROXY_IMAGE, CONTAINER_BINARY, PROVIDER_LOGIN_FLAG[provider], "--no-browser"];
 
     const s = clackSpinner();
     s.start(`Authenticating ${PROVIDER_LABEL[provider]}`);
 
     const proc = Bun.spawn({
         cmd: [rt.bin, ...args],
-        stdin: "inherit",
+        stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
     });
 
     // oxlint-disable-next-line eslint-js/no-restricted-syntax -- Finds each http or https URL in a line that the login container prints. A URL runs to the first white space, quote, or angle bracket. A string form (find each `http://` or `https://`, then take characters up to one of those) needs a scan loop with a stop set, which is longer than the pattern.
     const urlPattern = /https?:\/\/[^\s"'<>]+/g;
-    // oxlint-disable-next-line eslint-js/no-restricted-syntax -- Finds the `ssh -i` or `ssh -L` tunnel command in a line that the login container prints: `ssh`, white space, `-i` or `-L`, and then the text up to the last digit of the line. A string form must try each `ssh` of the line, skip the white space, test the flag, and look back for the last digit, which is longer than the pattern.
-    const sshPattern = /ssh\s+-[iL].*\d+/g;
     let authUrl: string | null = null;
-    let sshCommand: string | null = null;
-    let urlShown = false;
+    // An object, not two `let`s: `scanStream` sets them across awaits, and control-flow analysis would narrow
+    // a bare `let` back to its first value at the reads below.
+    const shown: { url: boolean; stopPaste: (() => void) | null } = { url: false, stopPaste: null };
+    const output: string[] = [];
 
     async function scanStream(stream: ReadableStream<Uint8Array>): Promise<void> {
         const reader = stream.getReader();
@@ -2680,11 +2712,8 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
             const lines = buffer.split("\n");
             buffer = lines.pop() ?? "";
             for (const line of lines) {
-                // Capture the first SSH tunnel command (for remote/SSH scenarios).
-                if (!sshCommand) {
-                    const sshMatch = line.match(sshPattern);
-                    if (sshMatch) sshCommand = sshMatch[0];
-                }
+                output.push(line);
+                if (output.length > LOGIN_OUTPUT_TAIL_LINES) output.shift();
 
                 const urls = line.match(urlPattern);
                 if (!urls) continue;
@@ -2696,9 +2725,14 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
 
                 // Show the URL once, as soon as it's found, so the user can act
                 // while the container waits for the OAuth callback.
-                if (authUrl && !urlShown) {
-                    urlShown = true;
+                if (authUrl && !shown.url) {
+                    shown.url = true;
                     s.stop(`${PROVIDER_LABEL[provider]} — open this URL in your browser`);
+                    // The vendor prints its own tunnel command, but it names `root@` and the address of the
+                    // container. This one names the user and the address of this session.
+                    if (port !== null && terminalEnv.sshConnection !== null) {
+                        note(sshForwardCommand(port), "Over SSH: run this on your computer first, to forward the callback port");
+                    }
                     const { writeClipboard } = await import("../../lib/clipboard.ts");
                     const copied = await writeClipboard(authUrl);
                     // Print the URL as a plain line outside any box so it's
@@ -2708,25 +2742,40 @@ async function runProviderLogin(rt: ContainerRuntime, provider: Provider): Promi
                     console.log(`  ${authUrl}`);
                     console.log();
                     if (copied.isOk()) log.info("Copied to clipboard.");
-                    if (sshCommand) {
-                        note(sshCommand, "Remote? Tunnel the callback port first");
+                    if (port !== null && process.stdin.isTTY) {
+                        // No spinner while the person can paste: its frames would draw over the pasted text.
+                        log.info(pasteCallbackHint(port));
+                        log.info(`Waiting for the ${PROVIDER_LABEL[provider]} callback.`);
+                        shown.stopPaste = acceptPastedCallbacks(port, {
+                            input: process.stdin,
+                            say: (said) => log.info(said),
+                            deliver: (url) => deliverCallback(url),
+                        });
+                    } else {
+                        s.start(`Waiting for ${PROVIDER_LABEL[provider]} callback`);
                     }
-                    s.start(`Waiting for ${PROVIDER_LABEL[provider]} callback`);
                 }
             }
         }
+        if (buffer !== "") output.push(buffer);
     }
 
     const scanPromise = Promise.all([scanStream(proc.stdout), scanStream(proc.stderr)]);
     const code = await proc.exited;
     await scanPromise;
+    shown.stopPaste?.();
+    // With the paste open, no spinner runs, thus the outcome is a plain line.
+    const spinning = shown.stopPaste === null;
 
     if (code !== 0) {
-        s.error(`${PROVIDER_LABEL[provider]} login failed (exit code ${code})`);
+        const failed = describeLoginFailure(PROVIDER_LABEL[provider], code, output, port);
+        if (spinning) s.error(failed);
+        else log.error(failed);
         log.warn("You can retry with `inflexa setup`.");
         return false;
     }
-    s.stop(`${PROVIDER_LABEL[provider]} authenticated`);
+    if (spinning) s.stop(`${PROVIDER_LABEL[provider]} authenticated`);
+    else log.success(`${PROVIDER_LABEL[provider]} authenticated`);
     return true;
 }
 
