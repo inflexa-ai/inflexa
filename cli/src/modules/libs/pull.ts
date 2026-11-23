@@ -20,7 +20,7 @@
 import { err, ok, type Result } from "neverthrow";
 
 import { fail } from "../../lib/cli.ts";
-import { ensureRuntime, readConfig, selectedRuntime, writeConfig } from "../../lib/config.ts";
+import { ensureRuntime, readConfig, readConfigForWrite, selectedRuntime, writeConfig } from "../../lib/config.ts";
 import { capture, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
 import { unknownRecordSchema } from "../../lib/json_record.ts";
@@ -62,7 +62,9 @@ export function configuredSandboxImage(): string {
  * `null`, and the stale override then still wins this run.
  */
 export function migrateRetiredSandboxImageOverride(): string | null {
-    const cfg = readConfig();
+    const read = readConfigForWrite();
+    if (read.isErr()) return null;
+    const cfg = read.value;
     const harness = unknownRecordSchema.safeParse(cfg.harness);
     if (!harness.success) return null;
     const img = harness.data.sandboxImage;

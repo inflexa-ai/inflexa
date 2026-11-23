@@ -52,7 +52,7 @@ import { chatStatus } from "./hooks/status.ts";
 import { KEYS, chordLabel, keybindLabel, type Chord } from "./keymap.ts";
 import { useWorkspace, type Workspace } from "./contexts/workspace.ts";
 import { GLYPHS, themes, themeIds, type ThemeId } from "../lib/design_system.ts";
-import { AGENT_EFFORTS, readConfig, writeConfig } from "../lib/config.ts";
+import { AGENT_EFFORTS, readConfig, readConfigForWrite, writeConfig } from "../lib/config.ts";
 import { statResult } from "../lib/fs.ts";
 import { str256, type Str256 } from "../lib/types.ts";
 import {
@@ -365,10 +365,12 @@ export function ThemePicker(): JSX.Element {
             }}
             onSelect={(id: ThemeId) => {
                 setTheme(id); // live recolor of the running render root
-                writeConfig({ ...readConfig(), theme: id }).match(
-                    () => notify({ kind: "info", text: `Theme: ${themes[id].name}` }),
-                    (e) => notify({ kind: "error", text: `Failed to save theme: ${e.type}` }),
-                );
+                readConfigForWrite()
+                    .andThen((config) => writeConfig({ ...config, theme: id }))
+                    .match(
+                        () => notify({ kind: "info", text: `Theme: ${themes[id].name}` }),
+                        (e) => notify({ kind: "error", text: `Failed to save theme: ${e.type}` }),
+                    );
                 ws.closeDialog();
             }}
         />

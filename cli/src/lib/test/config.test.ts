@@ -1,11 +1,20 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { describeConfigReadError, ensureRuntime, readConfig, readConfigResult, resolveRuntime, writeConfig, type Config } from "../config.ts";
+import {
+    describeConfigReadError,
+    ensureRuntime,
+    readConfig,
+    readConfigForWrite,
+    readConfigResult,
+    resolveRuntime,
+    writeConfig,
+    type Config,
+} from "../config.ts";
 import { ContainerRuntimeError, runtimes, type ContainerRuntime } from "../container.ts";
 import { DEFAULT_THEME_ID } from "../design_system.ts";
 import { env } from "../env.ts";
@@ -95,6 +104,27 @@ describe("readConfig — fail-closed", () => {
         expect(e.type).toBe("config_write_failed");
         expect(describeCause(e.cause)).toContain(env.configPath);
         expect(readFileSync(env.configPath, "utf8")).toBe(broken);
+    });
+
+    // A crash or a full disk in the middle of a write must leave the old file or the new file, never a part.
+    test("a write replaces the file through a rename, and leaves no temporary file", () => {
+        writeConfig({ telemetry: false, theme: DEFAULT_THEME_ID, leaderTimeout: 2000, embedding: { mode: "off" } })._unsafeUnwrap();
+        const before = statSync(env.configPath).ino;
+        writeConfig({ telemetry: true, theme: DEFAULT_THEME_ID, leaderTimeout: 2000, embedding: { mode: "off" } })._unsafeUnwrap();
+        expect(statSync(env.configPath).ino).not.toBe(before);
+        expect(readConfig().telemetry).toBe(true);
+        expect(readdirSync(dirname(env.configPath)).filter((name) => name !== basename(env.configPath) && name.startsWith(basename(env.configPath)))).toEqual(
+            [],
+        );
+    });
+
+    test("readConfigForWrite gives the config, or a write error that names the file", () => {
+        writeRawConfig(JSON.stringify({ telemetry: true }));
+        expect(readConfigForWrite()._unsafeUnwrap().telemetry).toBe(true);
+        writeRawConfig("{ not valid json");
+        const e = readConfigForWrite()._unsafeUnwrapErr();
+        expect(e.type).toBe("config_write_failed");
+        expect(describeCause(e.cause)).toContain(env.configPath);
     });
 
     test("a command stops at once on a file that does not parse, and names the file", () => {
