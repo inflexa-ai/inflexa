@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
@@ -12,6 +13,7 @@ import {
     readConfig,
     readConfigForWrite,
     readConfigResult,
+    resolveRefsDir,
     resolveRuntime,
     writeConfig,
     type Config,
@@ -454,5 +456,48 @@ describe("readConfig — the customization blocks", () => {
         expect(cfg.connectors).toBeUndefined();
         expect(cfg.credentials).toBeUndefined();
         expect(cfg.telemetry).toBe(true);
+    });
+});
+
+describe("readConfig — the refs block", () => {
+    test("reads the store path and the added hosts", () => {
+        writeRawConfig(JSON.stringify({ telemetry: false, refs: { dir: "/Volumes/lab-drive/refs", autoApproveHosts: ["data.mylab.org"] } }));
+        expect(readConfig().refs).toEqual({ dir: "/Volumes/lab-drive/refs", autoApproveHosts: ["data.mylab.org"] });
+    });
+
+    test("one malformed field degrades alone, and its sibling stays", () => {
+        writeRawConfig(JSON.stringify({ telemetry: true, refs: { dir: 7, autoApproveHosts: ["data.mylab.org"] } }));
+        const cfg = readConfig();
+        expect(cfg.refs).toEqual({ dir: undefined, autoApproveHosts: ["data.mylab.org"] });
+        expect(cfg.telemetry).toBe(true);
+    });
+});
+
+describe("resolveRefsDir", () => {
+    function withRefs(refs: Config["refs"]): Config {
+        return { ...readConfig(), refs };
+    }
+
+    test("an absent value gives the store below the data folder", () => {
+        expect(resolveRefsDir(withRefs(undefined))._unsafeUnwrap()).toBe(env.refsDir);
+        expect(resolveRefsDir(withRefs({}))._unsafeUnwrap()).toBe(env.refsDir);
+    });
+
+    test("an absolute value is the store", () => {
+        expect(resolveRefsDir(withRefs({ dir: "/Volumes/lab-drive/refs" }))._unsafeUnwrap()).toBe("/Volumes/lab-drive/refs");
+    });
+
+    test("a `~/` value expands to the home folder", () => {
+        expect(resolveRefsDir(withRefs({ dir: "~/refs" }))._unsafeUnwrap()).toBe(join(homedir(), "refs"));
+    });
+
+    test("a different relative value is an error that names the value", () => {
+        expect(resolveRefsDir(withRefs({ dir: "refs" }))._unsafeUnwrapErr()).toEqual({ type: "refs_dir_relative", value: "refs" });
+        expect(resolveRefsDir(withRefs({ dir: "~refs" }))._unsafeUnwrapErr()).toEqual({ type: "refs_dir_relative", value: "~refs" });
+    });
+
+    test("with no argument, it reads the config file", () => {
+        writeRawConfig(JSON.stringify({ telemetry: false, refs: { dir: "/srv/refs" } }));
+        expect(resolveRefsDir()._unsafeUnwrap()).toBe("/srv/refs");
     });
 });

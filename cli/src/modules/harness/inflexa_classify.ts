@@ -44,8 +44,8 @@ export type Classification =
 
 /**
  * Split a single command string into argv words with quote awareness (single and
- * double quotes), so a caller that passes `"refs download x --yes"` as one
- * element is classified like the tokenized `["refs", "download", "x", "--yes"]`.
+ * double quotes), so a caller that passes `"geo download GSE12345"` as one
+ * element is classified like the tokenized `["geo", "download", "GSE12345"]`.
  * Deliberately minimal — no escape sequences, no env expansion — because the only
  * job is to recover the word boundaries a shell would have produced; anything
  * fancier is out of scope and would be a second, divergent shell parser to keep
@@ -87,12 +87,12 @@ function tokenizeArgvString(input: string): string[] {
 
 /**
  * Recover the effective argv a classifier/runner should act on: a single element
- * that carries whitespace is a packed command string ("refs download x --yes")
+ * that carries whitespace is a packed command string ("geo download GSE12345")
  * and is tokenized quote-awarely back to word argv; anything else is already
  * split and passes through verbatim (its elements may legitimately contain
  * spaces — e.g. a filename — and must NOT be re-split).
  *
- * NOT idempotent — tokenizing `['"refs download"']` yields `["refs download"]`,
+ * NOT idempotent — tokenizing `['"geo download"']` yields `["geo download"]`,
  * a single element that still carries whitespace and tokenizes again. Thus each
  * caller applies it exactly ONCE, to a raw argv. Never apply it to a value that
  * already passed through it.
@@ -168,8 +168,8 @@ export async function classifyInflexaArgv(argv: string[]): Promise<Classificatio
     // would otherwise print to stdout/stderr while we probe how the argv resolves.
     // Each command carries its OWN `_outputConfiguration` (copied from its parent
     // at creation time, before this factory returns), so silencing only the root
-    // leaves a subcommand's help/error text — e.g. `refs --help`, or the help a
-    // bare `refs` group prints — writing to the real streams. Walk the whole tree.
+    // leaves a subcommand's help/error text — e.g. `geo --help`, or the help a
+    // bare `geo` group prints — writing to the real streams. Walk the whole tree.
     const silence = (command: Command): void => {
         command.configureOutput({ writeOut: () => {}, writeErr: () => {} });
         for (const child of command.commands) silence(child);
@@ -188,7 +188,7 @@ export async function classifyInflexaArgv(argv: string[]): Promise<Classificatio
         if (e instanceof ClassifiedActionSignal) {
             // Walk parent links from the resolved leaf up to the root, collecting
             // command names, then reverse so the path reads root-first
-            // (["inflexa", "refs", "download"]). grantKey is that path joined by
+            // (["inflexa", "geo", "download"]). grantKey is that path joined by
             // spaces — arguments and options are deliberately excluded so every
             // invocation of the same command collapses to one stable key.
             const leaf = e.actionCommand;
@@ -259,7 +259,7 @@ export async function classifyInflexaArgv(argv: string[]): Promise<Classificatio
         return { kind: "malformed", message };
     }
 
-    // parseAsync resolved with no throw: a parent group (e.g. bare `refs`) printed
+    // parseAsync resolved with no throw: a parent group (e.g. bare `geo`) printed
     // its own help and ran no action. That is introspection — it described itself
     // and did nothing to the user's data.
     return { kind: "introspection", argv: args };

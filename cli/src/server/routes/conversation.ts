@@ -448,7 +448,7 @@ export function conversationRoutes<P>(boot: ServerBoot<ConversationRuntime<P>>, 
         return pending.match(
             (asks) => {
                 // The gateway gives each pending ask of the ledger. The set is small, because each pending ask
-                // holds a turn open, thus the filter runs here, as in Cortex.
+                // holds a chat turn or a sandbox step open, thus the filter runs here, as in Cortex.
                 const ofAnalysis = asks.filter((ask) => ask.analysisId === analysisId);
                 const start = page.page * page.perPage;
                 return c.json<AskList>(listEnvelope("asks", ofAnalysis.slice(start, start + page.perPage), ofAnalysis.length, page));

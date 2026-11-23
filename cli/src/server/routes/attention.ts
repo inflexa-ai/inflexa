@@ -122,6 +122,8 @@ export function attentionRoutes<P>(boot: ServerBoot<AttentionRuntime<P>>, opts: 
         const turns = await opts.liveTurns(pool, [...threadIds]);
         if (turns.isErr()) return internalError(c, turns.error, "read the live turns");
         const runningTurns = runningTurnsOf(turns.value);
+        // An ask with no thread is the ask of a sandbox step, and the run of the step keeps it open.
+        const runningAnalyses = new Set(running.map((entry) => entry.analysisId));
 
         // An analysis with no SQLite row has no name, and no `{A}` route opens it, thus its items drop.
         const activityOf = threadActivityOf(pending, runningTurns);
@@ -138,7 +140,7 @@ export function attentionRoutes<P>(boot: ServerBoot<AttentionRuntime<P>>, opts: 
                         title: ask.title,
                         command: ask.command,
                         createdAt: ask.createdAt,
-                        stale: ask.threadId === null || !runningTurns.has(ask.threadId),
+                        stale: ask.threadId === null ? !runningAnalyses.has(ask.analysisId) : !runningTurns.has(ask.threadId),
                     },
                 ];
             }),

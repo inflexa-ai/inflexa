@@ -55,25 +55,25 @@ the exit sequence.
 
 ### Requirement: Existing local reference store is mounted read-only into sandboxes
 
-The CLI harness composition SHALL supply `refStorePath` to the harness sandbox client exactly when `env.refsDir` already exists. It SHALL NOT create the directory during runtime boot or passive launch. An existing directory, including an empty one, SHALL be mounted read-only by the harness at `/mnt/refs`; an absent directory SHALL leave the mount unconfigured so Docker cannot auto-create a root-owned bind source.
+The CLI harness composition MUST give the configured reference store to the harness as `refStorePath`, whether the directory exists or not. It MUST NOT make the directory at runtime boot or at a passive launch. The harness mounts the directory read-only at `/mnt/refs` when it exists at sandbox creation. Thus Docker never makes a bind source that root owns.
 
 #### Scenario: Deliberately created store is wired
 
-- **GIVEN** setup, reference download, or the user has created `env.refsDir`
+- **GIVEN** the user or a download made the configured reference store
 - **WHEN** the embedded harness runtime creates a Docker sandbox
-- **THEN** the sandbox client receives that host path as `refStorePath` and the sandbox sees it read-only at `/mnt/refs`
+- **THEN** the sandbox sees that host path read-only at `/mnt/refs`
 
 #### Scenario: Missing store is not auto-created
 
-- **GIVEN** `env.refsDir` does not exist
+- **GIVEN** the configured reference store does not exist
 - **WHEN** the runtime boots and creates a sandbox
-- **THEN** `refStorePath` is omitted and neither the CLI nor Docker creates the host directory as a side effect of composition
+- **THEN** the sandbox has no `/mnt/refs` mount, and neither the CLI nor Docker makes the host directory
 
 #### Scenario: Empty store remains distinguishable from no mount
 
-- **GIVEN** `env.refsDir` deliberately exists but contains no reference data
+- **GIVEN** the configured reference store exists and contains no reference data
 - **WHEN** a sandbox is created
-- **THEN** it receives the empty read-only mount so harness discovery can report mounted-but-empty rather than unmounted
+- **THEN** it gets the empty read-only mount, thus discovery reports an empty store and not a missing store
 
 ### Requirement: Sandbox engine connection follows the pinned container runtime
 
@@ -619,3 +619,12 @@ fails its step before the step deadline.
 
 - **WHEN** the runtime boots
 - **THEN** it registers the reaper and the notification sweep, and it registers no watchdog
+
+### Requirement: The CLI binds reference downloads
+
+The CLI harness composition MUST bind the download options of the harness with the configured reference store and the hosts of `refs.autoApproveHosts`. Thus the conversation agent and each step agent get the `download_ref` tool.
+
+#### Scenario: The agents can download
+
+- **WHEN** the server boots the harness runtime
+- **THEN** the conversation agent and the step agents have `download_ref`, and a download writes into the configured reference store

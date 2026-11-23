@@ -124,8 +124,6 @@ const REST_ARGV = [
     "https://embeds.internal/v1",
     "--embeddings-model",
     "text-embedding-3-large",
-    "--refs",
-    "collectri,gtex-v10",
     "--sandbox",
     "--runtime",
     "podman",
@@ -178,7 +176,6 @@ describe("setup registry — every declared batch option reaches the answers lay
             postgres: { user: "alice", password: "s3cret", port: 6000, database: "atlas", host: "db.internal" },
             resources: { sharePct: 37 },
             embedding: { mode: "api-key", baseURL: "https://embeds.internal/v1", model: "text-embedding-3-large", gguf: undefined },
-            refs: ["collectri", "gtex-v10"],
             sandbox: true,
             runtime: "podman",
         });
@@ -194,10 +191,9 @@ describe("setup registry — every declared batch option reaches the answers lay
 
     test("--config names a file whose answers reach the same resolution", async () => {
         const path = join(dir, "fleet.yml");
-        writeFileSync(path, "postgres:\n  database: from-file\nrefs: recommended\n");
+        writeFileSync(path, "postgres:\n  database: from-file\n");
         const answers = resolve(await forwardedFlags(["--yes", "--config", path]));
         expect(answers.postgres?.database).toBe("from-file");
-        expect(answers.refs).toBe("recommended");
     });
 
     test("the cases above exercise EVERY batch option — a new one cannot ship with no value case", () => {

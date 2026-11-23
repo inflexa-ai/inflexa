@@ -19,18 +19,17 @@ import {
     S_CORNER_TOP_RIGHT,
     symbol,
 } from "@clack/prompts";
-import { REFERENCE_DATA_CATALOG, type ReferenceDataCatalog } from "@inflexa-ai/harness";
 import { err, ok, type Result } from "neverthrow";
 import { styleText } from "node:util";
 
-import { confirm } from "../../lib/cli.ts";
-import { env } from "../../lib/env.ts";
+import { confirm, dieOn } from "../../lib/cli.ts";
+import { resolveRefsDir } from "../../lib/config.ts";
 import { splitWhitespace } from "../../lib/text.ts";
 import { runEvery } from "../../lib/timer.ts";
+import { REFERENCE_DATA_CATALOG, type ReferenceDataCatalog } from "./catalog.ts";
 import {
     buildReferenceListDocument,
     buildReferenceVerifyDocument,
-    ensureReferenceStore,
     inspectReferenceStore,
     installReferenceDatasets,
     measureReferenceDownload,
@@ -46,8 +45,10 @@ import {
     type ReferenceStoreInspection,
 } from "./store.ts";
 
-/** Options shared by the explicit download command and setup. */
+/** Options of the headless download operation. */
 export type ReferenceDownloadOptions = {
+    /** The reference store that receives the datasets. */
+    readonly root: string;
     /** Selected catalog ids. */
     readonly ids: readonly string[];
     /** Explicit non-interactive consent and interactive confirmation bypass. */
@@ -68,26 +69,6 @@ export type ReferenceDownloadOptions = {
     readonly fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 };
 
-/** Setup-specific reference selection. */
-export type ReferenceSetupOptions = {
-    /**
-     * The answered selection from `setup --refs`. Absent means the question went unanswered — an
-     * interactive run offers the picker, a batch run installs nothing. Present, preset or ids, IS the
-     * consent: naming a selection is the deliberate act a separate confirmation flag exists to obtain.
-     */
-    readonly selection?: ReferenceSelection;
-    /** Whether setup may prompt: an attached terminal, and no batch mode withdrawing it. */
-    readonly interactive: boolean;
-    /** Matching catalog/plan seam for offline tests, mirroring the download path. */
-    readonly source?: ReferenceCatalogSource;
-    /**
-     * Fetch seam, forwarded to every download this drives. Present for the same reason the catalog
-     * seam is: without it a test of setup's consented paths has no way to stay off the network, since
-     * the size sweep runs before consent and the transfer follows it.
-     */
-    readonly fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
-};
-
 /** A selection was cancelled before transfer. */
 export type DeclinedReferenceDownload = {
     /** No dataset was activated. */
@@ -95,27 +76,6 @@ export type DeclinedReferenceDownload = {
     /** Distinguishes cancellation from an empty successful plan. */
     readonly declined: true;
 };
-
-/**
- * The words `setup --refs` accepts in place of explicit ids. Scoped to setup's own question on
- * purpose: `inflexa refs download` takes datasets and nothing else, so a set-valued word sharing its
- * variadic argument with ids would make an id list and a preset indistinguishable at the call site.
- */
-export const REFERENCE_PRESETS = ["recommended", "all"] as const;
-
-/** A word standing for a set of datasets that only the catalog and the local store can name. */
-export type ReferencePreset = (typeof REFERENCE_PRESETS)[number];
-
-/** An answered reference selection: one preset word, or exactly the ids to install. */
-export type ReferenceSelection =
-    | {
-          /** Resolved against the datasets setup is offering, never against the raw catalog. */
-          readonly preset: ReferencePreset;
-      }
-    | {
-          /** Catalog ids, as answered. */
-          readonly ids: readonly string[];
-      };
 
 /** A file count phrased for the terminal — the catalog pins no sizes, so the upstream determines
  * the bytes at download time and the honest thing to state ahead of time is the number of files. */
@@ -203,16 +163,15 @@ const ON_DEMAND_REFERENCE_TITLE = "No rush";
  * widths (beside the list, or above it on a narrow terminal), so the copy is stored once and wrapped
  * at render time rather than hand-broken for one of them.
  *
- * Both routes are real: `refs download` is a registered command, and it is classified `approval` in
- * the command registry, so the conversation agent can propose exactly that argv through `run_inflexa`
- * and the user approves it in chat. The agent offers the download — it never performs one unattended,
- * and the wording promises nothing more than that.
+ * Both routes are real: `refs download` is a registered command, and the conversation agent downloads
+ * reference data with the `download_ref` tool of the harness. The agent never runs `refs download`
+ * itself — the command registry blocks it for agents.
  */
 const ON_DEMAND_REFERENCE_BLOCKS: readonly string[] = [
     "Reference data is only needed once an analysis asks for it, so taking none now is a real choice — not a skipped step.",
     "Add any of them whenever you like:",
     "  inflexa refs download <id>",
-    "Or just say what you need in chat: the agent works out which dataset that is and asks you to approve the download.",
+    "Or just say what you need in chat: the agent works out which data that is and downloads it for the analysis.",
 ];
 
 /**
@@ -767,7 +726,7 @@ export async function downloadReferences(
         let offered = catalog;
         let withheld: readonly ReferenceDatasetEntry[] = [];
         if (!install.force) {
-            const inspection = await inspectReferenceStore(env.refsDir, options.source?.catalog);
+            const inspection = await inspectReferenceStore(options.root, options.source?.catalog);
             if (inspection.isErr()) return err(inspection.error);
             offered = offeredReferenceCatalog(catalog, inspection.value);
             withheld = inspection.value.datasets.filter((item) => item.state === "installed").map((item) => item.dataset);
@@ -782,7 +741,7 @@ export async function downloadReferences(
         ids = chosen;
     }
 
-    const estimate = await referenceDownloadEstimate(ids, env.refsDir, options.source ?? undefined, install);
+    const estimate = await referenceDownloadEstimate(ids, options.root, options.source ?? undefined, install);
     if (estimate.isErr()) return err(estimate.error);
     // Refused before the sweep, not after: a scripted run that cannot proceed for lack of consent
     // should spend no network on sizing a plan it is about to reject, and its message is one scripts
@@ -799,7 +758,7 @@ export async function downloadReferences(
     if (!options.yes) {
         let confirmed: boolean;
         try {
-            confirmed = await (options.confirmDownload ?? confirm)(`Download ${plan} of reference data into ${env.refsDir}?`);
+            confirmed = await (options.confirmDownload ?? confirm)(`Download ${plan} of reference data into ${options.root}?`);
         } catch (cause) {
             return err({ type: "download_failed", message: "Reference download confirmation failed.", cause });
         }
@@ -815,7 +774,7 @@ export async function downloadReferences(
         installed = await installReferenceDatasets(
             ids,
             {
-                root: env.refsDir,
+                root: options.root,
                 source: options.source,
                 fetch: options.fetch,
                 onProgress: readout?.report,
@@ -834,7 +793,7 @@ export async function downloadReferences(
 
 /** `inflexa refs path` — print the public path without creating it. */
 export function runRefsPath(): void {
-    console.log(env.refsDir);
+    console.log(resolveRefsDir().match((dir) => dir, dieOn("refs.dir in config.json must be an absolute path or start with ~/")));
 }
 
 /**
@@ -844,12 +803,13 @@ export function runRefsPath(): void {
  * URLs are always in the JSON). `source` is a catalog seam for offline tests, mirroring the download path.
  */
 export async function runRefsList(options: { readonly urls?: boolean; readonly json?: boolean; readonly source?: ReferenceCatalogSource } = {}): Promise<void> {
-    const result = await inspectReferenceStore(env.refsDir, options.source?.catalog);
+    const root = resolveRefsDir().match((dir) => dir, dieOn("refs.dir in config.json must be an absolute path or start with ~/"));
+    const result = await inspectReferenceStore(root, options.source?.catalog);
     if (options.json) {
         // Stdout purity: exactly one document on success (console.log supplies the trailing newline),
         // nothing on failure — the same prose the human mode prints goes to stderr with a non-zero exit.
         result.match(
-            (inspection) => console.log(JSON.stringify(buildReferenceListDocument(inspection, env.refsDir), null, 2)),
+            (inspection) => console.log(JSON.stringify(buildReferenceListDocument(inspection, root), null, 2)),
             (error) => {
                 console.error(`Reference-data inspection failed: ${renderError(error)}`);
                 process.exitCode = 1;
@@ -859,7 +819,7 @@ export async function runRefsList(options: { readonly urls?: boolean; readonly j
     }
     result.match(
         (inspection) => {
-            if (inspection.datasets.length === 0) console.log("No catalog reference datasets are published by this harness version yet.");
+            if (inspection.datasets.length === 0) console.log("No catalog reference datasets are published by this CLI version yet.");
             // Datasets arrive in catalog order, which clusters by group, so a header printed on each
             // group change renders the listing as labelled categories instead of one flat wall.
             let lastGroup: string | undefined;
@@ -884,8 +844,10 @@ export async function runRefsList(options: { readonly urls?: boolean; readonly j
             );
             console.log("Integrity is trust-on-first-use: `inflexa refs verify` checks each installed file against the copy you downloaded.");
             if (!options.urls) console.log("Re-run with `--urls` to print the exact upstream URL of every file.");
-            console.log(`Add arbitrary references under ${env.refsDir}/user; sandboxes discover them dynamically.`);
-            console.log("Missing a reusable option? Open a PR adding its upstream URL, provenance, and licensing to the harness reference-data catalog.");
+            console.log(`Add arbitrary references under ${root}/user; sandboxes discover them dynamically.`);
+            console.log(
+                "Missing a reusable option? Open a PR adding its upstream URL, provenance, and licensing to the reference-data catalog of the CLI (src/modules/refs/catalog.ts).",
+            );
         },
         (error) => {
             console.error(`Reference-data inspection failed: ${renderError(error)}`);
@@ -896,7 +858,8 @@ export async function runRefsList(options: { readonly urls?: boolean; readonly j
 
 /** `inflexa refs download` command action. */
 export async function runRefsDownload(ids: readonly string[], options: { readonly yes?: boolean; readonly force?: boolean }): Promise<void> {
-    const result = await downloadReferences({ ids, yes: options.yes, force: options.force });
+    const root = resolveRefsDir().match((dir) => dir, dieOn("refs.dir in config.json must be an absolute path or start with ~/"));
+    const result = await downloadReferences({ root, ids, yes: options.yes, force: options.force });
     result.match(
         (outcome) => {
             if ("declined" in outcome) console.log("Cancelled — no reference data activated.");
@@ -925,9 +888,10 @@ export async function runRefsVerify(
     ids: readonly string[],
     options: { readonly json?: boolean; readonly source?: ReferenceCatalogSource } = {},
 ): Promise<void> {
+    const root = resolveRefsDir().match((dir) => dir, dieOn("refs.dir in config.json must be an absolute path or start with ~/"));
     let selected = ids;
     if (selected.length === 0) {
-        const inspection = await inspectReferenceStore(env.refsDir, options.source?.catalog);
+        const inspection = await inspectReferenceStore(root, options.source?.catalog);
         if (inspection.isErr()) {
             console.error(`Reference-data verification failed: ${renderError(inspection.error)}`);
             process.exitCode = 1;
@@ -935,7 +899,7 @@ export async function runRefsVerify(
         }
         selected = inspection.value.datasets.filter((item) => item.receipt !== undefined || item.state === "invalid_receipt").map((item) => item.dataset.id);
     }
-    const result = await verifyReferenceDatasets(env.refsDir, selected, options.source);
+    const result = await verifyReferenceDatasets(root, selected, options.source);
     if (options.json) {
         // The document already carries the damaged states, so a non-zero exit is enough to flag damage —
         // the human mode's "Re-download to repair" hint is suppressed to keep stderr for genuine failures.
@@ -974,134 +938,11 @@ export async function runRefsVerify(
 }
 
 /**
- * The datasets setup actually offers: everything the catalog names except what is already installed
- * and intact. Every preset resolves against this, not the raw catalog — which is what keeps
- * "Everything" from meaning "re-fetch what you already have" and keeps an intact store out of the
- * counts shown on the prompt.
+ * The datasets the picker offers: everything the catalog names except what is already installed and
+ * intact — which keeps "select everything" from meaning "re-fetch what you already have" and keeps an
+ * intact store out of the counts shown on the prompt.
  */
 export function offeredReferenceCatalog(catalog: ReferenceDataCatalog, inspection: ReferenceStoreInspection): ReferenceDataCatalog {
     const offered = new Set(inspection.datasets.filter((item) => item.state !== "installed").map((item) => item.dataset.id));
     return { ...catalog, datasets: catalog.datasets.filter((dataset) => offered.has(dataset.id)) };
-}
-
-/** A catalog dataset id spelled like a preset word, which leaves `--refs <word>` addressing neither. */
-export type ReferencePresetCollisionError = {
-    /** Stable discriminator. */
-    readonly type: "preset_collision";
-    /** User-facing explanation. */
-    readonly message: string;
-    /** The colliding words, in preset order. */
-    readonly presets: readonly ReferencePreset[];
-};
-
-/**
- * Turn an answered selection into the ids to install. A preset resolves against the OFFERED set, so
- * `all` never means "re-fetch what is already intact" and `recommended` covers only what is still
- * missing. An id answer passes through untouched — naming a dataset is a request for it to be
- * present, which the installer nets out to nothing when it already is.
- *
- * The collision check runs on both branches, not only where a preset word was actually used: a
- * catalog that ships a dataset called `all` has made the whole `--refs` vocabulary ambiguous, and an
- * answer that happened to spell ids is no evidence the vocabulary is sound. It is a catalog-authoring
- * fault with a catalog-authoring fix, so it is stated as one rather than resolved by precedence —
- * either silent reading (preset wins, or id wins) installs something nobody asked for.
- *
- * The store reading arrives as a THUNK because only a preset needs it: "what is still missing" is a
- * question about the store, while an id answer names its datasets outright. Taking the inspection
- * eagerly would make every `--refs <ids>` run pay for a receipt-and-stat sweep whose result is
- * discarded — and hiding that behind a caller-side branch would put the "which branch reads the store"
- * rule somewhere other than the function that owns the branches.
- */
-export async function resolveReferenceSelection(
-    selection: ReferenceSelection,
-    catalog: ReferenceDataCatalog,
-    inspect: () => Promise<Result<ReferenceStoreInspection, ReferenceProvisionError>>,
-): Promise<Result<readonly string[], ReferencePresetCollisionError | ReferenceProvisionError>> {
-    const collisions = REFERENCE_PRESETS.filter((word) => catalog.datasets.some((dataset) => dataset.id.toLowerCase() === word));
-    const [collided] = collisions;
-    if (collided !== undefined) {
-        return err({
-            type: "preset_collision",
-            message:
-                `The reference catalog defines dataset id${collisions.length === 1 ? "" : "s"} ${collisions.map((word) => `\`${word}\``).join(", ")}, ` +
-                `which \`setup --refs\` already reads as a selection preset, so \`--refs ${collided}\` can address neither meaning. ` +
-                `Rename the dataset in the harness reference-data catalog.`,
-            presets: collisions,
-        });
-    }
-    if ("ids" in selection) return ok(selection.ids);
-    const inspection = await inspect();
-    if (inspection.isErr()) return err(inspection.error);
-    const offered = offeredReferenceCatalog(catalog, inspection.value).datasets;
-    return ok(offered.filter((dataset) => selection.preset === "all" || dataset.recommendation.recommended).map((dataset) => dataset.id));
-}
-
-/** Deliberate reference-store setup reused by the main setup wizard. */
-export async function runReferenceSetup(options: ReferenceSetupOptions): Promise<Result<void, ReferenceProvisionError | ReferencePresetCollisionError>> {
-    const created = await ensureReferenceStore(env.refsDir);
-    if (created.isErr()) return err(created.error);
-    const activeCatalog = options.source?.catalog ?? REFERENCE_DATA_CATALOG;
-    const selection = options.selection;
-    if (selection !== undefined) {
-        const resolved = await resolveReferenceSelection(selection, activeCatalog, () => inspectReferenceStore(env.refsDir, options.source?.catalog));
-        if (resolved.isErr()) return err(resolved.error);
-        if (resolved.value.length === 0) {
-            log.info(
-                "preset" in selection
-                    ? `Reference store ready; \`--refs ${selection.preset}\` matched nothing left to install.`
-                    : "Reference store ready; the reference selection named no datasets.",
-            );
-            return ok(undefined);
-        }
-        const downloaded = await downloadReferences({
-            ids: resolved.value,
-            // The answer is the consent. Naming a selection — on a terminal or in a fleet's answers
-            // file — is the deliberate act a separate flag exists to obtain, and demanding one on top
-            // of it would make that flag mean "I meant it" rather than "do not prompt me".
-            yes: true,
-            interactive: options.interactive,
-            source: options.source,
-            fetch: options.fetch,
-        });
-        return downloaded.map(() => undefined);
-    }
-    if (!options.interactive) {
-        // An unanswered question in a batch run is not a request for the catalog's opinion: reference
-        // data runs to gigabytes, and a fleet that wanted some can say so in one word. So fetch none
-        // and leave behind the two things a scripted run's operator can act on — where the store is,
-        // and the exact command that fills it.
-        log.info(
-            `Reference store: ${env.refsDir}\n` +
-                "  No reference data was requested, so none was downloaded.\n" +
-                "  Install datasets later with `inflexa refs download <id...> --yes`, or re-run setup with `--refs recommended`.",
-        );
-        return ok(undefined);
-    }
-    const inspection = await inspectReferenceStore(env.refsDir, options.source?.catalog);
-    if (inspection.isErr()) return err(inspection.error);
-    const offered = inspection.value.datasets.filter((item) => item.state !== "installed");
-    if (offered.length === 0) {
-        log.info("Reference store ready; no missing catalog datasets to offer.");
-        return ok(undefined);
-    }
-    let chosen: readonly string[] | undefined;
-    try {
-        chosen = await chooseIds(
-            offeredReferenceCatalog(activeCatalog, inspection.value),
-            inspection.value.datasets.filter((item) => item.state === "installed").map((item) => item.dataset),
-        );
-    } catch (cause) {
-        return err({ type: "download_failed", message: "Reference selection prompt failed.", cause });
-    }
-    if (chosen === undefined || chosen.length === 0) return ok(undefined);
-    // No consent flag is threaded through the picker: the confirmation that follows is the first time
-    // anyone learns what the picked set actually weighs — the picker lists file counts, the sweep
-    // measures bytes — so it is a question the selection cannot have answered in advance.
-    const downloaded = await downloadReferences({
-        ids: chosen,
-        interactive: true,
-        source: options.source,
-        fetch: options.fetch,
-    });
-    return downloaded.map(() => undefined);
 }

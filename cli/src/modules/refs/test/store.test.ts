@@ -7,14 +7,16 @@ import { randomUUIDv7 } from "bun";
 
 import {
     REFERENCE_DATA_CATALOG_VERSION,
-    REFERENCE_INSTALL_RECEIPT_VERSION,
     UnknownReferenceDatasetError,
+    type ReferenceDataCatalog,
+} from "../catalog.ts";
+import {
+    REFERENCE_INSTALL_RECEIPT_VERSION,
     parseReferenceInstallReceipt,
     referenceReceiptContentDigest,
-    type ReferenceDataCatalog,
     type ReferenceInstallReceipt,
     type ReferenceReceiptArtifact,
-} from "@inflexa-ai/harness";
+} from "../receipt.ts";
 import { err, ok } from "neverthrow";
 import { z } from "zod";
 

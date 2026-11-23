@@ -5,7 +5,6 @@ import { join } from "node:path";
 
 import {
     OAUTH_ACCOUNT_KINDS,
-    REFS_PRESETS,
     answerOf,
     answerSpelling,
     answersFromFlags,
@@ -14,7 +13,6 @@ import {
     isVendorSlug,
     loadSetupAnswers,
     readAnswersFile,
-    refsPresetOf,
     resolveSetupAnswers,
     type SetupAnswers,
     type SetupAnswersContext,
@@ -22,7 +20,6 @@ import {
     type SetupAuthAnswer,
 } from "../setup_answers.ts";
 import { providerKindForSlug } from "../setup.ts";
-import { REFERENCE_PRESETS } from "../../refs/commands.ts";
 import { type ModelAuthConfig } from "../../../lib/config.ts";
 import { reservedPostgresPorts } from "../../../lib/env.ts";
 import { present } from "../../../lib/present.ts";
@@ -90,7 +87,6 @@ embedding:
   mode: api-key
   baseURL: https://api.openai.com/v1
   model: text-embedding-3-small
-refs: recommended
 sandbox: true
 runtime: docker
 `);
@@ -106,22 +102,9 @@ runtime: docker
             postgres: { user: "inflexa", password: "inflexa", port: 5555, database: "inflexa", host: "localhost" },
             resources: { sharePct: 50 },
             embedding: { mode: "api-key", baseURL: "https://api.openai.com/v1", model: "text-embedding-3-small" },
-            refs: "recommended",
             sandbox: true,
             runtime: "docker",
         });
-    });
-
-    test("an id list is accepted in place of a preset", () => {
-        const path = writeAnswers("refs: [CollecTRI, msigdb-hallmark]\n");
-        expect(readAnswersFile(path)._unsafeUnwrap().refs).toEqual(["CollecTRI", "msigdb-hallmark"]);
-    });
-
-    test("a preset word is taken in any casing, and canonicalized — the file and the flag read one vocabulary", () => {
-        expect(readAnswersFile(writeAnswers("refs: ALL\n"))._unsafeUnwrap().refs).toBe("all");
-        expect(readAnswersFile(writeAnswers("refs: Recommended\n"))._unsafeUnwrap().refs).toBe("recommended");
-        // Ids are the catalog's identifiers: the same fold applied to them would rewrite what the file names.
-        expect(readAnswersFile(writeAnswers("refs: [CollecTRI]\n"))._unsafeUnwrap().refs).toEqual(["CollecTRI"]);
     });
 
     test("a missing file fails naming the path", () => {
@@ -169,11 +152,10 @@ runtime: docker
             connection: {},
             postgres: { port: 5555 },
         });
-        // A nested leaf counts through its block, and `refs` counts as the list it is.
+        // A nested leaf counts through its block.
         expect(readAnswersFile(writeAnswers("connection:\n  auth:\n    kind: env\n    var: KEY\n    scheme: bearer\n"))._unsafeUnwrap()).toEqual({
             connection: { auth: { kind: "env", var: "KEY", scheme: "bearer" } },
         });
-        expect(readAnswersFile(writeAnswers("refs:\n  - demo\n"))._unsafeUnwrap()).toEqual({ refs: ["demo"] });
     });
 
     test("a key answered twice is rejected — YAML resolves duplicates last-wins before any of this code sees them", () => {
@@ -190,7 +172,7 @@ runtime: docker
         expect(nested).toContain("`embedding.mode`");
 
         // The fleet failure the scan exists for: two whole blocks, the first silently discarded.
-        const block = problemsOf(readAnswersFile(writeAnswers("embedding:\n  mode: local\nrefs: all\nembedding:\n  mode: off\n"))._unsafeUnwrapErr()).join(
+        const block = problemsOf(readAnswersFile(writeAnswers("embedding:\n  mode: local\nsandbox: true\nembedding:\n  mode: off\n"))._unsafeUnwrapErr()).join(
             "\n",
         );
         expect(block).toContain("`embedding`");
@@ -211,11 +193,7 @@ runtime: docker
         expect(answers.embedding?.model).toBe("e1");
     });
 
-    test("a block sequence and a block scalar do not confuse the duplicate scan", () => {
-        expect(readAnswersFile(writeAnswers("refs:\n  - CollecTRI\n  - msigdb-hallmark\nruntime: docker\n"))._unsafeUnwrap().refs).toEqual([
-            "CollecTRI",
-            "msigdb-hallmark",
-        ]);
+    test("a block scalar does not confuse the duplicate scan", () => {
         // A block scalar's body is text: a `var: …` line inside it is content, not a second mapping key.
         expect(
             readAnswersFile(
@@ -249,11 +227,6 @@ runtime: docker
             const error = readAnswersFile(writeAnswers(`${body}\n`))._unsafeUnwrapErr();
             expect(problemsOf(error).join("\n")).toContain(`\`${present(body.split(":")[0], "the answer key")}\``);
         }
-    });
-
-    test("an empty refs list is a problem — the answer is the download consent, so it must name something", () => {
-        const error = readAnswersFile(writeAnswers("refs: []\n"))._unsafeUnwrapErr();
-        expect(problemsOf(error).join("\n")).toContain("at least one dataset id");
     });
 
     test("a nested unknown key names its full path (a near-miss spelling is not silently dropped)", () => {
@@ -297,12 +270,6 @@ runtime: docker
         }
     });
 
-    test("an array-element problem falls back to its nearest mapped question, keeping both spellings", () => {
-        const text = problemsOf(readAnswersFile(writeAnswers('refs: ["", CollecTRI]\n'))._unsafeUnwrapErr()).join("\n");
-        expect(text).toContain("--refs");
-        expect(text).toContain("`refs.0`");
-    });
-
     test("a credential block rejects anything token-shaped — the auth answer is token-free by construction", () => {
         const error = readAnswersFile(
             writeAnswers("connection:\n  auth:\n    kind: env\n    var: MY_TOKEN\n    scheme: bearer\n    token: sk-secret\n"),
@@ -315,13 +282,6 @@ runtime: docker
         const text = problemsOf(error).join("\n");
         expect(text).toContain("--resource-share");
         expect(text).toContain("resources.sharePct");
-    });
-
-    test("a refs scalar that is not a preset word names the accepted forms", () => {
-        const error = readAnswersFile(writeAnswers("refs: everything\n"))._unsafeUnwrapErr();
-        const text = problemsOf(error).join("\n");
-        expect(text).toContain("--refs");
-        expect(text).toContain("recommended");
     });
 
     test("a block-shaped problem names the block's flag family as well as its key", () => {
@@ -425,7 +385,6 @@ describe("answersFromFlags — the flag front-end", () => {
             embeddingsModel: "text-embedding-3-small",
             sandbox: true,
             runtime: "podman",
-            refs: "a,b",
         })._unsafeUnwrap();
         expect(answers).toEqual({
             connection: {
@@ -439,7 +398,6 @@ describe("answersFromFlags — the flag front-end", () => {
             postgres: { user: "u", password: "p", port: 5555, database: "db", host: "h" },
             resources: { sharePct: 50 },
             embedding: { mode: "api-key", baseURL: "https://api.openai.com/v1", model: "text-embedding-3-small" },
-            refs: ["a", "b"],
             sandbox: true,
             runtime: "podman",
         });
@@ -451,7 +409,6 @@ describe("answersFromFlags — the flag front-end", () => {
             postgres: undefined,
             resources: undefined,
             embedding: undefined,
-            refs: undefined,
             sandbox: undefined,
             runtime: undefined,
         });
@@ -514,23 +471,6 @@ describe("answersFromFlags — the flag front-end", () => {
         const text = problemsOf(answersFromFlags({ connection: "proxy" })._unsafeUnwrapErr()).join("\n");
         expect(text).toContain("--connection");
         expect(text).toContain("connection.mode");
-    });
-
-    test("--refs takes a lone preset word, and otherwise a deduped id list", () => {
-        expect(answersFromFlags({ refs: "recommended" })._unsafeUnwrap().refs).toBe("recommended");
-        expect(answersFromFlags({ refs: "all" })._unsafeUnwrap().refs).toBe("all");
-        expect(answersFromFlags({ refs: "demo, other, demo" })._unsafeUnwrap().refs).toEqual(["demo", "other"]);
-    });
-
-    test("a preset word is command vocabulary, so --refs takes it in any casing", () => {
-        expect(answersFromFlags({ refs: "ALL" })._unsafeUnwrap().refs).toBe("all");
-        expect(answersFromFlags({ refs: "Recommended" })._unsafeUnwrap().refs).toBe("recommended");
-        expect(answersFromFlags({ refs: " All " })._unsafeUnwrap().refs).toBe("all");
-    });
-
-    test("a dataset id keeps its casing — an id is the catalog's identifier, not this CLI's vocabulary", () => {
-        expect(answersFromFlags({ refs: "CollecTRI" })._unsafeUnwrap().refs).toEqual(["CollecTRI"]);
-        expect(answersFromFlags({ refs: "CollecTRI, MSigDB-Hallmark" })._unsafeUnwrap().refs).toEqual(["CollecTRI", "MSigDB-Hallmark"]);
     });
 
     test("--config names the answers file and is never itself an answer", () => {
@@ -696,10 +636,9 @@ describe("resolveSetupAnswers — precedence", () => {
     });
 
     test("a file-only answer survives when no flag answers it", () => {
-        const resolved = resolveSetupAnswers({}, { sandbox: true, runtime: "podman", refs: "all" }, batch())._unsafeUnwrap();
+        const resolved = resolveSetupAnswers({}, { sandbox: true, runtime: "podman" }, batch())._unsafeUnwrap();
         expect(resolved.answers.sandbox).toBe(true);
         expect(resolved.answers.runtime).toBe("podman");
-        expect(resolved.answers.refs).toBe("all");
     });
 });
 
@@ -792,7 +731,6 @@ describe("resolveSetupAnswers — batch defaults and required answers", () => {
         const resolved = resolveSetupAnswers({}, undefined, batch())._unsafeUnwrap();
         expect(resolved.connectionMode).toBe("cliproxy");
         expect(resolved.batch).toBe(true);
-        expect(answerOf(resolved.answers.refs).answered).toBe(false);
         expect(answerOf(resolved.answers.sandbox).answered).toBe(false);
         expect(answerOf(resolved.answers.connection?.model).answered).toBe(false);
     });
@@ -995,23 +933,6 @@ describe("resolveSetupAnswers — no answer is ever silently ignored", () => {
                 .embedding?.baseURL,
         ).toBe("https://api.openai.com/v1");
     });
-
-    test("a preset word inside an id list is rejected — the words are reserved", () => {
-        const text = problemsOf(resolveSetupAnswers({ refs: ["recommended", "demo"] }, undefined, batch())._unsafeUnwrapErr()).join("\n");
-        expect(text).toContain("--refs");
-        expect(text).toContain("reserved preset word");
-    });
-
-    test("the reservation reads casing the same way the preset check does, and reports the author's spelling", () => {
-        const text = problemsOf(resolveSetupAnswers({ refs: ["ALL", "demo"] }, undefined, batch())._unsafeUnwrapErr()).join("\n");
-        expect(text).toContain("ALL");
-        expect(text).toContain("reserved preset word");
-    });
-
-    test("a plain id list passes through — catalog membership is the refs module's question", () => {
-        expect(resolveSetupAnswers({ refs: ["demo", "other"] }, undefined, batch())._unsafeUnwrap().answers.refs).toEqual(["demo", "other"]);
-        expect(refsPresetOf("demo")).toBeUndefined();
-    });
 });
 
 describe("resolveSetupAnswers — reserved Postgres ports", () => {
@@ -1064,14 +985,13 @@ describe("resolveSetupAnswers — every problem is reported in one pass", () => 
                     connection: { mode: "direct" },
                     postgres: { port: present(reservedPostgresPorts[0]) },
                     embedding: { mode: "api-key", gguf: "/models/m.gguf" },
-                    refs: ["all"],
                 },
                 undefined,
                 batch(),
             )._unsafeUnwrapErr(),
         );
-        // 3 missing direct answers + reserved port + gguf mismatch + missing embedding key + reserved refs word.
-        expect(problems).toHaveLength(7);
+        // 3 missing direct answers + reserved port + gguf mismatch + missing embedding key.
+        expect(problems).toHaveLength(6);
         for (const problem of problems) {
             // Each line either names a flag or is the secret's env-var problem, which has no flag by design.
             expect(problem.includes("--") || problem.includes("INFLEXA_EMBEDDING_API_KEY")).toBe(true);
@@ -1080,7 +1000,7 @@ describe("resolveSetupAnswers — every problem is reported in one pass", () => 
 });
 
 describe("isBatchRun", () => {
-    test("--yes is batch even on a TTY (the deliberate break from the refs-consent-only meaning)", () => {
+    test("--yes is batch even on a TTY (the deliberate break from the consent-only meaning)", () => {
         expect(isBatchRun(true, true)).toBe(true);
     });
 
@@ -1107,7 +1027,6 @@ describe("answerOf — the orchestrator's per-question view", () => {
         expect(answerOf(resolved.answers.postgres?.user)).toEqual({ answered: true, value: "fleet" });
         expect(answerOf(resolved.answers.embedding?.mode).answered).toBe(false);
         expect(answerOf(resolved.answers.resources?.sharePct).answered).toBe(false);
-        expect(answerOf(resolved.answers.refs).answered).toBe(false);
     });
 });
 
@@ -1252,15 +1171,6 @@ describe("vocabulary agreement with the orchestrator", () => {
         // dropped there fails here instead of at the first fleet provision.
         const kinds = ["anthropic", "openai"].map(providerKindForSlug);
         expect(new Set(kinds)).toEqual(new Set(OAUTH_ACCOUNT_KINDS));
-    });
-
-    test("the refs preset words are exactly the refs module's", () => {
-        // The two lists are declared separately so this layer never loads the catalog, which leaves them
-        // free to drift. TypeScript catches only one direction — `referenceSelectionOf` (setup.ts) assigns
-        // a RefsPreset into a ReferencePreset, so a word added HERE alone fails to compile. A word added
-        // to REFERENCE_PRESETS alone compiles fine and is reserved by the collision check while staying
-        // unreachable from `--refs`, which is what this equality catches.
-        expect(new Set<string>(REFS_PRESETS)).toEqual(new Set<string>(REFERENCE_PRESETS));
     });
 
     test("an answered credential source is exactly what config.json persists", () => {

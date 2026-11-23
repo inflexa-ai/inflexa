@@ -517,8 +517,8 @@ export const env = Object.freeze({
     mcpTokensPath: join(dataRoot.path, "mcp-tokens.json"),
     credentialsPath: join(dataRoot.path, "credentials.json"),
     /**
-     * Public reference-data store. Deliberate setup/download actions create this path; passive
-     * runtime composition only checks whether it exists before offering it to the harness.
+     * The default reference-data store, when the `refs.dir` config key is absent. Read the store through
+     * `resolveRefsDir` (lib/config.ts). The download tool of the harness makes the folder at the first download.
      */
     refsDir: join(dataRoot.path, "refs"),
     /**
@@ -832,7 +832,7 @@ export const envDoc: Readonly<
     refsDir: {
         kind: "path",
         label: "references",
-        description: "reference data mounted read-only in sandboxes at /mnt/refs",
+        description: "the default reference store, mounted read-only in sandboxes at /mnt/refs. The `refs.dir` config key moves it",
         baseVar: dataRootVar,
     },
     packageStoreDir: {

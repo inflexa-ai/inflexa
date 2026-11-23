@@ -83,7 +83,6 @@ import {
     type ModelCandidate,
 } from "../proxy/models.ts";
 import type { EmbeddingSetupAnswers } from "../embedding/setup.ts";
-import type { ReferenceSelection } from "../refs/commands.ts";
 import { DEFAULT_DATABASE, DEFAULT_HOST, DEFAULT_PASSWORD, DEFAULT_USER, type PostgresConnection } from "./postgres_types.ts";
 import {
     writeComposeFile,
@@ -103,7 +102,6 @@ import { formatInfraStateError } from "./mount_source.ts";
 import { readCredentialVerdict } from "./credential_state.ts";
 import {
     answerOf,
-    answerSpelling,
     describeSetupAnswersError,
     isBatchRun,
     isVendorSlug,
@@ -148,7 +146,7 @@ type SetupOptions = {
      * validating the whole set before anything here mutates.
      *
      * WHY every answer arrives here rather than pre-parsed beside it: `--connection`, `--provider`,
-     * `--embeddings`, `--refs`, and `--model` are answers, and an answer parsed twice is an answer that
+     * `--embeddings`, and `--model` are answers, and an answer parsed twice is an answer that
      * can mean two things. The registry therefore hands the raw values over untouched and the fields
      * that survive on this type are exclusively EXECUTION MODIFIERS — how THIS invocation
      * behaves, never what the client should look like, which is exactly the line the `--config` file
@@ -545,7 +543,7 @@ export function executorReadout(rt: ContainerRuntime, detected: DetectedExecutor
 // are done" list would instead make every later re-run partial.
 
 /** The step names in wizard order — the index of a name is what "before the checkpoint" means. */
-const SETUP_STEPS = ["sandbox", "connection", "auth", "postgres", "model", "resources", "embeddings", "refs"] as const;
+const SETUP_STEPS = ["sandbox", "connection", "auth", "postgres", "model", "resources", "embeddings"] as const;
 
 type SetupStep = (typeof SETUP_STEPS)[number];
 
@@ -644,21 +642,6 @@ export async function setup(options: SetupOptions): Promise<void> {
         console.error(
             `\n  --no-postgres skips the step that would consume ${strandedByNoPostgres.map(([field]) => `\`postgres.${field}\``).join(", ")}.\n` +
                 `  Drop the answer, or drop --no-postgres.\n`,
-        );
-        process.exitCode = 1;
-        return;
-    }
-
-    // FAIL BEFORE MUTATE, second half. The answers resolver deliberately never loads the
-    // reference catalog — it stays a pure function of its inputs — so the one answer whose validity is a
-    // question about the CATALOG is adjudicated here instead, still ahead of every mutator: the embedding
-    // pre-gate below, the runtime pin, `writeProxyConfig`, and the download itself. Without this a
-    // mistyped id surfaced at download time, second-to-last step, on an already-provisioned machine.
-    const unknownRefs = await unknownReferenceIds(answers.refs);
-    if (unknownRefs.length > 0) {
-        console.error(
-            `\n  ${answerSpelling("refs")} names ${unknownRefs.length === 1 ? "a dataset" : "datasets"} the reference catalog does not have: ${unknownRefs.map((id) => `\`${id}\``).join(", ")}.\n` +
-                "  Run `inflexa refs list` for the catalog ids, or drop the answer.\n",
         );
         process.exitCode = 1;
         return;
@@ -1211,24 +1194,6 @@ export async function setup(options: SetupOptions): Promise<void> {
             }
         }
 
-        currentStep = "refs";
-        // --- reference data ---
-        // The setup offer and `inflexa refs download` share one handler. Creating the public
-        // store/user namespace is deliberate here; no passive runtime path creates it.
-        const { runReferenceSetup } = await import("../refs/commands.ts");
-        const selection = referenceSelectionOf(answers.refs);
-        const refsResult = await runReferenceSetup({
-            // A selection is its own consent, so the only thing left to decide is whether the step may
-            // ask: a terminal that neither batch mode nor the checkpoint has withdrawn.
-            interactive: asks("refs"),
-            selection,
-        });
-        if (refsResult.isErr()) {
-            log.error(`Reference-data setup: ${refsResult.error.message}`);
-            process.exitCode = 1;
-            return;
-        }
-
         // A failed delete leaves a stale record, whose only cost is one offer to continue on the next run.
         clearSetupState().match(
             () => undefined,
@@ -1345,48 +1310,6 @@ async function runTransfersSetup(answered: SetupAnswers["sandbox"], canPrompt: b
         (error) => log.warn(`The catalog transfer did not start: ${error.message}`),
     );
     if (started > 0) log.success(`${started} transfer(s) started in the background. Run \`inflexa sandbox status\` to watch them.`);
-}
-
-/**
- * The answered reference ids the catalog cannot resolve — the upfront half of the unknown-id check,
- * run before any mutation. Empty means "nothing to refuse", which covers the three cases
- * that are not a question about ids at all: an unanswered `refs`, a PRESET answer (a preset resolves
- * against the catalog by construction and can only ever name real ids), and a store this process could
- * not inspect.
- *
- * An id is known when it is OFFERED (in the catalog and not already installed) or INSTALLED. Naming the
- * two halves rather than testing catalog membership directly is the point: the offered set deliberately
- * EXCLUDES what is already present, so resolving against it alone would make the second run of the very
- * same `--refs <id>` command fail on the datasets the first run installed — the opposite of the
- * idempotency the whole batch contract rests on. An installed id is a valid answer that resolves to
- * nothing left to do.
- *
- * An inspection FAILURE degrades to "no unknown ids" rather than failing the run: this check exists to
- * move a diagnosis earlier, not to add a new way for a broken store to abort a provision, and the
- * download-time `unknown_dataset` rejection is still there as defense in depth.
- */
-async function unknownReferenceIds(refs: SetupAnswers["refs"]): Promise<readonly string[]> {
-    if (!Array.isArray(refs) || refs.length === 0) return [];
-    const { REFERENCE_DATA_CATALOG } = await import("@inflexa-ai/harness");
-    const { offeredReferenceCatalog } = await import("../refs/commands.ts");
-    const { inspectReferenceStore } = await import("../refs/store.ts");
-    const inspection = await inspectReferenceStore(env.refsDir, REFERENCE_DATA_CATALOG);
-    if (inspection.isErr()) return [];
-    const known = new Set([
-        ...offeredReferenceCatalog(REFERENCE_DATA_CATALOG, inspection.value).datasets.map((dataset) => dataset.id),
-        ...inspection.value.datasets.filter((item) => item.state === "installed").map((item) => item.dataset.id),
-    ]);
-    return refs.filter((id) => !known.has(id));
-}
-
-/**
- * Translate the reference answer into the refs module's selection shape. Absence stays absence — an
- * unanswered question is a different outcome from an empty answer, and the refs step reads that
- * distinction to decide between offering the picker and downloading nothing.
- */
-function referenceSelectionOf(refs: SetupAnswers["refs"]): ReferenceSelection | undefined {
-    if (refs === undefined) return undefined;
-    return Array.isArray(refs) ? { ids: refs } : { preset: refs };
 }
 
 // --- default-model selection (setup) ---------------------------------------

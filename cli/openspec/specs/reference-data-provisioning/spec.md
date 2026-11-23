@@ -9,17 +9,39 @@ verification, setup integration, and ownership boundary for user-provided data.
 
 ### Requirement: The CLI exposes a stable public reference-store directory
 
-The CLI SHALL resolve a `refsDir` under the platform data home at `<data-home>/inflexa/refs`. Root help SHALL list the directory in its Paths table, and `inflexa refs path` SHALL print the exact resolved path without creating it. Deliberate setup or reference-download actions SHALL create the directory and a documented `user/` namespace for arbitrary user-provided reference data.
+The CLI MUST resolve the reference store from the `refs.dir` key of the user config. The value is an absolute path, or a path that starts with `~/`. With no value, the store is `<data-home>/inflexa/refs`. Root help MUST list the default path in its Paths table. `inflexa refs path` MUST print the resolved path and make nothing. The CLI MUST NOT make the directory at boot. A reference download or the `download_ref` tool of the harness makes it.
 
 #### Scenario: User discovers the host path
 
-- **WHEN** the user runs root help or `inflexa refs path`
-- **THEN** the CLI displays the host directory whose contents sandboxes see at `/mnt/refs`
+- **WHEN** the user runs root help
+- **THEN** the CLI shows the default host directory whose contents sandboxes see at `/mnt/refs`, and it names the `refs.dir` key
 
 #### Scenario: Path inspection does not litter
 
-- **WHEN** `inflexa refs path` runs before the store exists
-- **THEN** it prints the path and creates no directory or metadata
+- **WHEN** the server boots, or `inflexa refs path` runs, and the store does not exist
+- **THEN** the CLI makes no directory and no metadata
+
+#### Scenario: A store on an external drive
+
+- **GIVEN** the config `refs.dir: /Volumes/lab-drive/refs`
+- **WHEN** a sandbox is created
+- **THEN** the sandbox sees `/Volumes/lab-drive/refs` read-only at `/mnt/refs`, and `download_ref` writes there
+
+#### Scenario: A relative path is refused
+
+- **GIVEN** the config `refs.dir: refs`
+- **WHEN** the server boots
+- **THEN** the boot fails with an error that names `refs.dir` and says that the path must be absolute
+
+### Requirement: The user can add hosts to the auto-approve list
+
+The CLI MUST read `refs.autoApproveHosts`, a list of host names, from the user config. It MUST give the list to the harness with the download options, and the harness adds it to its default list.
+
+#### Scenario: A lab host
+
+- **GIVEN** the config `refs.autoApproveHosts: [data.mylab.org]`
+- **WHEN** an agent downloads from `files.data.mylab.org`
+- **THEN** the download runs with no ask
 
 ### Requirement: Managed and user-owned namespaces have separate ownership
 
@@ -30,16 +52,16 @@ The CLI installer SHALL write catalog-managed datasets only beneath `managed/<da
 - **WHEN** a user places files under `refs/user/custom-atlas/` and updates a catalog dataset
 - **THEN** the installer changes only its managed dataset/version and receipt paths and leaves the custom atlas byte-for-byte untouched
 
-### Requirement: Reference options come from the harness catalog
+### Requirement: Reference options come from the CLI catalog
 
-The CLI SHALL consume the harness-exported reference catalog and install-plan interface rather than defining a second list. `inflexa refs list` SHALL show each catalog dataset's id, version, description, size, integrity class, source and licensing links, recommendation/group metadata, and local state. The CLI SHALL fetch every artifact from the upstream URL the catalog names and SHALL NOT provide any means — environment variable, flag, or config — of redirecting a fetch to a different origin.
+The CLI SHALL keep one reference catalog and install-plan interface, in its refs module, rather than defining a second list. `inflexa refs list` SHALL show each catalog dataset's id, version, description, size, integrity class, source and licensing links, recommendation/group metadata, and local state. The CLI SHALL fetch every artifact from the upstream URL the catalog names and SHALL NOT provide any means — environment variable, flag, or config — of redirecting a fetch to a different origin.
 
 Because an `unpinned` artifact's size is known only to its mutable upstream, a displayed size SHALL distinguish bytes the catalog knows from files whose size the upstream determines, and SHALL NOT invent a total.
 
 #### Scenario: Catalog option is visible with links
 
 - **WHEN** `inflexa refs list` runs
-- **THEN** every downloadable option from the installed harness version is shown with its upstream source/licensing links, its integrity class, and its local installation state
+- **THEN** every downloadable option from this CLI version is shown with its upstream source/licensing links, its integrity class, and its local installation state
 
 #### Scenario: The download source cannot be redirected
 
@@ -53,7 +75,7 @@ Because an `unpinned` artifact's size is known only to its mutable upstream, a d
 
 ### Requirement: Downloads are verified and dataset activation is atomic
 
-For each selected dataset, the CLI SHALL download artifacts to installer-owned `.part` paths, verify every `pinned` artifact against the catalog's byte size and SHA-256 digest, stage every final file beneath one attempt directory, and activate the complete version directory only after all artifacts are accounted for. It SHALL then atomically write a harness-compatible active receipt recording the size and digest **observed** for each artifact. A failed or interrupted attempt SHALL leave any previously active receipt/version unchanged and SHALL never expose a partially staged dataset as active managed content, and SHALL NOT leave orphaned staging directories behind.
+For each selected dataset, the CLI SHALL download artifacts to installer-owned `.part` paths, verify every `pinned` artifact against the catalog's byte size and SHA-256 digest, stage every final file beneath one attempt directory, and activate the complete version directory only after all artifacts are accounted for. It SHALL then atomically write an active receipt recording the size and digest **observed** for each artifact. A failed or interrupted attempt SHALL leave any previously active receipt/version unchanged and SHALL never expose a partially staged dataset as active managed content, and SHALL NOT leave orphaned staging directories behind.
 
 Resuming a partial transfer SHALL be attempted only for a `pinned` artifact. An `unpinned` artifact SHALL be re-fetched whole, because its upstream may have replaced the file since the partial was written and appending to it would splice two different files into one that verifies against nothing.
 
@@ -243,7 +265,7 @@ The CLI SHALL provide `inflexa refs list`, `inflexa refs download [ids...]`, `in
 
 ### Requirement: Reference inspection and verification have a machine-readable JSON mode
 
-`inflexa refs list --json` SHALL emit on stdout a single JSON document carrying the store-level facts (the public store path, whether it exists, and unmanaged top-level content) and, for every canonical catalog dataset in catalog order, its identity and provenance fields (id, catalog version, title, description, source URL, license, group, recommended), its local install state (the same closed state set the human listing shows), the installed version and install timestamp when the dataset's files are actually present from a completed install — the `installed` and `update_available` states — (keys absent otherwise, never `null`), and its artifacts with their upstream URLs. A `partial` dataset's receipt SHALL NOT be surfaced as install facts, so key presence can never contradict `state` or misrepresent a damaged install as usable. The document SHALL be self-contained: artifact URLs are always present, and `--urls` SHALL have no effect on it. The shape SHALL be a CLI-owned projection constructed field-by-field — never a serialization of the harness catalog or receipt types — and SHALL be exported from the refs module as a typed value so in-process consumers use the same shape the flag prints.
+`inflexa refs list --json` SHALL emit on stdout a single JSON document carrying the store-level facts (the public store path, whether it exists, and unmanaged top-level content) and, for every canonical catalog dataset in catalog order, its identity and provenance fields (id, catalog version, title, description, source URL, license, group, recommended), its local install state (the same closed state set the human listing shows), the installed version and install timestamp when the dataset's files are actually present from a completed install — the `installed` and `update_available` states — (keys absent otherwise, never `null`), and its artifacts with their upstream URLs. A `partial` dataset's receipt SHALL NOT be surfaced as install facts, so key presence can never contradict `state` or misrepresent a damaged install as usable. The document SHALL be self-contained: artifact URLs are always present, and `--urls` SHALL have no effect on it. The shape SHALL be a CLI-owned projection constructed field-by-field — never a serialization of the catalog or receipt types — and SHALL be exported from the refs module as a typed value so in-process consumers use the same shape the flag prints.
 
 `inflexa refs verify --json` SHALL emit on stdout a single JSON document wrapping the per-dataset verification results: dataset id, the active receipt version when one is valid (key absent otherwise), the overall dataset state, and per-file states.
 
@@ -279,63 +301,6 @@ Both JSON modes SHALL be byte-stable — the same store state SHALL produce byte
 - **WHEN** `inflexa refs list --json --urls` runs
 - **THEN** stdout is byte-identical to `inflexa refs list --json` on the same store state
 
-### Requirement: Setup reuses the reference download handler
-
-Interactive `inflexa setup` SHALL deliberately create the reference-store and `user/` directories, inspect catalog installation state, and offer missing or updateable datasets with their sizes through the same headless download operation used by `inflexa refs download`. The offer SHALL be the per-dataset picker over the datasets setup is actually offering — the missing or updateable ones — so an intact dataset is never re-offered and the select-everything key never means "everything already installed". The recommended key SHALL select the recommended datasets within that offered set.
-
-Before the picker, setup SHALL state how many datasets are already installed and intact and therefore absent from the listing.
-
-Setup SHALL also state how references can be obtained later: by running `inflexa refs download` for a dataset, or by asking the agent in chat, which proposes that same command for the user's approval. That statement SHALL remain true of the shipped command surface, and SHALL be presented where it can inform the choice rather than only after an empty one. Where the terminal is wide enough to carry it without squeezing the listing below a usable width, it SHALL be presented alongside the listing so it remains visible as the listing scrolls; otherwise it SHALL be presented above the listing. It SHALL carry the same wording in either presentation, and SHALL NOT be repeated once a selection is made.
-
-Declining or selecting nothing SHALL continue setup. A selected installation failure SHALL fail setup visibly.
-
-The reference selection SHALL be answerable as `--refs recommended|all|<id,…>` (file: `refs`). `recommended` SHALL resolve to the catalog-recommended datasets within the offered set; `all` to the whole offered set; both preset words SHALL be validated against catalog ids so a colliding dataset id is a loud catalog-authoring error, never a shadowed selection. An explicit selection IS the consent — no separate consent flag is required, interactively or headless; the resolved plan is subject to the same verification, activation, and receipt path as `inflexa refs download`. Under batch resolution (`--yes` or non-TTY) with no refs answer, setup SHALL download no reference bytes: it SHALL print the reference-store path and an actionable `inflexa refs download` command and continue.
-
-#### Scenario: Setup and explicit command share one installer
-
-- **WHEN** setup installs a selected dataset
-- **THEN** it produces the same managed layout, verification, activation, and receipt as `inflexa refs download` for that id
-
-#### Scenario: The picker covers only what setup is offering
-
-- **WHEN** an interactive user presses the select-everything key while some catalog datasets are already installed and intact
-- **THEN** the plan contains only the missing or updateable datasets, and the already-installed ones are not re-fetched
-
-#### Scenario: Setup names what the picker omits
-
-- **WHEN** an interactive user reaches the reference step with datasets already installed and intact
-- **THEN** setup states how many are installed and therefore not listed
-
-#### Scenario: How to get references later is stated before the choice
-
-- **WHEN** an interactive user reaches the reference step
-- **THEN** setup tells them, before they choose, that they can download a dataset later with the reference download command, or ask the agent in chat, which proposes that command for their approval
-
-#### Scenario: The later-download statement adapts to the terminal width
-
-- **WHEN** the terminal is wide enough to carry the statement beside the listing without squeezing it below a usable width
-- **THEN** the statement is shown alongside the listing and stays visible while the listing scrolls, and on a narrower terminal the same wording is shown above the listing instead
-
-#### Scenario: Batch setup without a refs answer downloads nothing
-
-- **WHEN** setup runs under batch resolution (`--yes` or no TTY) without a refs answer
-- **THEN** it downloads nothing — even with `--yes` given — prints how to install references later, and continues
-
-#### Scenario: A refs preset resolves against the offered set
-
-- **WHEN** `setup --yes --refs recommended` runs while one recommended dataset is already installed and intact
-- **THEN** the plan contains the missing recommended datasets only, and the installed one is not re-fetched
-
-#### Scenario: An explicit selection needs no separate consent
-
-- **WHEN** setup runs with `--refs CollecTRI` (with or without a TTY)
-- **THEN** no picker is offered and the named dataset downloads without any further consent flag — the answer is the consent
-
-#### Scenario: User declines optional references
-
-- **WHEN** an interactive user declines or selects no catalog datasets
-- **THEN** setup leaves the public store available for manual additions and continues successfully
-
 ### Requirement: Missing or inconsistent managed state is recoverable
 
 Cheap status inspection SHALL derive managed state from the catalog, receipts, and filesystem and SHALL report at least missing, installed, update available, partial, and invalid-receipt states. Absence or inconsistency SHALL NOT crash the CLI. Re-running download for a selected dataset SHALL repair installer-owned content through normal staged verification and activation.
@@ -351,3 +316,12 @@ Deciding whether an install may be skipped as already-complete SHALL compare dig
 
 - **WHEN** an installed artifact is corrupted in place without changing its byte length, and download is re-run for that dataset
 - **THEN** the CLI detects the digest mismatch, re-downloads and re-activates the dataset, and never reports it as already installed with nothing transferred
+
+### Requirement: The agents cannot run the reference commands
+
+Each `inflexa refs` command MUST carry the agent policy `blocked`, with a reason that names the `download_ref` tool. Thus `run_inflexa` never runs a reference command, and an agent downloads reference data with `download_ref`. Setup MUST NOT offer reference data.
+
+#### Scenario: An agent tries a reference command
+
+- **WHEN** an agent calls `run_inflexa` with `["refs", "download", "reactome-pathways", "--yes"]`
+- **THEN** the tool gives a blocked result that names `download_ref`, and it raises no ask and spawns nothing

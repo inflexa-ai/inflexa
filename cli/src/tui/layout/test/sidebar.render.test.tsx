@@ -1549,6 +1549,7 @@ describe("Sidebar USAGE section", () => {
                     checkServer: () => Promise.resolve(true),
                     pollThread: async () => {},
                     pollPaused: async () => {},
+                    pollAsks: async () => {},
                 },
             );
         });

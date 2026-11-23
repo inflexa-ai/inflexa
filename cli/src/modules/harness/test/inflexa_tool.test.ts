@@ -94,19 +94,19 @@ function makeTool(runSubprocess: RunSubprocess) {
 
 describe("resolveInvocation", () => {
     test("dev prepends the bun runtime and the source entry", () => {
-        expect(resolveInvocation(["refs", "list"], { isDevelopment: true, execPath: "/bin/bun", scriptPath: "/app/src/index.ts" })).toEqual([
+        expect(resolveInvocation(["mcp", "ls"], { isDevelopment: true, execPath: "/bin/bun", scriptPath: "/app/src/index.ts" })).toEqual([
             "/bin/bun",
             "/app/src/index.ts",
-            "refs",
-            "list",
+            "mcp",
+            "ls",
         ]);
     });
 
     test("release runs the compiled binary directly (no script path)", () => {
-        expect(resolveInvocation(["refs", "list"], { isDevelopment: false, execPath: "/usr/local/bin/inflexa", scriptPath: "/app/src/index.ts" })).toEqual([
+        expect(resolveInvocation(["mcp", "ls"], { isDevelopment: false, execPath: "/usr/local/bin/inflexa", scriptPath: "/app/src/index.ts" })).toEqual([
             "/usr/local/bin/inflexa",
-            "refs",
-            "list",
+            "mcp",
+            "ls",
         ]);
     });
 });
@@ -142,12 +142,12 @@ describe("run_inflexa — execute", () => {
         const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        const result = (await runCall(tool, { argv: ["refs", "download", "x", "--yes"] }, ask.fn))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["geo", "download", "GSE12345"] }, ask.fn))._unsafeUnwrap();
 
         expect(ask.calls.length).toBe(1);
         // The displayed command is the EXACT argv; the grant keys on the bare subcommand path.
-        expect(ask.calls[0]?.command).toBe("inflexa refs download x --yes");
-        expect(ask.calls[0]?.grantKey).toBe("inflexa refs download");
+        expect(ask.calls[0]?.command).toBe("inflexa geo download GSE12345");
+        expect(ask.calls[0]?.grantKey).toBe("inflexa geo download");
         expect(sub.calls.length).toBe(1);
         expect(result.status).toBe("ran");
     });
@@ -157,7 +157,7 @@ describe("run_inflexa — execute", () => {
         const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        await awaitOk(runCall(tool, { argv: ["refs", "download", "x", "--yes"] }, ask.fn));
+        await awaitOk(runCall(tool, { argv: ["geo", "download", "GSE12345"] }, ask.fn));
 
         // Neither key is present: a download outlives any ceiling worth setting, and it is silent for the
         // whole of one large file, so either bound could only ever cut an honest transfer short.
@@ -183,12 +183,12 @@ describe("run_inflexa — execute", () => {
         const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        const result = (await runCall(tool, { argv: ["refs download x --yes"] }, ask.fn))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["geo download GSE12345"] }, ask.fn))._unsafeUnwrap();
 
         // The classifier's verdict argv is the single normalization source: what the
         // user approves is what spawns — never the still-packed input element.
-        expect(ask.calls[0]?.command).toBe("inflexa refs download x --yes");
-        expect(sub.calls[0]).toEqual(["/bin/bun", "/app/src/index.ts", "refs", "download", "x", "--yes"]);
+        expect(ask.calls[0]?.command).toBe("inflexa geo download GSE12345");
+        expect(sub.calls[0]).toEqual(["/bin/bun", "/app/src/index.ts", "geo", "download", "GSE12345"]);
         expect(result.status).toBe("ran");
     });
 
@@ -197,11 +197,11 @@ describe("run_inflexa — execute", () => {
         const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        const result = (await runCall(tool, { argv: ["refs", "download", "my file"] }, ask.fn))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["geo", "download", "my file"] }, ask.fn))._unsafeUnwrap();
 
         // Quoted for reading: the word boundaries the user approves are the ones that spawn.
-        expect(ask.calls[0]?.command).toBe('inflexa refs download "my file"');
-        expect(sub.calls[0]).toEqual(["/bin/bun", "/app/src/index.ts", "refs", "download", "my file"]);
+        expect(ask.calls[0]?.command).toBe('inflexa geo download "my file"');
+        expect(sub.calls[0]).toEqual(["/bin/bun", "/app/src/index.ts", "geo", "download", "my file"]);
         expect(result.status).toBe("ran");
     });
 
@@ -210,7 +210,7 @@ describe("run_inflexa — execute", () => {
         const reject = (_request: AskRequest): Promise<void> => Promise.reject(new DeniedError("no"));
         const tool = makeTool(sub.fn);
 
-        await expect(runCall(tool, { argv: ["refs", "download", "x", "--yes"] }, reject)).rejects.toBeInstanceOf(DeniedError);
+        await expect(runCall(tool, { argv: ["geo", "download", "GSE12345"] }, reject)).rejects.toBeInstanceOf(DeniedError);
         expect(sub.calls.length).toBe(0);
     });
 
@@ -232,7 +232,7 @@ describe("run_inflexa — execute", () => {
         const sub = recordingSubprocess();
         const tool = makeTool(sub.fn);
 
-        await expect(runCall(tool, { argv: ["refs", "download", "x", "--yes"] })).rejects.toBeInstanceOf(DeniedError);
+        await expect(runCall(tool, { argv: ["geo", "download", "GSE12345"] })).rejects.toBeInstanceOf(DeniedError);
         expect(sub.calls.length).toBe(0);
     });
 
@@ -343,7 +343,7 @@ describe("run_inflexa — execute", () => {
         const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        const result = (await runCall(tool, { argv: ["refs", "list", "--json"] }, ask.fn))._unsafeUnwrap();
+        const result = (await runCall(tool, { argv: ["mcp", "ls", "--json"] }, ask.fn))._unsafeUnwrap();
 
         expect(ask.calls.length).toBe(0);
         expect(sub.calls.length).toBe(1);
@@ -355,8 +355,8 @@ describe("run_inflexa — execute", () => {
         const ask = recordingAsk();
         const tool = makeTool(sub.fn);
 
-        // `refs verify` is auto with safeFlags [json]; the dataset id is a positional, which plays no part.
-        const result = (await runCall(tool, { argv: ["refs", "verify", "reactome-pathways", "--json"] }, ask.fn))._unsafeUnwrap();
+        // `agent show` is auto with safeFlags [json]; the agent id is a positional, which plays no part.
+        const result = (await runCall(tool, { argv: ["agent", "show", "analyst", "--json"] }, ask.fn))._unsafeUnwrap();
 
         expect(ask.calls.length).toBe(0);
         expect(sub.calls.length).toBe(1);
@@ -424,10 +424,10 @@ describe("run_inflexa — the described surface tracks the registry", () => {
         expect(free).toBeGreaterThan(-1);
         expect(gated).toBeGreaterThan(free);
         expect(blocked).toBeGreaterThan(gated);
-        // `refs list` only reads the store; `refs download` fetches and writes. The agent
-        // reporting reference data as unobtainable is exactly the failure this prevents.
-        expect(description.slice(free, gated)).toContain("`refs list`");
-        expect(description.slice(gated, blocked)).toContain("`refs download`");
+        // `mcp ls` only reads the config; `geo download` fetches and writes. The agent
+        // reporting a dataset as unobtainable is exactly the failure this prevents.
+        expect(description.slice(free, gated)).toContain("`mcp ls`");
+        expect(description.slice(gated, blocked)).toContain("`geo download`");
     });
 });
 
@@ -446,18 +446,18 @@ describe("decideAction — policy cascade", () => {
 
     test("an auto invocation with every set option safe-listed spawns", () => {
         const policy: AgentPolicy = { kind: "auto", safeFlags: ["json", "urls"] };
-        expect(decideAction(policy, "inflexa refs list", ["json"])).toEqual({ kind: "spawn" });
-        expect(decideAction(policy, "inflexa refs list", [])).toEqual({ kind: "spawn" });
+        expect(decideAction(policy, "inflexa mcp ls", ["json"])).toEqual({ kind: "spawn" });
+        expect(decideAction(policy, "inflexa mcp ls", [])).toEqual({ kind: "spawn" });
     });
 
     test("an auto invocation with an out-of-set option escalates to ask, never blocked", () => {
         const policy: AgentPolicy = { kind: "auto", safeFlags: ["json"] };
-        expect(decideAction(policy, "inflexa refs list", ["json", "danger"])).toEqual({ kind: "ask" });
-        expect(decideAction(policy, "inflexa refs list", ["danger"])).toEqual({ kind: "ask" });
+        expect(decideAction(policy, "inflexa mcp ls", ["json", "danger"])).toEqual({ kind: "ask" });
+        expect(decideAction(policy, "inflexa mcp ls", ["danger"])).toEqual({ kind: "ask" });
     });
 
     test("an approval policy always asks", () => {
-        expect(decideAction({ kind: "approval" }, "inflexa refs download", ["yes"])).toEqual({ kind: "ask" });
+        expect(decideAction({ kind: "approval" }, "inflexa geo download", ["maxSize"])).toEqual({ kind: "ask" });
     });
 });
 
@@ -734,7 +734,7 @@ describe("run_inflexa — the child's working directory", () => {
         const tool = toolWithFolder(sub.fn, { "an-abc": "/data/study-a", "an-other": "/data/study-b" });
 
         // The argv names a different analysis; the spawn directory must still be the session's.
-        await awaitOk(runCall(tool, { argv: ["refs", "download", "x", "--yes", "--analysis", "an-other"] }, recordingAsk().fn, "an-abc"));
+        await awaitOk(runCall(tool, { argv: ["geo", "download", "GSE12345", "--analysis", "an-other"] }, recordingAsk().fn, "an-abc"));
 
         expect(sub.cwds[0]).toBe("/data/study-a");
     });
@@ -769,7 +769,7 @@ describe("run_inflexa — describeCall", () => {
     }
 
     test("a word argv describes those words", () => {
-        expect(describeCall(["refs", "list"])).toBe("refs list");
+        expect(describeCall(["mcp", "ls"])).toBe("mcp ls");
         expect(describeCall(["--help"])).toBe("--help");
     });
 
@@ -803,7 +803,7 @@ describe("run_inflexa — describeCall", () => {
         // The joint property of the two surfaces. Asserting each against its own
         // hardcoded string would stay green if one surface changed its encoder or
         // read a different argv, thus this compares them against each other.
-        const argv = ["refs", "download", "my file"];
+        const argv = ["geo", "download", "my file"];
         const sub = recordingSubprocess();
         const ask = recordingAsk();
         const tool = makeTool(sub.fn);
@@ -834,15 +834,15 @@ describe("run_inflexa — view", () => {
     }
 
     test("shows the argv as the input and declares the error", () => {
-        expect(tool.view?.input?.({ argv: ["refs", "list"] })).toEqual({ argv: ["refs", "list"] });
+        expect(tool.view?.input?.({ argv: ["mcp", "ls"] })).toEqual({ argv: ["mcp", "ls"] });
         expect(tool.view?.error).toBe(true);
     });
 
     test("shows the argv that the model sent, and not the words that the classifier runs", () => {
         // The classifier tokenizes this single element before the spawn. The input keeps the one element as sent,
         // while the chip prints the same words, thus only the shape of the array tells them apart.
-        expect(tool.view?.input?.({ argv: ["refs list"] })).toEqual({ argv: ["refs list"] });
-        expect(tool.describeCall?.({ argv: ["refs list"] })).toBe("refs list");
+        expect(tool.view?.input?.({ argv: ["mcp ls"] })).toEqual({ argv: ["mcp ls"] });
+        expect(tool.describeCall?.({ argv: ["mcp ls"] })).toBe("mcp ls");
     });
 
     test("a ran call shows the status, the exit code, and each stream that holds text", () => {

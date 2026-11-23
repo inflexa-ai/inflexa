@@ -25,7 +25,7 @@ export type AgentPolicy =
 
 /**
  * The trait a runnable command carries when its work is a transfer from an upstream publisher —
- * `refs download` and `geo download` today. The tool then runs it with NO deadline of its own, and the
+ * `geo download` today. The tool then runs it with NO deadline of its own, and the
  * approval prompt states that.
  *
  * A transfer has no honest deadline to declare here. Its size is a 2 GB artifact over whatever link the
@@ -100,7 +100,7 @@ export function isTransferPolicy(policy: AgentPolicy | undefined): boolean {
 /**
  * The policy store, keyed on the `Command` INSTANCE rather than its path string.
  *
- * A string key ("inflexa refs list") would couple the policy to the command only by
+ * A string key ("inflexa geo download") would couple the policy to the command only by
  * spelling: rename the command and the entry silently orphans, leaving the command
  * un-policied while a dead entry lingers. Keying on the object means the policy
  * travels with the command through any rename or restructure, and — because the map
