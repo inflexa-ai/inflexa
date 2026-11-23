@@ -141,8 +141,10 @@ export async function runExec(
     if (submitted.kind === "unreachable") {
         // A machine that died between two execs, for example in a restart of the engine, refuses the submit. Only a
         // dead verdict gives the synthetic failure, thus the lease clears the machine and the next exec gets a new one.
+        // No command of this exec ran, thus an OOM flag of the machine comes from an earlier command, and the
+        // failure is a dead machine.
         const verdict = deps.isAlive === undefined ? undefined : await probeLiveness(deps.isAlive, ref);
-        if (verdict?.kind === "dead") return syntheticFailureResult(execId, syntheticFailureReason({ oomKilled: verdict.oomKilled }));
+        if (verdict?.kind === "dead") return syntheticFailureResult(execId, syntheticFailureReason({ oomKilled: false }));
         throw submitted.cause;
     }
     return pollExec(ref, execId, emit, deadlineMs, deps);
