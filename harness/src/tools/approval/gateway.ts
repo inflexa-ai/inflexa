@@ -43,6 +43,9 @@ export type AskScope = {
     /** The opaque identity of the person the ask goes to. The harness never reads it. */
     readonly userId: string;
     readonly threadId?: string;
+    /** The run and the step of an ask that a sandbox step raises, thus a surface can show the ask with its run. */
+    readonly runId?: string;
+    readonly stepId?: string;
     /** The workflow that waits for the answer. The answer of the host goes to it. */
     readonly workflowId?: string;
 };
@@ -96,6 +99,8 @@ export function createAskGateway(deps: AskGatewayDeps): AskGateway {
             analysisId: scope.analysisId,
             userId: scope.userId,
             threadId: scope.threadId ?? null,
+            runId: scope.runId ?? null,
+            stepId: scope.stepId ?? null,
             title: request.title,
             command: request.command,
             detail: request.detail ?? null,

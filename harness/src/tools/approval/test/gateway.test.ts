@@ -225,6 +225,17 @@ describe("createAskGateway — standing grants", () => {
         expect(await gateway.workflowOf(uuidv7())).toBeNull();
     });
 
+    it("gives the run and the step of an ask that a sandbox step raised, and none for an ask of a turn", async () => {
+        const step = uuidv7();
+        const turn = uuidv7();
+        await gateway.raise(step, GRANTED, { ...scope(), workflowId: "wf-step", runId: "run-1", stepId: "T1S1" });
+        await gateway.raise(turn, GRANTED, { ...scope(), workflowId: "wf-turn" });
+
+        const pending = await gateway.pendingByAnalyses({ analysisIds: [scope().analysisId], limit: 10 });
+        expect(pending.find((ask) => ask.id === step)).toMatchObject({ runId: "run-1", stepId: "T1S1", threadId: null });
+        expect(pending.find((ask) => ask.id === turn)).toMatchObject({ runId: null, stepId: null });
+    });
+
     it("gives the active turn of the thread for an ask that a process of an earlier release raised with no workflow", async () => {
         const id = uuidv7();
         await pool.query("INSERT INTO cortex_analysis_threads (thread_id, analysis_id, active_turn_id) VALUES ('old-thread', 'a1', 'turn-1')");
@@ -296,6 +307,8 @@ describe("createAskGateway — sweep", () => {
             analysisId: "analysis-A",
             userId: USER_A,
             threadId: null,
+            runId: null,
+            stepId: null,
             title: "t",
             command: "c",
             detail: null,
@@ -359,6 +372,8 @@ describe("createAskGateway — pendingByAnalyses", () => {
             analysisId,
             userId,
             threadId: null,
+            runId: null,
+            stepId: null,
             title: "t",
             command: `c-${id}`,
             detail: null,
