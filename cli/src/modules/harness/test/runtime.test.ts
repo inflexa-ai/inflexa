@@ -1182,6 +1182,13 @@ describe("describeBootError", () => {
         expect(message).toContain("run `inflexa server stop`");
     });
 
+    test("runtime_already_active of a different host names the host, the stop there, and the lock file", () => {
+        const message = describeBootError({ type: "runtime_already_active", holderPid: 4821, holderHost: "node-a" });
+        expect(message).toContain("Inflexa on the host node-a (pid 4821)");
+        expect(message).toContain("Stop Inflexa on node-a");
+        expect(message).toContain(`If that host is gone, remove the lock file ${instanceLockPath("harness-runtime")}`);
+    });
+
     test("runtime_already_active names the holder, `inflexa server stop`, and the lock file", () => {
         const message = describeBootError({ type: "runtime_already_active", holderPid: 4821 });
         expect(message).toContain("pid 4821");

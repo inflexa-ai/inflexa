@@ -25,7 +25,10 @@ import { getLogger } from "./log.ts";
 const heldKeys = new Set<string>();
 
 /** Outcome of an acquire attempt. `acquired:false` is an expected, non-error branch (the resource is live elsewhere) — not a thrown failure — so it is a plain union, not a neverthrow `Result`. */
-export type LockOutcome = { acquired: true } | { acquired: false; holderPid: number };
+export type LockOutcome =
+    | { acquired: true }
+    /** `holderHost` is set only when the holder runs on a different host, which shares this data folder. */
+    | { acquired: false; holderPid: number; holderHost?: string };
 
 /**
  * Advisory-lock key for the embedded harness runtime. A fixed sentinel — not an analysis id — because
@@ -87,9 +90,9 @@ export function instanceLockPath(key: string): string {
  * Who holds a lock or a discovery file: a pid, and what makes that pid mean one process.
  *
  * A pid alone is not an identity. After a reboot the kernel gives the same pid to a different process, and a
- * lock that holds only the pid then waits for that process for ever. The host name makes a record from a
- * different machine (a data folder on a shared home) read as foreign, and the start time makes a reused pid
- * read as a different process.
+ * lock that holds only the pid then waits for that process for ever. The start time makes a reused pid read as a
+ * different process. The host name tells a record of a different machine apart: a data folder on a shared home
+ * (NFS) is open to each host, and a pid of a different host cannot be probed from here.
  */
 export type ProcessIdentity = {
     readonly pid: number;
@@ -156,16 +159,22 @@ export function processIdentity(pid: number): ProcessIdentity {
     return pid === process.pid ? ownProcessIdentity() : { pid, host: hostname(), start: processStartToken(pid) };
 }
 
+/** The host of a record when it is a different host than this one, else `null`. */
+export function foreignHost(holder: ProcessIdentity): string | null {
+    return holder.host !== null && holder.host !== hostname() ? holder.host : null;
+}
+
 /**
- * Whether the process of a record still lives. A record from a different host, or a pid that now has a
- * different start time, names a process that is gone.
+ * Whether the process of a record still lives. A pid of this host that now has a different start time names a
+ * process that is gone.
  *
  * The danger is in one direction only: to read a live holder as dead lets two instances share the resource.
- * Thus each doubt keeps the holder alive: EPERM from the pid probe (a process of a different user), and a
- * start time that cannot be read now.
+ * Thus each doubt keeps the holder alive: a record of a different host, whose process this host cannot probe,
+ * EPERM from the pid probe (a process of a different user), and a start time that cannot be read now. A record
+ * of a host that is gone stays until the person removes it.
  */
 export function isProcessAlive(holder: ProcessIdentity): boolean {
-    if (holder.host !== null && holder.host !== hostname()) return false;
+    if (foreignHost(holder) !== null) return true;
     if (!isPidAlive(holder.pid)) return false;
     if (holder.start === null) return true;
     const now = processStartToken(holder.pid);
@@ -237,7 +246,8 @@ export function acquireInstanceLock(key: string): LockOutcome {
         return { acquired: true };
     }
     if (holder !== null && isProcessAlive(holder)) {
-        return { acquired: false, holderPid: holder.pid };
+        const holderHost = foreignHost(holder);
+        return holderHost === null ? { acquired: false, holderPid: holder.pid } : { acquired: false, holderPid: holder.pid, holderHost };
     }
 
     // Dead, reused, or corrupt holder: reclaim. Remove then re-create exclusively so that, in the narrow

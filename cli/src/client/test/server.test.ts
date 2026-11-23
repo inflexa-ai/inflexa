@@ -331,6 +331,16 @@ describe("lookupServer", () => {
         expect(world.removed).toEqual([]);
     });
 
+    test("a file of a different host is the server of that host: an error that names the host and the file, and no probe", async () => {
+        const { opts, world } = machine();
+        world.file = { ...DISCOVERY, host: `not-${hostname()}` };
+        const e = (await lookupServer(opts))._unsafeUnwrapErr();
+        expect(e).toMatchObject({ type: "other_host", host: `not-${hostname()}`, path: opts.discoveryPath });
+        expect(describeServerError(e)).toContain(`If that host is gone, remove ${opts.discoveryPath}.`);
+        expect((await ensureServer(opts))._unsafeUnwrapErr().type).toBe("other_host");
+        expect([world.removed, world.lockTaken, world.starts]).toEqual([[], 0, 0]);
+    });
+
     test("a live pid with a different start time is a reused pid: the file is stale", async () => {
         // After a reboot, the pid of the old server can name a different live process.
         const { opts, world } = machine();
