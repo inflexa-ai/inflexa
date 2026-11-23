@@ -224,12 +224,39 @@ REQUIRED = ("datafile.h5", "datasources.json", "views.json", "state.json")
 FIRST_VIEWS = ("Tissue", "Cells")
 IMPORT_LIMIT_MB = 20000 * 1024 * 1024 / 1e6     # the import dialog of MDV 1.3.0 refuses a larger zip
 RAW_ID = re.compile(r"^[a-z0-9]+(_[a-z0-9]+)+$")
+ROWS_AS_COLUMN = re.compile(r"^([^|]+)\|(.+)\(\1\)\|(\d+)$")   # sg|GENE(sg)|row: one gene of an expression set
 
 
 def _size_mb(path):
     if os.path.isfile(path):
         return os.path.getsize(path) / 1e6
     return sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(path) for f in fs) / 1e6
+
+
+LAYERED_CHARTS = ("SpatialDataMdvRegionReact",)
+
+
+def _image_um_per_px(image_dir, system):
+    """The x scale of level 0 of an OME-Zarr image in a coordinate system (zarr v3 or v2 metadata), or None."""
+    for meta in ("zarr.json", ".zattrs"):
+        path = os.path.join(image_dir, meta)
+        if not os.path.isfile(path):
+            continue
+        attrs = json.load(open(path, encoding="utf-8"))
+        attrs = attrs.get("attributes", attrs)
+        multiscales = (attrs.get("ome") or attrs).get("multiscales") or []
+        if not multiscales:
+            return None
+        for t in multiscales[0].get("coordinateTransformations", []):
+            if (t.get("output") or {}).get("name") != system:
+                continue
+            parts = t.get("transformations", [t]) if t.get("type") == "sequence" else [t]
+            factor = 1.0
+            for p in parts:
+                if p.get("type") == "scale":
+                    factor *= float(p["scale"][-1])
+            return factor
+    return None
 
 
 def _fields(chart):
@@ -282,6 +309,62 @@ def main(project_dir):
         if region.get("json") and not os.path.isfile(os.path.join(project_dir, region["json"])):
             err(f"region {name!r}: shapes file {region['json']!r} is missing")
     summary["images"] = images
+    elements = {}
+    for name, region in regions.items():
+        store = os.path.join(project_dir, "spatial", (region.get("spatial") or {}).get("file", ""))
+        for kind in ("images", "shapes", "points", "labels"):
+            d = os.path.join(store, kind)
+            for e in (os.listdir(d) if os.path.isdir(d) else []):
+                if not e.startswith(".") and os.path.isdir(os.path.join(d, e)):
+                    elements.setdefault(kind, set()).add(e)
+    summary["points"] = sorted(elements.get("points", []))
+    for name, region in regions.items():
+        store = os.path.join(project_dir, "spatial", (region.get("spatial") or {}).get("file", ""))
+        for key in summary["points"]:
+            try:
+                import pyarrow.parquet as pq
+                files = [os.path.join(r, f) for r, _, fs in os.walk(os.path.join(store, "points", key)) for f in fs
+                         if f.endswith(".parquet")]
+                rows = sum(pq.ParquetFile(f).metadata.num_rows for f in files)
+            except (ImportError, OSError):
+                continue
+            summary.setdefault("points_rows", {})[key] = rows
+            if rows > 40_000_000:
+                warn(f"points/{key} has {rows:,} points: a browser does not load more than about 40 M (tile_genes)")
+    summary["shapes"] = sorted(elements.get("shapes", []))
+    layered = {c.get("region") for v in views.values() for cs in v.get("initialCharts", {}).values() for c in cs
+               if c.get("type") in LAYERED_CHARTS}
+    region_scale = float((datasources.get("cells", {}).get("regions") or {}).get("scale") or 1.0)
+    for name, region in regions.items():
+        image = (region.get("viv_image") or {}).get("file")
+        system = (region.get("spatial") or {}).get("coordinate_system", "global")
+        um = _image_um_per_px(os.path.join(project_dir, "spatial", image), system) if image else None
+        if name in layered and um and abs(um - region_scale) > 0.01 * um:
+            err(f"region {name!r}: regions.scale is {region_scale}, but the image has {um:.6g} µm per pixel: the "
+                "tissue chart draws the cells at the wrong scale (run add_views of the skill)")
+    if regions and not summary["points"]:
+        summary["note"] = ("the store has no points: MDV shows no gene tiles. Keep the transcripts of an imaging "
+                           "platform (spatial-transcriptomics.md, drop_unused)")
+    genes = None
+    link = (datasources.get("cells", {}).get("links") or {}).get("genes", {}).get("rows_as_columns", {})
+    with h5py.File(os.path.join(project_dir, "datafile.h5"), "r") as h5:
+        name_col = link.get("name_column", "name")
+        if "genes" in h5 and name_col in h5["genes"]:
+            values = h5["genes"][name_col][()]
+            meta = columns.get("genes", {}).get(name_col, {})
+            cats = meta.get("values")
+            genes = [cats[int(v)] if cats else (v.decode() if isinstance(v, bytes) else str(v)) for v in values]
+    subgroups = set(link.get("subgroups", {}))
+
+    def field_ok(ds, f):
+        if f in columns[ds]:
+            return True
+        m = ROWS_AS_COLUMN.match(f)
+        if not (m and ds == "cells" and m.group(1) in subgroups):
+            return False
+        if genes is None:     # the names could not be read: the form of the field is the only check
+            return True
+        return int(m.group(3)) < len(genes) and genes[int(m.group(3))] == m.group(2)
 
     first = state.get("initial_view")
     summary["views"] = state.get("all_views", [])
@@ -298,11 +381,20 @@ def main(project_dir):
                 err(f"view {vname!r}: datasource {ds!r} does not exist")
                 continue
             for chart in charts:
-                absent = [f for f in _fields(chart) if f not in columns[ds]]
+                absent = [f for f in _fields(chart) if not field_ok(ds, f)]
                 if absent:
                     err(f"view {vname!r}, chart {chart.get('title') or chart.get('type')!r}: no column {absent} in {ds}")
                 if chart.get("region") and chart["region"] not in regions:
                     err(f"view {vname!r}: chart names region {chart['region']!r}, which the project does not have")
+                for entry in (chart.get("renderStack") or {}).get("entries", []):
+                    source = entry.get("source") or {}
+                    kind = {"image": "images", "shapes": "shapes", "points": "points", "labels": "labels"}.get(source.get("elementType"))
+                    if kind and source.get("elementKey") not in elements.get(kind, set()):
+                        err(f"view {vname!r}: a layer names {kind}/{source.get('elementKey')}, which the store does not have")
+                    if kind == "points" and entry.get("visible") and genes is not None:
+                        unknown = [g for g in entry.get("props", {}).get("featureNames", []) if g not in set(genes)]
+                        if unknown:
+                            err(f"view {vname!r}: the gene tiles name genes that the project does not have: {unknown[:5]}")
     if not os.path.isfile(os.path.join(project_dir, "README.md")):
         warn("README.md is missing in the project")
 
