@@ -258,11 +258,26 @@ export async function createAnalysis(opts: CreateAnalysisInput): Promise<Result<
     const anchor = await getOrCreateAnchorForCwd(opts.cwd);
     if (anchor.isErr()) {
         const e = anchor.error;
-        if (e.type !== "folder_is_copy") return err(e);
-        return err({
-            type: "workspace_unavailable",
-            message: `${e.dir} is a copy of ${e.original}. Run \`inflexa\` in ${e.dir} to give the copy its own identity, then create the analysis.`,
-        });
+        switch (e.type) {
+            case "folder_is_copy":
+                return err({
+                    type: "workspace_unavailable",
+                    message: `${e.dir} is a copy of ${e.original}. Run \`inflexa\` in ${e.dir} to give the copy its own identity, then create the analysis.`,
+                });
+            case "original_unverified":
+                return err({
+                    type: "workspace_unavailable",
+                    message: `${e.dir} holds the marker of ${e.original}, which does not answer, thus it can be a copy or a move. Try again when ${e.original} answers.`,
+                });
+            case "marker_unreadable":
+                return err({
+                    type: "workspace_unavailable",
+                    message: `Cannot read the anchor marker ${e.path}. Fix its permissions, or start Inflexa from a different folder.`,
+                    cause: e.cause,
+                });
+            default:
+                return err(e);
+        }
     }
     const slug = await uniqueSlugForAnchor({ id: anchor.value.id, path: anchor.value.cachedPath }, opts.name);
     if (slug.isErr()) return err(slug.error);

@@ -41,3 +41,11 @@ export function expandAndResolve(cwd: string, rawPath: string): string {
     const expanded = rawPath.startsWith("~") ? join(homedir(), rawPath.slice(1)) : rawPath;
     return resolve(cwd, expanded);
 }
+
+/**
+ * The on-disk marker for a folder: <dir>/.inflexa/id (write-once identity file). The layout lives here, not in
+ * the marker module, because a client reads it too, for the check of a folder before a new analysis.
+ */
+export function markerPath(dir: string): string {
+    return join(dir, ".inflexa", "id");
+}

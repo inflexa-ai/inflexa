@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { errAsync } from "neverthrow";
+import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,7 +10,8 @@ import { classifyMarkerSighting, getOrCreateAnchorForCwd, giveCopyNewIdentity, r
 import { canonicalPathAsync } from "../../../lib/paths.ts";
 import { readMarker, writeMarker } from "../marker.ts";
 import { insertAnchor } from "../../../db/primary_mutation.ts";
-import { getAnchor } from "../../../db/primary_query.ts";
+import { getAnchor, listAnchors } from "../../../db/primary_query.ts";
+import { reclaimDeadAnchors } from "../backstop.ts";
 import type { Anchor, AnchorMarker } from "../../../types/anchor.ts";
 
 const created: string[] = [];
@@ -180,5 +182,136 @@ describe("a duplicated project folder", () => {
         insertAnchorRow("A1", dir);
         expect((await giveCopyNewIdentity(dir))._unsafeUnwrapErr()).toEqual({ type: "not_a_copy", dir });
         expect((await readMarker(dir))._unsafeUnwrap()?.anchorId).toBe("A1");
+    });
+});
+
+// A read that does not answer in the time limit is unknown, never a "no": the folder can be the original on a
+// share that sleeps, and a "no" there would give its identity to a local copy.
+describe("a marker read that does not answer", () => {
+    const pipes: string[] = [];
+
+    afterEach(() => {
+        for (const pipe of pipes) releaseHungMarker(pipe);
+        pipes.length = 0;
+    });
+
+    /** A tracked original on a share that does not answer, and a local copy of it. */
+    async function hungOriginal(): Promise<{ original: string; copy: string }> {
+        const original = await canonicalPathAsync(tmp());
+        pipes.push(hungMarker(original));
+        insertAnchorRow("A1", original);
+        const copy = await canonicalPathAsync(tmp());
+        (await writeMarker(copy, "A1"))._unsafeUnwrap();
+        return { original, copy };
+    }
+
+    test("the sighting of the copy is unverified, not a move", async () => {
+        const { original, copy } = await hungOriginal();
+        expect((await classifyMarkerSighting(copy, marker("A1")))._unsafeUnwrap()).toEqual({ kind: "unverified", original });
+    }, 10_000);
+
+    test("the ensure of the copy refuses it and does not heal the row", async () => {
+        const { original, copy } = await hungOriginal();
+        expect((await getOrCreateAnchorForCwd(copy))._unsafeUnwrapErr()).toEqual({ type: "original_unverified", dir: copy, original });
+        expect(getAnchor("A1")._unsafeUnwrap()?.cachedPath).toBe(original);
+    }, 10_000);
+
+    test("a resolve from inside the copy does not heal the row to the copy", async () => {
+        const { original, copy } = await hungOriginal();
+        expect((await resolveAnchor("A1", { searchRoots: [copy] }))._unsafeUnwrap()?.path).toBeNull();
+        expect(getAnchor("A1")._unsafeUnwrap()?.cachedPath).toBe(original);
+    }, 10_000);
+
+    test("the search does not count a single hit as unique while a candidate is unknown", async () => {
+        const gone = tmp();
+        insertAnchorRow("A1", gone);
+        rmSync(gone, { recursive: true, force: true });
+        const asleep = await canonicalPathAsync(tmp());
+        pipes.push(hungMarker(asleep));
+        insertAnchorRow("B1", asleep);
+        const copy = await canonicalPathAsync(tmp());
+        (await writeMarker(copy, "A1"))._unsafeUnwrap();
+        insertAnchorRow("C1", copy);
+
+        expect((await resolveAnchor("A1", { searchRoots: [tmp()] }))._unsafeUnwrap()?.path).toBeNull();
+        expect(getAnchor("A1")._unsafeUnwrap()?.cachedPath).toBe(gone);
+    }, 10_000);
+
+    test("a search with an unknown candidate is not remembered as a miss", async () => {
+        const gone = tmp();
+        insertAnchorRow("A1", gone);
+        rmSync(gone, { recursive: true, force: true });
+        const asleep = await canonicalPathAsync(tmp());
+        const pipe = hungMarker(asleep);
+        insertAnchorRow("B1", asleep);
+        const roots = [tmp()];
+        expect((await resolveAnchor("A1", { searchRoots: roots }))._unsafeUnwrap()?.path).toBeNull();
+
+        // The share wakes up, and it holds the folder of A1.
+        releaseHungMarker(pipe);
+        rmSync(join(asleep, ".inflexa"), { recursive: true, force: true });
+        (await writeMarker(asleep, "A1"))._unsafeUnwrap();
+        expect((await resolveAnchor("A1", { searchRoots: roots }))._unsafeUnwrap()?.path).toBe(asleep);
+    }, 10_000);
+
+    test("a folder with a read that waits gets no second read", async () => {
+        const asleep = await canonicalPathAsync(tmp());
+        const pipe = hungMarker(asleep);
+        insertAnchorRow("A1", asleep);
+        expect((await resolveAnchor("A1", { searchRoots: [tmp()] }))._unsafeUnwrap()?.path).toBeNull();
+
+        // The first read still waits on the pipe. A plain marker of A1 now takes its name: a second read would
+        // see it, and the resolve that joins the read that waits does not.
+        const moved = `${pipe}.waiting`;
+        renameSync(pipe, moved);
+        pipes.push(moved);
+        writeFileSync(pipe, JSON.stringify(marker("A1")));
+        expect((await resolveAnchor("A1", { searchRoots: [tmp()] }))._unsafeUnwrap()?.path).toBeNull();
+    }, 10_000);
+});
+
+describe("a new identity for a copy", () => {
+    test("two requests at the same time mint one identity", async () => {
+        const original = await canonicalPathAsync(tmp());
+        const copy = await canonicalPathAsync(tmp());
+        (await writeMarker(original, "A1"))._unsafeUnwrap();
+        (await writeMarker(copy, "A1"))._unsafeUnwrap();
+        insertAnchorRow("A1", original);
+
+        const outcome = (path: string): Promise<string> =>
+            giveCopyNewIdentity(path).match(
+                () => "ok",
+                (e) => e.type,
+            );
+        const both = await Promise.all([outcome(copy), outcome(copy)]);
+        expect(both.sort()).toEqual(["not_a_copy", "ok"]);
+        expect(listAnchors()._unsafeUnwrap()).toHaveLength(2);
+    });
+});
+
+describe("the search misses of a pruned anchor", () => {
+    test("go with the anchor, thus an anchor of the same id searches again", async () => {
+        const gone = tmp();
+        insertAnchorRow("A1", gone);
+        rmSync(gone, { recursive: true, force: true });
+        const known = await canonicalPathAsync(tmp());
+        insertAnchorRow("B1", known);
+        const roots = [tmp()];
+        expect((await resolveAnchor("A1", { searchRoots: roots }))._unsafeUnwrap()?.path).toBeNull();
+
+        const dead = getAnchor("A1")._unsafeUnwrap();
+        if (dead === null) throw new Error("the row of A1 is gone before the prune");
+        (
+            await reclaimDeadAnchors(
+                [dead],
+                () => errAsync({ type: "connection_failed", op: "test", cause: "no purge" }),
+                () => Promise.resolve([]),
+            )
+        )._unsafeUnwrap();
+
+        // The marker comes back on disk, and a deliberate action makes the row again from it.
+        insertAnchorRow("A1", gone);
+        (await writeMarker(known, "A1"))._unsafeUnwrap();
+        expect((await resolveAnchor("A1", { searchRoots: roots }))._unsafeUnwrap()?.path).toBe(known);
     });
 });

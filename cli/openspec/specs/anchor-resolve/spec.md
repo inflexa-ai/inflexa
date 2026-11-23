@@ -5,7 +5,7 @@ On-demand anchor creation and lazy UUID→path reconciliation that self-heals mo
 ## Requirements
 ### Requirement: On-demand anchor creation
 
-The system SHALL provide `getOrCreateAnchorForCwd(dir)` returning `ResultAsync<Anchor, AnchorEnsureError>` (the `DbError` union widened by `folder_is_copy`) in `src/modules/anchor/anchor.ts`, the single anchor entry point used at analysis creation. For a folder that already has a marker it SHALL return the existing anchors row (self-healing a drifted `cachedPath`). When the drifted `cachedPath` still holds the same marker, the folder is a copy: the function MUST return the err `folder_is_copy` with the folder and the original, and it MUST NOT change the row; for an unmarked writable folder it SHALL mint an id (`randomUUIDv7()`, inline), write the marker, and insert a row with `markerWritten: true`; for an unmarked non-writable folder it SHALL mint an id and insert a row with `markerWritten: false` without writing any marker. The minted id SHALL be a `randomUUIDv7()`, never `crypto.randomUUID()` or ULID.
+The system SHALL provide `getOrCreateAnchorForCwd(dir)` returning `ResultAsync<Anchor, AnchorEnsureError>` (the `DbError` union widened by `folder_is_copy`) in `src/modules/anchor/anchor.ts`, the single anchor entry point used at analysis creation. For a folder that already has a marker it SHALL return the existing anchors row (self-healing a drifted `cachedPath`). When the drifted `cachedPath` still holds the same marker, the folder is a copy: the function MUST return the err `folder_is_copy` with the folder and the original, and it MUST NOT change the row. When the read of that `cachedPath` does not answer, the function MUST return the err `original_unverified`, and it MUST NOT change the row. A corrupt marker in `dir` MUST be replaced with a new marker and a new row. A marker in `dir` that the user cannot read MUST give the err `marker_unreadable` with the path of the file; for an unmarked writable folder it SHALL mint an id (`randomUUIDv7()`, inline), write the marker, and insert a row with `markerWritten: true`; for an unmarked non-writable folder it SHALL mint an id and insert a row with `markerWritten: false` without writing any marker. The minted id SHALL be a `randomUUIDv7()`, never `crypto.randomUUID()` or ULID.
 
 #### Scenario: Create anchor for an unmarked writable directory
 
@@ -38,7 +38,7 @@ The system SHALL provide `getOrCreateAnchorForCwd(dir)` returning `ResultAsync<A
 
 The system SHALL provide `resolveAnchor(anchorId, opts?)` returning `ResultAsync<{ anchor: Anchor; path: string | null }, DbError>` that reconciles the id to its live path via a three-step lazy algorithm, in order: (1) if the marker at the row's `cachedPath` matches the id, touch the anchor (`last_seen`) and return `cachedPath`; (2) if a search root (default cwd) or an ancestor holds a marker with the id, self-heal `cachedPath` to that directory and return it without scanning; (3) otherwise perform a bounded search over the search roots and known anchor cached paths, returning a unique hit (self-healed) or `path: null` for zero or multiple hits. The marker reads SHALL run off the event loop. The bounded search SHALL read each candidate, with a fixed count of reads in flight, so a candidate on a hung mount holds one slot and the reads of a large anchor set do not fill the thread pool of the server.
 
-Each marker read of a resolve MUST have a time limit. A read that does not answer in the limit MUST count as no match, thus a folder on a hung share cannot stop a resolve. A bounded search that finds no unique folder MUST be remembered for the life of the server. A later search of the same anchor over the same set of candidate folders MUST NOT read the folders again, and it gives `path: null`. Steps 1 and 2 still run, and a hit in them clears the misses of the anchor.
+Each marker read of a resolve MUST have a time limit. The answer of a read MUST be one of three values: match, no match, or unknown. A read that does not answer in the limit MUST be unknown, thus a folder on a hung share cannot stop a resolve. No heal, no copy decision, and no count of unique hits MUST act on an unknown answer: an unknown `cachedPath` stops the resolve with `path: null` before step 2, and an unknown candidate stops the bounded search with `path: null`. While a read of a folder waits, a probe of the same folder MUST join that read and MUST NOT start a second read. A bounded search that reads each candidate and finds no unique folder MUST be remembered for the life of the server. A search with an unknown candidate MUST NOT be remembered. A prune of an anchor MUST drop its remembered misses. A later search of the same anchor over the same set of candidate folders MUST NOT read the folders again, and it gives `path: null`. Steps 1 and 2 still run, and a hit in them clears the misses of the anchor.
 
 #### Scenario: Cached path still valid
 
@@ -53,8 +53,8 @@ Each marker read of a resolve MUST have a time limit. A read that does not answe
 #### Scenario: A hung folder does not stop the resolve
 
 - **GIVEN** an anchor whose `cachedPath` is on a share that does not answer
-- **WHEN** `resolveAnchor` runs
-- **THEN** each read of that folder counts as no match after the time limit, and the resolve gives `path: null`
+- **WHEN** `resolveAnchor` runs from inside a copy of the folder
+- **THEN** the read of that folder is unknown after the time limit, the resolve gives `path: null`, and the row stays at the `cachedPath`
 
 #### Scenario: A remembered miss
 
@@ -87,9 +87,9 @@ A launch MUST NOT wait for this recovery. The resolve of the launch already reco
 
 ### Requirement: Copy versus move classification
 
-The system SHALL provide `classifyMarkerSighting(dir, marker)` returning `ResultAsync<MarkerSighting, DbError>`: `ok` when the id's anchors `cachedPath` equals `dir` (or no row exists), `copy` with the `original` folder when that `cachedPath` differs from `dir` and still holds the same marker, and `move` when that `cachedPath` differs and does not hold the same marker. A folder at the `cachedPath` with no marker, or with a different marker, is a `move`, because a moved project can leave a new folder at its old path. It SHALL never auto-merge a copy.
+The system SHALL provide `classifyMarkerSighting(dir, marker)` returning `ResultAsync<MarkerSighting, DbError>`: `ok` when the id's anchors `cachedPath` equals `dir` (or no row exists), `copy` with the `original` folder when that `cachedPath` differs from `dir` and still holds the same marker, and `move` when that `cachedPath` differs and does not hold the same marker, and `unverified` with the `original` when the read of that `cachedPath` does not answer. A folder at the `cachedPath` with no marker, or with a different marker, is a `move`, because a moved project can leave a new folder at its old path. It SHALL never auto-merge a copy.
 
-The system SHALL provide `giveCopyNewIdentity(path)`, which gives a copy its own identity. The function MUST make sure that the folder is a copy. Then it MUST write a new marker with a `randomUUIDv7()` id over the marker of the copy, and insert an anchors row at the folder. The original MUST keep its marker, its row, and its analyses. A folder that is not a copy MUST give the err `not_a_copy`, and the function MUST change nothing.
+The system SHALL provide `giveCopyNewIdentity(path)`, which gives a copy its own identity. The function MUST make sure that the folder is a copy. Then it MUST write a new marker with a `randomUUIDv7()` id over the marker of the copy, and insert an anchors row at the folder. The original MUST keep its marker, its row, and its analyses. A folder that is not a copy MUST give the err `not_a_copy`, and a folder whose original does not answer MUST give the err `original_unverified`. In both cases the function MUST change nothing. The server MUST run one new identity at a time for each folder, thus two clients cannot mint two ids for one copy.
 
 #### Scenario: Same location is ok
 

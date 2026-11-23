@@ -1,7 +1,7 @@
 import { fail } from "../../lib/cli.ts";
 import { describeClientError } from "../api.ts";
 import { resolveAnalysisContext } from "../analyses.ts";
-import type { ContextFlags } from "./analyses.ts";
+import { unverifiedFolder, type ContextFlags } from "./analyses.ts";
 import { present } from "../../lib/present.ts";
 
 /**
@@ -32,6 +32,8 @@ export async function resolveGeoDownloadFolder(flags: ContextFlags): Promise<str
         }
         case "copy":
             return fail(`${ctx.dir} is a copy of ${ctx.original}. Run \`inflexa\` there to give the copy a new identity before you download into it.`);
+        case "unverified":
+            return fail(unverifiedFolder(ctx));
         case "empty":
             return fail("No analysis here — run `inflexa new` to create one, or pass --analysis <id|name>.");
     }

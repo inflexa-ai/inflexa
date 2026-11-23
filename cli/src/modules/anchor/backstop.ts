@@ -11,7 +11,7 @@ import { deleteAnalysesForAnchor, deleteAnchor, relocateRawInputPrefix, updateAn
 import { pathExistsAsync } from "../../lib/fs.ts";
 import { canonicalPathAsync } from "../../lib/paths.ts";
 import { readMarker, type MarkerError } from "./marker.ts";
-import { classifyMarkerSighting, resolveAnchor } from "./anchor.ts";
+import { classifyMarkerSighting, forgetSearchMisses, resolveAnchor } from "./anchor.ts";
 
 // The explicit move backstop. `resolveAnchor` already self-heals a moved folder
 // automatically on the next lookup (cached-path → cwd/ancestor → bounded search); these
@@ -28,6 +28,7 @@ export type RepairError =
     | { type: "no_marker"; dir: string }
     | { type: "no_anchor_row"; anchorId: string }
     | { type: "folder_is_copy"; dir: string; original: string }
+    | { type: "original_unverified"; dir: string; original: string }
     | { type: "db_failed"; cause: DbError };
 
 /** What a repair did: the anchor of the marker now points at `after`, which it maybe did before. */
@@ -54,6 +55,7 @@ async function repairAnchor(path: string): Promise<Result<RepairOutcome, RepairE
     const sighting = await classifyMarkerSighting(dir, marker.value);
     if (sighting.isErr()) return err({ type: "db_failed", cause: sighting.error });
     if (sighting.value.kind === "copy") return err({ type: "folder_is_copy", dir, original: sighting.value.original });
+    if (sighting.value.kind === "unverified") return err({ type: "original_unverified", dir, original: sighting.value.original });
 
     return getAnchor(anchorId)
         .mapErr((cause): RepairError => ({ type: "db_failed", cause }))
@@ -221,6 +223,9 @@ export async function reclaimDeadAnchors(
     // The analyses→anchors FK has no ON DELETE CASCADE, so each dead anchor's analyses go first (their
     // input refs cascade via the analysis FK) and the anchor itself after.
     return Result.combine(dead.map((a) => deleteAnalysesForAnchor(a.id).andThen(() => deleteAnchor(a.id))))
-        .map(() => ({ purged: analysisIds.length }))
+        .map(() => {
+            forgetSearchMisses(dead.map((a) => a.id));
+            return { purged: analysisIds.length };
+        })
         .mapErr((cause): PruneError => ({ type: "sqlite_failed", cause }));
 }

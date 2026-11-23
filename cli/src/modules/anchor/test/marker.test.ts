@@ -3,7 +3,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { findMarkerUpwards, markerPath, readMarker, writeMarker } from "../marker.ts";
+import { findMarkerUpwards, readMarker, writeMarker } from "../marker.ts";
+import { markerPath } from "../../../lib/paths.ts";
 
 const created: string[] = [];
 

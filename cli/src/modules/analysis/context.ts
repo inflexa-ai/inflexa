@@ -16,6 +16,7 @@ export type ResolvedContext =
     | { kind: "anchor"; anchorPath: string; analyses: Analysis[] } // a folder with 0+ analyses → pick/new
     | { kind: "pick"; analyses: Analysis[] } // ambiguous → interactive picker
     | { kind: "copy"; cwd: string; dir: string; original: string; marker: AnchorMarker } // `dir` is a copy of `original` → the command offers a new identity
+    | { kind: "unverified"; cwd: string; dir: string; original: string } // `original` does not answer → `dir` can be a copy or a move
     | { kind: "empty"; cwd: string }; // nothing here → offer to start one
 
 /** Flags that override cwd-based resolution; each is an id-or-name reference. */
@@ -71,6 +72,8 @@ export function resolveContext(cwd: string, flags: ContextFlags, opts?: ContextO
         return classifyMarkerSighting(found.dir, marker).andThen((sighting): ResultAsync<ResolvedContext, DbError> => {
             // Copy guard: never auto-resolve a copied folder — let the command prompt.
             if (sighting.kind === "copy") return okAsync({ kind: "copy", cwd, dir: found.dir, original: sighting.original, marker });
+            // Neither a heal nor a copy decision is safe until the original answers.
+            if (sighting.kind === "unverified") return okAsync({ kind: "unverified", cwd, dir: found.dir, original: sighting.original });
             // A marker on disk whose anchor row the DB no longer has (e.g. the user deleted the DB) is a
             // routine desync, not an error: fall back to the marker's own directory for the anchor path and
             // carry on — listAnalysesForAnchorAt returns nothing, so this resolves to an empty anchor the
@@ -85,6 +88,11 @@ export function resolveContext(cwd: string, flags: ContextFlags, opts?: ContextO
             });
         });
     });
+}
+
+/** The way forward for an `unverified` context: no command can act on the folder until the original answers. */
+export function unverifiedMessage(ctx: { dir: string; original: string }): string {
+    return `${ctx.dir} holds the marker of ${ctx.original}, which does not answer, thus it can be a copy or a move. Try again when ${ctx.original} answers.`;
 }
 
 function plural(n: number, one: string, many: string): string {
@@ -102,6 +110,8 @@ export function describeContext(ctx: ResolvedContext): string {
             return `context: pick (${plural(ctx.analyses.length, "candidate", "candidates")})`;
         case "copy":
             return `context: ${ctx.dir} is a copy of ${ctx.original} — give it a new identity before use`;
+        case "unverified":
+            return `context: ${ctx.dir} holds the marker of ${ctx.original}, which does not answer — it can be a copy or a move`;
         case "empty":
             return `context: empty — ${ctx.cwd} (no analysis here; start one?)`;
     }
@@ -139,6 +149,9 @@ export async function resolveSingleAnalysis(flags: ContextFlags, emptyHint: stri
             break;
         case "copy":
             fail(`${ctx.dir} is a copy of ${ctx.original}. Run \`inflexa\` there to give the copy a new identity first.`);
+            break;
+        case "unverified":
+            fail(unverifiedMessage(ctx));
             break;
         default: {
             const exhaustive: never = ctx;

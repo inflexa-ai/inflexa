@@ -27,11 +27,20 @@ async function makeAnchor(id: string, dir: string, markerWritten: boolean): Prom
 }
 
 /**
- * Why {@link getOrCreateAnchorForCwd} gave no anchor. `folder_is_copy`: the marker of `dir` names an anchor
- * whose known folder `original` still holds the same marker, thus `dir` is a copy and must not take the
- * identity of the original.
+ * Why {@link getOrCreateAnchorForCwd} gave no anchor.
+ *
+ * - `folder_is_copy`: the marker of `dir` names an anchor whose known folder `original` still holds the same
+ *   marker, thus `dir` is a copy and must not take the identity of the original.
+ * - `original_unverified`: the read of the marker at `original` did not answer, thus `dir` can be a copy or
+ *   a move, and neither a heal nor a copy decision is safe.
+ * - `marker_unreadable`: the marker of `dir` exists, and the user cannot read it, for example a file of a
+ *   different user. A new marker would take the identity of a folder that is not theirs.
  */
-export type AnchorEnsureError = DbError | { type: "folder_is_copy"; dir: string; original: string };
+export type AnchorEnsureError =
+    | DbError
+    | { type: "folder_is_copy"; dir: string; original: string }
+    | { type: "original_unverified"; dir: string; original: string }
+    | { type: "marker_unreadable"; path: string; cause: unknown };
 
 /**
  * Ensure `dir` is a tracked anchor and return its row. The single entry point used at
@@ -50,7 +59,23 @@ async function getOrCreateAnchor(dir: string): Promise<Result<Anchor, AnchorEnsu
     const abs = await canonicalPathAsync(dir);
 
     const markerResult = await readMarker(abs);
-    if (markerResult.isErr()) return err(markerToDbError("getOrCreateAnchorForCwd:readMarker", markerResult.error));
+    if (markerResult.isErr()) {
+        const e = markerResult.error;
+        switch (e.type) {
+            case "marker_read_failed":
+                return err({ type: "marker_unreadable", path: e.path, cause: e.cause });
+            case "marker_corrupt":
+                // The deliberate create replaces a corrupt marker: its id cannot be read, thus no row can be
+                // reached through it, and the walk of each passive read already reads it as no marker.
+                return mintAnchor(abs, (anchorId) => replaceMarker(abs, anchorId));
+            case "marker_write_failed":
+                return err(markerToDbError("getOrCreateAnchorForCwd:readMarker", e));
+            default: {
+                const exhaustive: never = e;
+                throw new Error(`unhandled marker error: ${JSON.stringify(exhaustive)}`);
+            }
+        }
+    }
     const marker = markerResult.value;
 
     if (marker) {
@@ -63,42 +88,70 @@ async function getOrCreateAnchor(dir: string): Promise<Result<Anchor, AnchorEnsu
         // Self-heal a drifted cached path, but only for a move: a cached path that still holds this marker is
         // the original, and a heal would give its identity to the copy.
         if (existing.value.cachedPath !== abs) {
-            if (await markerMatches(existing.value.cachedPath, anchorId)) return err({ type: "folder_is_copy", dir: abs, original: existing.value.cachedPath });
+            const original = existing.value.cachedPath;
+            const probe = await probeMarker(original, anchorId);
+            if (probe === "match") return err({ type: "folder_is_copy", dir: abs, original });
+            if (probe === "unknown") return err({ type: "original_unverified", dir: abs, original });
             const healed: Anchor = { ...existing.value, cachedPath: abs };
             return updateAnchorCachedPath(anchorId, abs).map(() => healed);
         }
         return ok(existing.value);
     }
 
-    // No marker: mint a UUID. Only write a marker when the dir is writable; otherwise
-    // the anchor degrades to path-only (markerWritten: false), per the spec.
+    return mintAnchor(abs, (anchorId) => writeMarker(abs, anchorId));
+}
+
+/**
+ * Mint a UUID for `abs` and insert its row. Only write a marker (with `write`) when the dir is writable;
+ * otherwise the anchor degrades to path-only (markerWritten: false), per the spec.
+ */
+async function mintAnchor(abs: string, write: (anchorId: string) => ResultAsync<AnchorMarker, MarkerError>): Promise<Result<Anchor, DbError>> {
     const anchorId = randomUUIDv7();
     const writable = await isDirWritable(abs);
     if (writable) {
-        const writeResult = await writeMarker(abs, anchorId);
+        const writeResult = await write(anchorId);
         if (writeResult.isErr()) return err(markerToDbError("getOrCreateAnchorForCwd:writeMarker", writeResult.error, "mutation_failed"));
     }
     return insertAnchor(await makeAnchor(anchorId, abs, writable));
 }
 
 /**
- * How long one marker read of a resolve can take before it counts as no match. A folder on a hung network share
- * never answers, and a resolve that waits for it stops the request of a client. The read itself cannot be
- * canceled, thus it keeps its thread until the mount answers or fails; the search-miss memory below keeps a
- * later resolve from a new read of the same folder.
+ * How long one marker read of a resolve can take before its answer is unknown. A folder on a hung network share
+ * never answers, and a resolve that waits for it stops the request of a client.
  */
 const MARKER_READ_LIMIT_MS = 2_000;
 
 /**
- * True if `dir` holds a valid marker whose UUID matches. Corrupt or absent markers are
- * treated as non-matching here: resolution must not abort on an unrelated corrupt marker.
- * A read that does not answer within {@link MARKER_READ_LIMIT_MS} is also no match.
+ * The marker reads that have not settled, by folder. The read itself cannot be canceled, thus it keeps its thread
+ * until the mount answers or fails. A probe of a folder with a read here joins that read and starts no second one,
+ * thus a folder that does not answer holds one thread, however many resolves ask for it.
  */
-function markerMatches(dir: string, anchorId: string): Promise<boolean> {
-    const read = readMarker(dir)
-        .map((m) => m?.anchorId === anchorId)
-        .unwrapOr(false);
-    return withinDeadline(read, MARKER_READ_LIMIT_MS, { unref: true }).then((r) => r.kind === "settled" && r.value);
+const pendingReads = new Map<string, Promise<AnchorMarker | null>>();
+
+/**
+ * What a probe of the marker of a folder found. `unknown`: the read did not answer within
+ * {@link MARKER_READ_LIMIT_MS}. The folder can hold the marker, thus no heal, no copy decision, and no count of
+ * unique hits may act on it.
+ */
+type MarkerProbe = "match" | "no_match" | "unknown";
+
+/**
+ * Probe `dir` for a valid marker with the UUID `anchorId`. Corrupt or absent markers are
+ * treated as non-matching here: resolution must not abort on an unrelated corrupt marker.
+ */
+async function probeMarker(dir: string, anchorId: string): Promise<MarkerProbe> {
+    let read = pendingReads.get(dir);
+    if (read === undefined) {
+        const started = readMarker(dir).unwrapOr(null);
+        read = started;
+        pendingReads.set(dir, started);
+        void started.finally(() => {
+            if (pendingReads.get(dir) === started) pendingReads.delete(dir);
+        });
+    }
+    const answer = await withinDeadline(read, MARKER_READ_LIMIT_MS, { unref: true });
+    if (answer.kind === "timeout") return "unknown";
+    return answer.value?.anchorId === anchorId ? "match" : "no_match";
 }
 
 /**
@@ -145,14 +198,20 @@ async function selfHeal(anchor: Anchor, anchorId: string, dir: string): Promise<
 const MARKER_READ_WIDTH = 8;
 
 /**
- * The bounded searches that found no unique folder, for the life of the server: for each anchor id, the key of
- * the candidate set of each miss. The search reads the marker of each known anchor folder and of each parent of
+ * The bounded searches that found no folder and read each candidate, for the life of the server: for each anchor
+ * id, the key of the candidate set of each miss. A search with an unknown candidate is no miss: the folder can
+ * answer later. The search reads the marker of each known anchor folder and of each parent of
  * the roots, and a poll of an analysis whose folder is gone would run it again at each tick. A later search of
  * the same anchor over the same candidates is skipped and gives `path: null`. A new root or a new anchor folder
  * changes the candidates, thus it searches again. Steps 1 and 2 still run, thus a folder that comes back at its
  * cached path, or under the roots, still resolves, and that resolve drops the misses of its anchor.
  */
 const searchMisses = new Map<string, Set<string>>();
+
+/** Drop the remembered search misses of `anchorIds`, for an anchor whose row is gone. */
+export function forgetSearchMisses(anchorIds: readonly string[]): void {
+    for (const id of anchorIds) searchMisses.delete(id);
+}
 
 /**
  * Resolve a UUID to its current path, reconciling the cached path lazily. See the spec
@@ -185,11 +244,14 @@ async function resolveAnchorPath(anchorId: string, opts?: { searchRoots?: string
     if (!anchor) return ok(null);
 
     // Step 1: the cached path still holds our marker — cheapest, highest-hit case.
-    if (await markerMatches(anchor.cachedPath, anchorId)) {
+    const cached = await probeMarker(anchor.cachedPath, anchorId);
+    if (cached === "match") {
         searchMisses.delete(anchorId);
         const resolved: ResolvedAnchor = { anchor, path: anchor.cachedPath };
         return touch ? touchAnchor(anchorId).map(() => resolved) : ok(resolved);
     }
+    // The cached path can still hold the marker: a hit anywhere else can be a copy, thus nothing heals.
+    if (cached === "unknown") return ok({ anchor, path: null });
 
     const roots = await Promise.all((opts?.searchRoots ?? [process.cwd()]).map((r) => canonicalPathAsync(r)));
 
@@ -209,13 +271,16 @@ async function resolveAnchorPath(anchorId: string, opts?: { searchRoots?: string
     for (const root of roots) for (const d of ancestorsOf(root)) candidates.add(d);
     for (const a of anchors.value) candidates.add(resolve(a.cachedPath));
     const ordered = [...candidates];
-    const key = ordered.join("\0");
+    // Sorted, thus the key does not change with the order of the rows.
+    const key = [...ordered].sort().join("\0");
     if (searchMisses.get(anchorId)?.has(key)) return ok({ anchor, path: null });
 
     // Each candidate is read, with no stop at the first hit: a second match must be seen to refuse a guess.
     const queue = new PQueue({ concurrency: MARKER_READ_WIDTH });
-    const hits = await Promise.all(ordered.map((d) => queue.add(() => markerMatches(d, anchorId))));
-    const matches = ordered.filter((_, i) => hits[i]);
+    const probes = await Promise.all(ordered.map((d) => queue.add(() => probeMarker(d, anchorId))));
+    // An unknown candidate can be a second match, thus one hit is not unique, and the search is no miss.
+    if (probes.includes("unknown")) return ok({ anchor, path: null });
+    const matches = ordered.filter((_, i) => probes[i] === "match");
     const unique = matches.length === 1 ? matches[0] : null;
     if (unique) return selfHeal(anchor, anchorId, unique);
     // Zero or multiple hits: do not guess — caller surfaces "run `inflexa relocate`".
@@ -225,8 +290,11 @@ async function resolveAnchorPath(anchorId: string, opts?: { searchRoots?: string
     return ok({ anchor, path: null });
 }
 
-/** What a marker sighting at a folder is. `copy`: `original` is the known folder of the anchor, and it still holds the same marker. */
-export type MarkerSighting = { kind: "ok" } | { kind: "move" } | { kind: "copy"; original: string };
+/**
+ * What a marker sighting at a folder is. `copy`: `original` is the known folder of the anchor, and it still holds
+ * the same marker. `unverified`: the read of `original` did not answer, thus the sighting can be a copy or a move.
+ */
+export type MarkerSighting = { kind: "ok" } | { kind: "move" } | { kind: "copy"; original: string } | { kind: "unverified"; original: string };
 
 /**
  * Classify a marker sighting at `dir` against the UUID's known location. Only classifies;
@@ -245,13 +313,26 @@ async function classifySighting(dir: string, marker: AnchorMarker): Promise<Resu
     if (cached === abs) return ok({ kind: "ok" });
     // A folder that exists at the cached path is not proof of a copy: a moved project can leave a new, empty
     // folder at its old path. Only the same marker there makes `dir` a copy.
-    return ok((await markerMatches(cached, marker.anchorId)) ? { kind: "copy", original: cached } : { kind: "move" });
+    const probe = await probeMarker(cached, marker.anchorId);
+    switch (probe) {
+        case "match":
+            return ok({ kind: "copy", original: cached });
+        case "unknown":
+            return ok({ kind: "unverified", original: cached });
+        case "no_match":
+            return ok({ kind: "move" });
+        default: {
+            const exhaustive: never = probe;
+            throw new Error(`unhandled marker probe: ${JSON.stringify(exhaustive)}`);
+        }
+    }
 }
 
 /** Why a copied folder got no new identity. `not_a_copy`: the folder holds no marker, or its marker is not a copy of a tracked folder. */
 export type NewIdentityError =
     | { type: "marker_unreadable"; dir: string; cause: MarkerError }
     | { type: "not_a_copy"; dir: string }
+    | { type: "original_unverified"; dir: string; original: string }
     | { type: "marker_write_failed"; dir: string; cause: MarkerError }
     | { type: "db_failed"; cause: DbError };
 
@@ -266,17 +347,31 @@ export type NewIdentityOutcome = { anchorId: string; previousAnchorId: string; p
  * that the next deliberate action recovers, and never a row whose folder still holds the marker of the original.
  */
 export function giveCopyNewIdentity(path: string): ResultAsync<NewIdentityOutcome, NewIdentityError> {
-    return new ResultAsync(newIdentity(path));
+    return new ResultAsync(
+        canonicalPathAsync(path).then((dir) => {
+            // One at a time for each folder: two clients that both see the copy would each mint an id, and the
+            // second marker would orphan the row of the first. The second runs after the first, and it finds no copy.
+            const run = (identityRuns.get(dir) ?? Promise.resolve()).then(() => newIdentity(dir));
+            identityRuns.set(dir, run);
+            void run.finally(() => {
+                if (identityRuns.get(dir) === run) identityRuns.delete(dir);
+            });
+            return run;
+        }),
+    );
 }
 
-async function newIdentity(path: string): Promise<Result<NewIdentityOutcome, NewIdentityError>> {
-    const dir = await canonicalPathAsync(path);
+/** The new identity that runs for each canonical folder, the tail of its queue. */
+const identityRuns = new Map<string, Promise<Result<NewIdentityOutcome, NewIdentityError>>>();
+
+async function newIdentity(dir: string): Promise<Result<NewIdentityOutcome, NewIdentityError>> {
     const marker = await readMarker(dir);
     if (marker.isErr()) return err({ type: "marker_unreadable", dir, cause: marker.error });
     if (marker.value === null) return err({ type: "not_a_copy", dir });
     const previousAnchorId = marker.value.anchorId;
     const sighting = await classifySighting(dir, marker.value);
     if (sighting.isErr()) return err({ type: "db_failed", cause: sighting.error });
+    if (sighting.value.kind === "unverified") return err({ type: "original_unverified", dir, original: sighting.value.original });
     if (sighting.value.kind !== "copy") return err({ type: "not_a_copy", dir });
     const original = sighting.value.original;
 

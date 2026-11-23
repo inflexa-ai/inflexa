@@ -41,7 +41,7 @@ The system SHALL provide `resolveContext(cwd, flags)` returning `ResultAsync<Res
 
 ### Requirement: Copy guard during resolution
 
-When resolving via a found marker, the system SHALL run `classifyMarkerSighting`; on a `copy` result it SHALL return `kind: "copy"` (carrying `cwd`, the folder of the marker as `dir`, the `original` folder, and the marker) rather than resolving normally, so the command never auto-resolves a copied folder.
+When resolving via a found marker, the system SHALL run `classifyMarkerSighting`; on a `copy` result it SHALL return `kind: "copy"` (carrying `cwd`, the folder of the marker as `dir`, the `original` folder, and the marker). On an `unverified` result it SHALL return `kind: "unverified"` with `cwd`, `dir`, and `original`, and it SHALL NOT heal the anchor. A command SHALL act on no `unverified` folder, and it SHALL tell the user to try again when the original answers rather than resolving normally, so the command never auto-resolves a copied folder.
 
 #### Scenario: Copied folder surfaces a copy context
 

@@ -202,6 +202,22 @@ describe("POST /api/v1/analyses/resolve", () => {
         });
     });
 
+    test("a folder whose original does not answer resolves to `unverified`, and the row stays at the original", async () => {
+        const original = tmp();
+        const pipe = hungMarker(original);
+        const anchorId = randomUUIDv7();
+        insertAnchor({ id: anchorId, createdAt: 1, updatedAt: 1, cachedPath: original, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        const copy = tmp();
+        (await writeMarker(copy, anchorId))._unsafeUnwrap();
+        try {
+            const view = await jsonBody(appWith(idleBoot()).request("/api/v1/analyses/resolve", json("POST", { cwd: copy })));
+            expect(view).toMatchObject({ kind: "unverified", cwd: copy, dir: copy, original });
+            expect(getAnchor(anchorId)._unsafeUnwrap()?.cachedPath).toBe(original);
+        } finally {
+            releaseHungMarker(pipe);
+        }
+    }, 10_000);
+
     test("an untracked folder resolves to `empty`, and a relative cwd is a 400", async () => {
         const dir = tmp();
         const empty = await jsonBody(appWith(idleBoot()).request("/api/v1/analyses/resolve", json("POST", { cwd: dir })));

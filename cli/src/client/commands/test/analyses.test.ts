@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -93,6 +93,22 @@ describe("a new analysis in a folder that is not writable", () => {
         });
         expect(printed.stderr).toContain(refusal(readOnly));
         expect(printed.stdout).toContain(`context: empty — ${readOnly}`);
+    }, 2_000);
+
+    test("`inflexa new` names a marker of the folder that it cannot read, before it asks for a name", async () => {
+        chmodSync(readOnly, 0o755);
+        const path = join(readOnly, ".inflexa", "id");
+        mkdirSync(join(readOnly, ".inflexa"));
+        writeFileSync(path, "{}");
+        chmodSync(path, 0o000);
+        try {
+            const printed = await captureConsole(async () => {
+                await expect(resolveNewTarget({ paths: [] }, server.clientOpts)).rejects.toBeInstanceOf(Exited);
+            });
+            expect(printed.stderr).toContain(`Cannot read the anchor marker ${path}`);
+        } finally {
+            chmodSync(path, 0o644);
+        }
     }, 2_000);
 
     test("`inflexa new` says so before it asks for a name", async () => {

@@ -2,8 +2,8 @@ import type { AnalysisSummary, AnalysisView, InputView } from "../../api/analyse
 import { MAX_PER_PAGE } from "../../api/common.ts";
 import { confirm, fail, promptText, select } from "../../lib/cli.ts";
 import { openExternal } from "../../lib/open_external.ts";
-import { isDirWritable } from "../../lib/fs.ts";
-import { expandAndResolve } from "../../lib/paths.ts";
+import { isDirWritable, isFileReadable, pathExistsAsync } from "../../lib/fs.ts";
+import { expandAndResolve, markerPath } from "../../lib/paths.ts";
 import { str256, type IdOrName, type Str256 } from "../../lib/types.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import { giveCopyNewIdentity } from "../anchors.ts";
@@ -30,6 +30,11 @@ import {
 /** The flags that name an analysis or a project instead of the folder, each by id or by name. */
 export type ContextFlags = { analysis?: IdOrName; project?: IdOrName };
 
+/** The way forward for a folder whose original does not answer: no command acts on it until the original answers. */
+export function unverifiedFolder(ctx: { dir: string; original: string }): string {
+    return `${ctx.dir} holds the marker of ${ctx.original}, which does not answer, thus it can be a copy or a move. Try again when ${ctx.original} answers.`;
+}
+
 /** What the renderer needs to open a chat: its working folder and the analysis it belongs to. */
 export type ChatTarget = {
     /** The absolute folder the chat is rooted at: the anchor folder of the analysis. */
@@ -52,12 +57,16 @@ async function openTarget(analysisId: string, opts: ClientOpts): Promise<ChatTar
 }
 
 /**
- * Exit before a prompt for a new analysis when `folder` is not writable: the analysis workspace lives in the
- * folder, and the server refuses the create there. The server shares the machine and the user of this
+ * Exit before a prompt for a new analysis when the server would refuse the create in `folder`: the folder is not
+ * writable, or it holds a marker that this user cannot read. The server shares the machine and the user of this
  * process, thus the check here gives the answer that the server gives later.
  */
-async function requireWritableFolder(folder: string): Promise<void> {
+async function requireNewAnalysisFolder(folder: string): Promise<void> {
     if (!(await isDirWritable(folder))) fail(`${folder} is not writable, so an analysis cannot start there. Start Inflexa from a writable folder.`);
+    const marker = markerPath(folder);
+    if ((await pathExistsAsync(marker)) && !(await isFileReadable(marker))) {
+        fail(`Cannot read the anchor marker ${marker}. Fix its permissions, or start Inflexa from a different folder.`);
+    }
 }
 
 // Prompt for a valid analysis name, validating live and asking again until one is given.
@@ -75,11 +84,11 @@ async function promptName(): Promise<Str256> {
     );
 }
 
-// Make an analysis anchored at `cwd` and open its chat. A deliberate action, so the server writes the
+// Make an analysis anchored at `folder` and open its chat. A deliberate action, so the server writes the
 // anchor marker here (no-litter policy).
-async function startNewTarget(cwd: string, opts: ClientOpts): Promise<ChatTarget> {
+async function startNewTarget(folder: string, opts: ClientOpts): Promise<ChatTarget> {
     const name = await promptName();
-    const created = (await createAnalysis({ name, folder: cwd }, opts)).match((v) => v, failClient);
+    const created = (await createAnalysis({ name, folder }, opts)).match((v) => v, failClient);
     return openTarget(created.id, opts);
 }
 
@@ -90,7 +99,10 @@ async function pickOrStartTarget(analyses: AnalysisView[], cwd: string, opts: Cl
         ...analyses.map((a) => ({ value: a.id, label: a.name })),
         { value: NEW, label: "Start a new analysis here" },
     ]);
-    if (choice === NEW) return startNewTarget(cwd, opts);
+    if (choice === NEW) {
+        await requireNewAnalysisFolder(cwd);
+        return startNewTarget(cwd, opts);
+    }
     return openTarget(choice, opts);
 }
 
@@ -100,7 +112,7 @@ export async function resolveNewTarget(
     opts: ClientOpts = DEFAULT_CLIENT_OPTS,
 ): Promise<ChatTarget> {
     const cwd = process.cwd();
-    await requireWritableFolder(cwd);
+    await requireNewAnalysisFolder(cwd);
     // Name is required (1–256 code points): validate a provided one, otherwise prompt for it.
     const name =
         flags.name === undefined
@@ -150,8 +162,8 @@ export async function resolveDefaultTarget(flags: ContextFlags, opts: ClientOpts
             const [only] = ctx.analyses;
             if (ctx.analyses.length === 1 && only) return openTarget(only.id, opts);
             if (ctx.analyses.length === 0) {
-                await requireWritableFolder(cwd);
-                if (await confirm(`No analyses here yet. Start one in ${ctx.anchorPath}?`)) return startNewTarget(cwd, opts);
+                await requireNewAnalysisFolder(ctx.anchorPath);
+                if (await confirm(`No analyses here yet. Start one in ${ctx.anchorPath}?`)) return startNewTarget(ctx.anchorPath, opts);
                 console.log("Cancelled.");
                 return null;
             }
@@ -166,7 +178,7 @@ export async function resolveDefaultTarget(flags: ContextFlags, opts: ClientOpts
             return openTarget(choice, opts);
         }
         case "empty":
-            await requireWritableFolder(cwd);
+            await requireNewAnalysisFolder(cwd);
             if (await confirm(`Start a new analysis in ${ctx.cwd}?`)) return startNewTarget(cwd, opts);
             console.log("Cancelled.");
             return null;
@@ -185,6 +197,8 @@ export async function resolveDefaultTarget(flags: ContextFlags, opts: ClientOpts
             // The copy is now an anchor of its own with no analysis, thus the resolve again offers to start one.
             return resolveDefaultTarget(flags, opts);
         }
+        case "unverified":
+            return fail(unverifiedFolder(ctx));
         default: {
             const exhaustive: never = ctx;
             throw new Error(`unhandled context kind: ${JSON.stringify(exhaustive)}`);
@@ -226,6 +240,8 @@ export async function resolveSingleAnalysisOrFail(
             return fail(emptyHint);
         case "copy":
             return fail(`${ctx.dir} is a copy of ${ctx.original}. Run \`inflexa\` there to give the copy a new identity first.`);
+        case "unverified":
+            return fail(unverifiedFolder(ctx));
         default: {
             const exhaustive: never = ctx;
             throw new Error(`unhandled context kind: ${JSON.stringify(exhaustive)}`);
@@ -308,6 +324,9 @@ export async function analysisStatus(flags: ContextFlags, opts: ClientOpts = DEF
             return;
         case "copy":
             console.log(`  copied folder: ${ctx.dir} is a copy of ${ctx.original} — run \`inflexa\` there to give it a new identity`);
+            return;
+        case "unverified":
+            console.log(`  unverified folder: ${unverifiedFolder(ctx)}`);
             return;
         default: {
             const exhaustive: never = ctx;

@@ -80,6 +80,12 @@ export function anchorRoutes<R>(boot: ServerBoot<R>, opts: AnchorRouteOpts<R>): 
                         return apiError(c, "not_found", `Marker ${e.anchorId} has no anchor row; cannot repair.`);
                     case "marker_unreadable":
                         return apiError(c, "conflict", `Could not read the marker at ${e.dir} (corrupt?).`);
+                    case "original_unverified":
+                        return apiError(
+                            c,
+                            "conflict",
+                            `${e.original} does not answer, thus ${e.dir} can be a copy or a move. Nothing was changed. Try again when ${e.original} answers.`,
+                        );
                     case "folder_is_copy":
                         return apiError(
                             c,
@@ -104,6 +110,12 @@ export function anchorRoutes<R>(boot: ServerBoot<R>, opts: AnchorRouteOpts<R>): 
             (outcome) => c.json(outcome satisfies NewIdentityResponse),
             (e) => {
                 switch (e.type) {
+                    case "original_unverified":
+                        return apiError(
+                            c,
+                            "conflict",
+                            `${e.original} does not answer, thus ${e.dir} can be a copy or a move. Nothing was changed. Try again when ${e.original} answers.`,
+                        );
                     case "not_a_copy":
                         return apiError(c, "conflict", `${e.dir} is not a copy of a tracked folder. Nothing was changed.`);
                     case "marker_unreadable":

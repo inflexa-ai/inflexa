@@ -12,6 +12,7 @@ import { getAnchor, listAnalysesByAnchor, listAnalysisInputs } from "../../../db
 import { asStr256 } from "../../../lib/types.ts";
 import { readMarker, writeMarker } from "../../../modules/anchor/marker.ts";
 import { freshDb } from "../../../test_support/db.ts";
+import { hungMarker, releaseHungMarker } from "../../../test_support/hung_marker.ts";
 import { errorBody, jsonBody } from "../../../test_support/response_body.ts";
 import { idleBoot } from "../../../test_support/server.ts";
 import type { ServerBoot } from "../../boot.ts";
@@ -144,6 +145,28 @@ describe("a duplicated project folder", () => {
         expect(again.status).toBe(409);
         expect(await errorBody(again)).toHaveProperty("message", `${copy} is not a copy of a tracked folder. Nothing was changed.`);
     });
+});
+
+describe("a folder whose original does not answer", () => {
+    test("a repair and a new identity are refused with 409, and nothing changes", async () => {
+        const original = tmp();
+        const pipe = hungMarker(original);
+        insertAnchor({ id: "A1", createdAt: 1, updatedAt: 1, cachedPath: original, markerWritten: true, lastSeen: 1 })._unsafeUnwrap();
+        const copy = tmp();
+        (await writeMarker(copy, "A1"))._unsafeUnwrap();
+        const routes = anchorRoutes(idleBoot<Handle>(), opts().opts);
+        try {
+            for (const path of ["/repair", "/new-identity"]) {
+                const refused = await post(routes, path, { path: copy });
+                expect(refused.status).toBe(409);
+                expect((await errorBody(refused)).message).toContain(`${original} does not answer`);
+            }
+            expect(getAnchor("A1")._unsafeUnwrap()?.cachedPath).toBe(original);
+            expect((await readMarker(copy))._unsafeUnwrap()?.anchorId).toBe("A1");
+        } finally {
+            releaseHungMarker(pipe);
+        }
+    }, 10_000);
 });
 
 describe("POST /api/v1/anchors/relocate", () => {

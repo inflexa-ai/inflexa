@@ -9,7 +9,7 @@ Explicit move/rename recovery addressed by filesystem path — `repair`, `reloca
 
 The system SHALL register `inflexa repair [<path>]` as a client of `POST /api/v1/anchors/repair`. The command SHALL resolve `<path>` (default cwd) against its own working folder and send the absolute path. The server SHALL read the marker at that path, look up its anchors row by id, update the row's `cachedPath` to the canonical path, and report the before and after paths. It SHALL report when the row already points there, and the command SHALL error clearly when the path has no marker or the id has no anchors row.
 
-When the `cachedPath` of the row still holds the same marker, the path is a copy. The server MUST refuse the repair with 409 `conflict`, and it MUST NOT change the row. A repair of a copy gives the identity of the original to the copy, and then the original reads as the copy. The message MUST tell the user to run `inflexa` in the copy to give it a new identity.
+When the `cachedPath` of the row still holds the same marker, the path is a copy. The server MUST refuse the repair with 409 `conflict`, and it MUST NOT change the row. A repair of a copy gives the identity of the original to the copy, and then the original reads as the copy. The message MUST tell the user to run `inflexa` in the copy to give it a new identity. When the read of the `cachedPath` does not answer, the server MUST refuse the repair with 409 `conflict`, and it MUST NOT change the row.
 
 #### Scenario: Repair self-heals the cached path
 

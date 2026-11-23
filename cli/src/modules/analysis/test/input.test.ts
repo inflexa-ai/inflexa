@@ -8,8 +8,8 @@ import { getAnchor } from "../../../db/primary_query.ts";
 import { deleteAnchor, insertAnchor } from "../../../db/primary_mutation.ts";
 import { expandAndResolve } from "../../../lib/paths.ts";
 import { classifyInputPath, matchInputRefs } from "../input.ts";
-import { canonicalPathAsync } from "../../../lib/paths.ts";
-import { markerPath, writeMarker } from "../../anchor/marker.ts";
+import { canonicalPathAsync, markerPath } from "../../../lib/paths.ts";
+import { writeMarker } from "../../anchor/marker.ts";
 
 const created: string[] = [];
 

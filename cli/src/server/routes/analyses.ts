@@ -663,6 +663,8 @@ function toContextView(ctx: ResolvedContext, others: { analysis: Analysis; ancho
             return { kind: "pick", describe, analyses: views(ctx.analyses) };
         case "copy":
             return { kind: "copy", describe, cwd: ctx.cwd, dir: ctx.dir, original: ctx.original };
+        case "unverified":
+            return { kind: "unverified", describe, cwd: ctx.cwd, dir: ctx.dir, original: ctx.original };
         case "empty":
             return { kind: "empty", describe, cwd: ctx.cwd };
         default: {
