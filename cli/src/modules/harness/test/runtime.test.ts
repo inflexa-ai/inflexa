@@ -1175,6 +1175,13 @@ describe("describeBootError", () => {
     });
 
     // The holder is often the local server, which only `inflexa server stop` stops.
+    // The detached server keeps the environment of its spawn, thus an export reaches only a new server.
+    test("model_api_key_missing tells the person to stop the server after the export", () => {
+        const message = describeBootError({ type: "model_api_key_missing", providerVar: "OPENAI_API_KEY" });
+        expect(message).toContain("export OPENAI_API_KEY=");
+        expect(message).toContain("run `inflexa server stop`");
+    });
+
     test("runtime_already_active names the holder, `inflexa server stop`, and the lock file", () => {
         const message = describeBootError({ type: "runtime_already_active", holderPid: 4821 });
         expect(message).toContain("pid 4821");
