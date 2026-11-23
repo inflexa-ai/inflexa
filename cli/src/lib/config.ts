@@ -6,7 +6,7 @@ import { z } from "zod";
 import { DEFAULT_THEME_ID, themeIds } from "./design_system.ts";
 import { ContainerRuntimeError, ensureReady, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime } from "./container.ts";
 import { messageOf } from "./cause.ts";
-import { env, isReservedPostgresPort } from "./env.ts";
+import { browserEnvValue, env, isReservedPostgresPort } from "./env.ts";
 import { errnoCode, rmResult } from "./fs.ts";
 import { getLogger } from "./log.ts";
 import { unknownRecordSchema } from "./json_record.ts";
@@ -87,6 +87,28 @@ export const mcpServerEntrySchema = z.discriminatedUnion("type", [
 /** An MCP server entry of the config. */
 export type McpServerEntry = z.infer<typeof mcpServerEntrySchema>;
 
+/** The values of the browser setting. `auto` launches a browser where the session can show one, and `never` launches none. */
+export const BROWSER_MODES = ["auto", "never"] as const;
+
+/** One value of the browser setting. */
+export type BrowserMode = (typeof BROWSER_MODES)[number];
+
+/**
+ * The browser setting from its two sources: the variable `INFLEXA_BROWSER` wins over the config key `browser`,
+ * and each falls back to `auto`. A variable that is not a mode (a typo, an empty value) is ignored, and the key
+ * decides. Pure, so a test can give each source.
+ */
+export function browserModeOf(envValue: string | undefined, configValue: BrowserMode | undefined): BrowserMode {
+    const fromEnv = envValue?.trim().toLowerCase();
+    if (fromEnv !== undefined && isMember(BROWSER_MODES, fromEnv)) return fromEnv;
+    return configValue ?? "auto";
+}
+
+/** The browser setting of this process, read at CALL time: a change of the config applies to the next open. */
+export function browserMode(): BrowserMode {
+    return browserModeOf(browserEnvValue(), readConfig().browser);
+}
+
 const configSchema = z.object({
     telemetry: z.boolean(),
     theme: z.enum(themeIds).catch(DEFAULT_THEME_ID).default(DEFAULT_THEME_ID),
@@ -95,6 +117,9 @@ const configSchema = z.object({
     // value is treated as unset — re-detected at next need — rather than silently
     // coerced to docker, which would look like an explicit choice.
     runtime: z.enum(runtimeIds).optional().catch(undefined),
+    // Whether inflexa launches a browser or a file manager. Absent = `auto`. An unknown value reads as unset,
+    // so a typo never breaks config load. `INFLEXA_BROWSER` wins over it (see browserModeOf).
+    browser: z.enum(BROWSER_MODES).optional().catch(undefined),
     // Optional keybinding overrides: command id (e.g. "app.command-palette") → key string
     // (e.g. "ctrl+p"). Resolved over defaults by the TUI keymap engine; unknown ids and
     // unparseable values are ignored, so a stray entry never breaks config load.

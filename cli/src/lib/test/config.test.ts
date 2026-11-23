@@ -6,6 +6,7 @@ import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import {
+    browserModeOf,
     describeConfigReadError,
     ensureRuntime,
     readConfig,
@@ -148,6 +149,28 @@ describe("readConfig — fail-closed", () => {
         expect(cfg.telemetry).toBe(true); // sibling survived — no whole-config fail-closed
         expect(cfg.theme).toBe(DEFAULT_THEME_ID); // the bad field salvaged to the default
         expect(cfg.leaderTimeout).toBe(500); // the good sibling field intact
+    });
+});
+
+describe("the browser setting", () => {
+    test("the variable wins over the key, and each falls back to `auto`", () => {
+        expect(browserModeOf(undefined, undefined)).toBe("auto");
+        expect(browserModeOf(undefined, "never")).toBe("never");
+        expect(browserModeOf("never", "auto")).toBe("never");
+        expect(browserModeOf("auto", "never")).toBe("auto");
+        expect(browserModeOf("NEVER", undefined)).toBe("never");
+    });
+
+    test("a variable that is not a mode is ignored, and the key decides", () => {
+        expect(browserModeOf("sometimes", "never")).toBe("never");
+        expect(browserModeOf("", undefined)).toBe("auto");
+    });
+
+    test("the key persists, and an unknown value reads as unset", () => {
+        writeRawConfig(JSON.stringify({ telemetry: false, browser: "never" }));
+        expect(readConfig().browser).toBe("never");
+        writeRawConfig(JSON.stringify({ telemetry: false, browser: "firefox" }));
+        expect(readConfig().browser).toBeUndefined();
     });
 });
 

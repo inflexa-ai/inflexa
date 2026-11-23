@@ -1,4 +1,4 @@
-import { openExternal } from "../../lib/open_external.ts";
+import { openExternal, signInOpenHint } from "../../lib/open_external.ts";
 import { type Auth0Config, describeAuthError, pollForToken, requestDeviceCode, resolveAuth0Config, saveAuth } from "./auth.ts";
 
 export async function login(): Promise<void> {
@@ -22,10 +22,10 @@ export async function login(): Promise<void> {
     console.log("\n  To log in, open this URL in your browser:\n");
     console.log(`    ${device.value.verificationUriComplete}\n`);
     console.log(`  and confirm the code: ${device.value.userCode}\n`);
-    // Best-effort — the URL is always printed above, so a failed open just means the user opens it manually.
+    // Best-effort — the URL is always printed above. A failed open names the browser setting.
     openExternal(device.value.verificationUriComplete).match(
         () => {},
-        () => {},
+        (e) => console.log(`  ${signInOpenHint(e, device.value.verificationUriComplete)}\n`),
     );
     console.log("  Waiting for confirmation...");
 

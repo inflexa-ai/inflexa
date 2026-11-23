@@ -18,7 +18,7 @@ The MCP sign-in runs the OAuth flow of a remote MCP server. It keeps the tokens 
 
 The local server runs the sign-in, but it MUST NOT open a browser. `POST /api/v1/mcp/:name/auth` MUST answer with an SSE stream. The first frame MUST give the authorization URL and the loopback callback URL. The last frame MUST give the outcome. A refusal before the sign-in starts MUST stay a JSON error body with its status.
 
-The command MUST print the authorization URL, and then open it in the default browser. When `SSH_CONNECTION` is set, the command MUST print the `ssh -L` command for the callback port. When stdin is a terminal, the command MUST accept a pasted callback URL, and it MUST send the same `GET` request to the callback port of this machine.
+The command MUST print the authorization URL, and then open it in the default browser. When no browser opens, the command MUST name the browser setting (`INFLEXA_BROWSER`, or the config key `browser`). With the value `never`, the command MUST NOT try a browser. When `SSH_CONNECTION` is set, the command MUST print the `ssh -L` command for the callback port. When stdin is a terminal, the command MUST accept a pasted callback URL, and it MUST send the same `GET` request to the callback port of this machine.
 
 #### Scenario: A sign-in through SSH
 

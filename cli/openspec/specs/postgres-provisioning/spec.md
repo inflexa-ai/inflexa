@@ -163,6 +163,8 @@ During provider authentication, the CLI SHALL capture the auth container's stdou
 
 When `SSH_CONNECTION` is set and the provider has a callback port, the CLI SHALL show the `ssh -L` command for the callback port in a note box before the URL. The command SHALL name the user of the session and the address from `SSH_CONNECTION`. The CLI SHALL NOT show the tunnel command of the container, because that command names `root` and the address of the container.
 
+The login container runs with `--no-browser`, thus the provider login never launches a browser, whatever the browser setting (`INFLEXA_BROWSER`, or the config key `browser`) says.
+
 When the provider has a callback port and stdin is a terminal, the CLI SHALL accept a pasted callback URL while it waits. The person copies the URL from the address bar of the browser after the redirect fails. The CLI SHALL send the same `GET` request to `127.0.0.1:<callback port>` of this machine, where the container publishes the port. The container gets no stdin, so that only the CLI reads the terminal.
 
 When the container exits with a code that is not 0, the CLI SHALL print the tail of the container output. When the output says that the callback port is in use, the message SHALL name the port.

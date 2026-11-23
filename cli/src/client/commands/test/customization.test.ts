@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
 
-import { ok } from "neverthrow";
+import { err, ok } from "neverthrow";
 
 import { captureConsole } from "../../../test_support/console_capture.ts";
 import { fakeClient } from "../../../test_support/fake_client.ts";
@@ -127,5 +127,32 @@ describe("inflexa mcp auth", () => {
         expect(lines.join("\n")).toContain("If the browser cannot reach http://127.0.0.1:43123/ after the sign-in");
         expect(pasted).toEqual(["http://127.0.0.1:43123/callback?code=the-code"]);
         expect(lines.at(-1)).toBe('Signed in to "remote".');
+    });
+
+    test("a browser that does not open gets a line that names the browser setting", async () => {
+        const encoder = new TextEncoder();
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                const authorize = { type: "authorize", url: "https://auth.example/authorize", callbackUrl: "http://127.0.0.1:43123/callback" };
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(authorize)}\n\n`));
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "signed_in" })}\n\n`));
+                controller.close();
+            },
+        });
+        const lines: string[] = [];
+        const opts: McpAuthOpts = {
+            discover: () => ok({ baseUrl: "http://server.test", token: "t" }),
+            fetch: () => Promise.resolve(new Response(body, { headers: { "Content-Type": "text/event-stream" } })),
+            write: (line) => lines.push(line),
+            open: () => err({ type: "no_display", reason: "disabled" }),
+            sshConnection: null,
+            input: null,
+            deliver: () => Promise.resolve(ok(undefined)),
+        };
+
+        await mcpAuth("remote", opts);
+
+        expect(lines.join("\n")).toContain("INFLEXA_BROWSER");
+        expect(lines.join("\n")).not.toContain("Opened");
     });
 });

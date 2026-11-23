@@ -62,6 +62,7 @@ const anthropicAuthTokenVar = "ANTHROPIC_AUTH_TOKEN";
 // major runner sets it; a build log is nobody's terminal, so a notice there is pure noise. Read here (the
 // sole `process.env` reader) — see {@link updateNoticeSuppressed}.
 const noUpdateNoticeVar = "INFLEXA_NO_UPDATE_NOTIFIER";
+const browserVar = "INFLEXA_BROWSER";
 const ciVar = "CI";
 // The discovery file of a local server that a different owner starts, for example a test server on a free
 // port. A client never starts a server for it. Not in --help: no user flow needs it.
@@ -849,6 +850,23 @@ export const updateEnvDoc: readonly { readonly name: string; readonly descriptio
         description: "set to any value to silence the new-release notice; `inflexa upgrade` still works",
     },
 ]);
+
+/**
+ * `--help` documentation for the browser setting. Its own list for the reason {@link updateEnvDoc} is one: the
+ * variable is read on demand ({@link browserEnvValue}), so a test can vary it inside one process.
+ */
+export const browserEnvDoc: readonly { readonly name: string; readonly description: string }[] = Object.freeze([
+    {
+        name: browserVar,
+        description:
+            "`auto` (default) or `never`: with `never`, inflexa launches no browser and no file manager, and prints each URL and path instead; wins over the config key `browser`",
+    },
+]);
+
+/** The raw value of {@link browserVar}, or `undefined`. Read at CALL time; `browserModeOf` (lib/config.ts) decides what it means. */
+export function browserEnvValue(): string | undefined {
+    return process.env[browserVar];
+}
 
 /**
  * True when the new-release notice must stay silent: {@link noUpdateNoticeVar} is set, or this is a CI

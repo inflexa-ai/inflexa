@@ -2,7 +2,7 @@ import { Command, Help, Option, type ParseOptionsResult } from "commander";
 
 import pkg from "../../package.json";
 import { CATALOG_TRANSFER_FLAG, CLIENT_START_FLAG, IMAGE_TRANSFER_FLAG, SERVE_DETACHED_CHILD_FLAG, STORE_FLUSH_FLAG } from "../lib/child_flags.ts";
-import { devCommandsEnabled, embeddingEnvDoc, env, envDoc, knowledgeEnvDoc, modelConnectionEnvDoc, updateEnvDoc } from "../lib/env.ts";
+import { browserEnvDoc, devCommandsEnabled, embeddingEnvDoc, env, envDoc, knowledgeEnvDoc, modelConnectionEnvDoc, updateEnvDoc } from "../lib/env.ts";
 import { present } from "../lib/present.ts";
 import { keysOf } from "../lib/types.ts";
 // Type-only, so the registry keeps its lazy-import discipline: nothing of the setup module loads until
@@ -35,7 +35,7 @@ function renderEnvHelp(): string {
     }
     // The direct-connection and embedding secret vars are not `env`-field-backed (their resolvers read them
     // on demand), so they live in their own doc lists; render them among the other var rows.
-    for (const doc of [...modelConnectionEnvDoc, ...embeddingEnvDoc, ...knowledgeEnvDoc, ...updateEnvDoc]) {
+    for (const doc of [...modelConnectionEnvDoc, ...embeddingEnvDoc, ...knowledgeEnvDoc, ...updateEnvDoc, ...browserEnvDoc]) {
         varRows.push([doc.name, doc.description]);
     }
     for (const [name, labels] of baseVarLabels) {

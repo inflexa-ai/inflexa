@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { err, ok, type Result } from "neverthrow";
 
+import { browserMode, type BrowserMode } from "./config.ts";
 import { terminalEnv } from "./env.ts";
 import { errnoCode } from "./fs.ts";
 
@@ -17,11 +18,14 @@ import { errnoCode } from "./fs.ts";
  */
 export type OpenExternalError =
     | { type: "open_failed"; code: string | null; cause: unknown }
-    /** No opener ran, because no browser or file manager can show on this machine (see {@link noDisplayReason}). */
-    | { type: "no_display"; reason: NoDisplayReason };
+    /** No opener ran: no browser or file manager can show on this machine (see {@link noDisplayReason}), or the browser setting is `never`. */
+    | { type: "no_display"; reason: NoDisplayReason | "disabled" };
 
 /** Why this session has no display: it runs through SSH, or it is Linux with no X11 and no Wayland display. */
 export type NoDisplayReason = "ssh" | "headless";
+
+/** How a person sets the browser setting, for a message. */
+const BROWSER_SETTING = '`INFLEXA_BROWSER=never`, or `"browser": "never"` in config.json';
 
 /** The facts of the session that decide if an opener can show a window. Tests give their own. */
 export type DisplayFacts = {
@@ -104,6 +108,8 @@ export type OpenSeams = {
     readonly sshConnection: string | null;
     /** Whether an X11 or a Wayland display is set (overridable for tests). */
     readonly display: boolean;
+    /** The browser setting, read at each open (overridable for tests). */
+    readonly browser: () => BrowserMode;
 };
 
 /** Detached spawn: the opener must not keep the CLI's event loop alive (`.unref()`), and its output is discarded. */
@@ -128,6 +134,7 @@ const realSeams: OpenSeams = {
     wsl: isWsl,
     sshConnection: terminalEnv.sshConnection,
     display: terminalEnv.display,
+    browser: browserMode,
 };
 
 /**
@@ -138,6 +145,7 @@ const realSeams: OpenSeams = {
  * `no_display`.
  */
 export function openExternal(target: string, seams: OpenSeams = realSeams): Result<void, OpenExternalError> {
+    if (seams.browser() === "never") return err({ type: "no_display", reason: "disabled" });
     const noDisplay = noDisplayReason(seams);
     if (noDisplay !== null) return err({ type: "no_display", reason: noDisplay });
     try {
@@ -170,6 +178,7 @@ export function openByHandHint(e: OpenExternalError, target: string): string {
         case "open_failed":
             return `Could not start an opener. Open it by hand: ${target}`;
         case "no_display": {
+            if (e.reason === "disabled") return `The browser setting is \`never\` (INFLEXA_BROWSER or \`browser\` in config.json). Open it by hand: ${target}`;
             if (e.reason === "headless") return `This machine has no display, thus no window opens here. Open it by hand: ${target}`;
             const port = loopbackPort(target);
             const forward = port === null ? "" : ` On your computer, forward the port first: ${sshForwardCommand(port)}`;
@@ -180,6 +189,17 @@ export function openByHandHint(e: OpenExternalError, target: string): string {
             throw new Error(`unhandled open error: ${JSON.stringify(exhaustive)}`);
         }
     }
+}
+
+/**
+ * The line that a sign-in prints when no browser opened for its URL. It names the browser setting: a person who
+ * signs in over SSH or on a server sets `never`, and the sign-in then tries no browser at all.
+ */
+export function signInOpenHint(e: OpenExternalError, url: string): string {
+    if (e.type === "no_display" && e.reason === "disabled") {
+        return `No browser opens, because the browser setting is \`never\` (${BROWSER_SETTING}). Open the URL by hand: ${url}`;
+    }
+    return `${openByHandHint(e, url)}\nTo skip the browser for each sign-in, set ${BROWSER_SETTING}.`;
 }
 
 /** The port of an `http` URL of a loopback address, or `null` for each other target. */

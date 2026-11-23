@@ -19,7 +19,7 @@ import {
 import { fail, promptSecret } from "../../lib/cli.ts";
 import { terminalEnv } from "../../lib/env.ts";
 import { acceptPastedCallbacks, deliverCallback, pasteCallbackHint } from "../../lib/oauth_callback.ts";
-import { openExternal, sshForwardCommand, type OpenExternalError } from "../../lib/open_external.ts";
+import { openExternal, signInOpenHint, sshForwardCommand, type OpenExternalError } from "../../lib/open_external.ts";
 import { describeClientError, DEFAULT_CLIENT_OPTS, type ClientError, type ClientOpts } from "../api.ts";
 import {
     addMcpServer,
@@ -585,10 +585,9 @@ export async function mcpAuth(name: string, opts: McpAuthOpts = DEFAULT_MCP_AUTH
                     const callback = new URL(frame.callbackUrl);
                     const port = Number(callback.port);
                     opts.write(`Sign in to "${name}" in a browser. The command waits up to 5 minutes for you to finish.\n\n  ${frame.url}\n`);
-                    // The URL is printed above, thus a failed open needs no word of its own.
                     opts.open(frame.url).match(
                         () => undefined,
-                        () => undefined,
+                        (e) => opts.write(signInOpenHint(e, frame.url)),
                     );
                     if (opts.sshConnection !== null)
                         opts.write(`Over SSH, forward the callback port first, on your computer: ${sshForwardCommand(port, opts.sshConnection)}`);

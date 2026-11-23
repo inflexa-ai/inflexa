@@ -779,7 +779,7 @@ The server MUST let a browser sign in with a one-time link and a session cookie.
 
 ### Requirement: inflexa gui opens the sign-in link
 
-The CLI MUST register `inflexa gui` in each build channel, as an `instance` command with the agent policy `blocked`. Only a person can run it. The command MUST get a nonce from the server with the bearer token. The command MUST print the link `<server origin>/api/v1/session?nonce=<nonce>&next=/gui/`, and say that the link works one time, within 60 s. Then it MUST open the link in the default browser. The server origin is the base URL of the discovery that gave the nonce. When the open fails, the command MUST say so, and the person can open the printed link.
+The CLI MUST register `inflexa gui` in each build channel, as an `instance` command with the agent policy `blocked`. Only a person can run it. The command MUST get a nonce from the server with the bearer token. The command MUST print the link `<server origin>/api/v1/session?nonce=<nonce>&next=/gui/`, and say that the link works one time, within 60 s. Then it MUST open the link in the default browser. The server origin is the base URL of the discovery that gave the nonce. When the open fails, or when the browser setting is `never` (`INFLEXA_BROWSER`, or the config key `browser`), the command MUST say so, and it MUST name the setting. The person can open the printed link.
 
 #### Scenario: The command opens the browser
 
