@@ -54,7 +54,7 @@ describe("POST /api/v1/session/nonce", () => {
     test("a session cookie gets 403 `forbidden`", async () => {
         const { app } = appWithClock();
         const cookie = await signIn(app, TOKEN);
-        const response = await app.request("/api/v1/session/nonce", { method: "POST", headers: { Cookie: cookie } });
+        const response = await app.request("/api/v1/session/nonce", { method: "POST", headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" } });
         expect(response.status).toBe(403);
         expect(await response.json()).toMatchObject({ error: "forbidden" });
     });
@@ -171,7 +171,7 @@ describe("GET /api/v1/session", () => {
         const { app } = appWithClock();
         const old = await signIn(app, TOKEN);
         const { nonce } = await getNonce(app);
-        const response = await open(app, `nonce=${nonce}`, { Cookie: old });
+        const response = await open(app, `nonce=${nonce}`, { Cookie: old, "Sec-Fetch-Site": "same-origin" });
         expect(response.status).toBe(303);
         const fresh = response.headers.get("Set-Cookie")?.split(";")[0] ?? "";
         expect(fresh.split("=")[0]).toBe(old.split("=")[0]);
@@ -184,7 +184,7 @@ describe("the sessions after sign-in", () => {
         const { app } = appWithClock();
         const cookie = await signIn(app, TOKEN);
         for (let tab = 0; tab < 2; tab++) {
-            expect((await app.request("/api/v1/server", { headers: { Cookie: cookie } })).status).toBe(200);
+            expect((await app.request("/api/v1/server", { headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" } })).status).toBe(200);
         }
     });
 
@@ -192,7 +192,7 @@ describe("the sessions after sign-in", () => {
         const { app } = appWithClock();
         const cookie = await signIn(app, TOKEN);
         const restarted = appWithClock().app;
-        const response = await restarted.request("/api/v1/server", { headers: { Cookie: cookie } });
+        const response = await restarted.request("/api/v1/server", { headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" } });
         expect(response.status).toBe(401);
         expect(await response.json()).toMatchObject({ error: "unauthorized", message: stringContaining("`inflexa gui`") });
     });

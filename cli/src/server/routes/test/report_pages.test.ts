@@ -486,7 +486,7 @@ describe("POST /api/v1/analyses/:analysisId/report-sessions/:threadId/access", (
 
     test("the session cookie of a browser sign-in gives the access too", async () => {
         const cookie = await signIn(app, TOKEN);
-        expect((await access("t1", { Cookie: cookie })).status).toBe(200);
+        expect((await access("t1", { Cookie: cookie, "Sec-Fetch-Site": "same-origin" })).status).toBe(200);
     });
 
     test("a request with no credential gives 401", async () => {

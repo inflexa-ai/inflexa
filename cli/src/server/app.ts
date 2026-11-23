@@ -152,9 +152,11 @@ function hostOriginGuard(): MiddlewareHandler<ServerEnv> {
  *   1. `GET /api/v1/session` passes, because its handler checks the nonce. The match is exact on the method and on
  *      the path, which holds no query.
  *   2. A valid `Authorization: Bearer <token>` passes as `bearer`.
- *   3. A session cookie of this server passes as `cookie`. The cookie counts only when `Sec-Fetch-Site` is absent,
- *      `same-origin`, or `none`: `SameSite=Strict` treats `127.0.0.1:<other port>` as the same site, and a page of
- *      another local server can send the cookie in an `<img>` request that carries no `Origin` header.
+ *   3. A session cookie of this server passes as `cookie`. The cookie counts only when `Sec-Fetch-Site` is
+ *      `same-origin` or `none`: `SameSite=Strict` treats `127.0.0.1:<other port>` as the same site, and a page of
+ *      another local server can send the cookie in an `<img>` request that carries no `Origin` header. The Host
+ *      check accepts each loopback port, thus a request with no `Sec-Fetch-Site` (an old browser) cannot prove
+ *      its page, and its cookie does not count either.
  *
  * A cookie that names no session gets the message that tells the person to sign in again.
  */
@@ -176,7 +178,7 @@ function credentialAuth(token: string, sessions: BrowserSessionStore): Middlewar
         }
         const site = c.req.header("Sec-Fetch-Site");
         let unknownSession = false;
-        if (site === undefined || site === "same-origin" || site === "none") {
+        if (site === "same-origin" || site === "none") {
             const secret = getCookie(c, sessionCookieName(listenerPort(c)));
             if (secret !== undefined) {
                 if (sessions.hasSession(secret)) {
