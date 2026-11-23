@@ -288,6 +288,15 @@ export function storePathOf(url: string): string {
     return `${REFS_ROOT}/${parsed.hostname.toLowerCase()}${decodeURIComponent(parsed.pathname)}`;
 }
 
+/** The archives that `download_ref` extracts into a directory beside them, with `extract`. */
+const ARCHIVE_SUFFIXES = [".tar.gz", ".tgz", ".tar", ".zip"];
+
+/** The directory that `download_ref` extracts an archive at `path` into, or `undefined` for a file that is not an archive. */
+export function extractedDirOf(path: string): string | undefined {
+    const suffix = ARCHIVE_SUFFIXES.find((candidate) => path.toLowerCase().endsWith(candidate));
+    return suffix === undefined ? undefined : path.slice(0, -suffix.length);
+}
+
 /** The answer of `download_ref` to one URL: a download to its store path, or a failure with the error of the tool. */
 export type DownloadAnswer = { readonly status: "downloaded" } | { readonly status: "failed"; readonly error: string };
 
@@ -302,9 +311,22 @@ export function downloadRefTool(answer: (url: string) => DownloadAnswer = () => 
         if (invalid !== undefined) return { error: `${invalid} is not a valid HTTPS URL` };
         const hosts = new Set(list.map((url) => new URL(url).hostname.toLowerCase()));
         if (hosts.size > 1) return { error: `a call downloads from one host, and the URLs name ${[...hosts].join(" and ")}. Make one call for each host.` };
+        const extract = parseUnknownRecord(input)?.extract === true;
         const files = list.map((url) => {
             const reply = answer(url);
-            return reply.status === "downloaded" ? { url, status: "downloaded", path: storePathOf(url) } : { url, status: "failed", error: reply.error };
+            if (reply.status === "failed") return { url, status: "failed", error: reply.error };
+            const path = storePathOf(url);
+            if (!extract) return { url, status: "downloaded", path };
+            const extracted = extractedDirOf(path);
+            return extracted === undefined
+                ? {
+                      url,
+                      status: "downloaded",
+                      path,
+                      extracted: false,
+                      note: path.endsWith(".gz") ? "a gzip file of one file stays compressed" : "the file is not a tar or zip archive",
+                  }
+                : { url, status: "downloaded", path: extracted, extracted: true };
         });
         return { ok: { host: new URL(first).hostname.toLowerCase(), files } };
     };

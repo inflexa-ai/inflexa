@@ -8,14 +8,16 @@
  */
 
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 
 import { okAsync } from "neverthrow";
+import { z } from "zod";
 
 import { buildProfilerAgent, buildStepAgent, type SandboxAgentDeps } from "@inflexa-ai/harness/agents/sandbox/index.js";
 import { createPool } from "@inflexa-ai/harness/lib/storage.js";
 import type { ToolOutputStore } from "@inflexa-ai/harness/loop/tool-output.js";
 import type { AgentDefinition } from "@inflexa-ai/harness/loop/types.js";
+import type { Tool } from "@inflexa-ai/harness/tools/define-tool.js";
 import { unusedChatProvider } from "@inflexa-ai/harness/providers/__fixtures__/chat-provider.js";
 import { leaseOverClient } from "@inflexa-ai/harness/sandbox/__fixtures__/leases.js";
 import { FARM_LOCK_FILE } from "@inflexa-ai/harness/sandbox/farm.js";
@@ -98,6 +100,11 @@ export type SandboxSetup = {
      * answers, thus a run with `--exec docker` runs the trial of this case with its rules.
      */
     readonly scriptedOnly?: boolean;
+    /**
+     * The text of the file that a download of a URL gives. Present: each file that `download_ref` reports as
+     * downloaded lands in the store of the trial at the path of the report, as the real tool leaves it.
+     */
+    readonly downloads?: (url: string) => string;
 };
 
 /** How a command of a trial runs: the rules of the case, or a container of the sandbox image. */
@@ -126,8 +133,29 @@ export type SandboxTrial = {
     readonly fileMetadata?: FileMetadataCell;
     /** The text of each file under the working directory, by working-directory-relative path. */
     files(): Readonly<Record<string, string>>;
+    /** The agent with each download of its `download_ref` written into the store of the trial, when the setup gives `downloads`. */
+    landDownloads(agent: AgentDefinition): AgentDefinition;
     dispose(): Promise<void>;
 };
+
+const DownloadReportSchema = z.object({
+    files: z.array(z.object({ url: z.string(), status: z.string(), path: z.string().optional(), extracted: z.boolean().optional() })),
+});
+
+/** The tool with each file that its ok result reports as downloaded written by `land`. */
+function landing(tool: Tool, land: (url: string, path: string, extracted: boolean) => void): Tool {
+    return {
+        ...tool,
+        execute: async (input, ctx) => {
+            const result = await tool.execute(input, ctx);
+            const report = result.isOk() ? DownloadReportSchema.safeParse(result.value) : undefined;
+            for (const file of report?.success === true ? report.data.files : []) {
+                if (file.status === "downloaded" && file.path !== undefined) land(file.url, file.path, file.extracted === true);
+            }
+            return result;
+        },
+    };
+}
 
 // The top-level modules of `sys.stdlib_module_names` (Python 3.14), plus the modules that PEP 594 removed in 3.13,
 // thus the list covers the Python 3.12 of the lock. An extra name only lets an import through.
@@ -582,6 +610,17 @@ export async function openSandboxTrial(
         unscripted,
         fileMetadata: deps.fileMetadata,
         files: () => textsUnder(workingDir),
+        landDownloads: (agent) => {
+            const text = setup.downloads;
+            if (text === undefined) return agent;
+            const land = (url: string, path: string, extracted: boolean): void => {
+                // An extracted archive is a directory, which holds the file of the archive name without its suffix.
+                const file = extracted ? `${path}/${basename(path)}` : path;
+                const target = host(file, workingDirOf(setup));
+                if (target !== undefined) writeTree(dirname(target), { [basename(target)]: text(url) });
+            };
+            return { ...agent, tools: agent.tools.map((tool) => (tool.id === "download_ref" ? landing(tool, land) : tool)) };
+        },
         dispose: async () => {
             await real?.dispose();
             rmSync(dir, { recursive: true, force: true });

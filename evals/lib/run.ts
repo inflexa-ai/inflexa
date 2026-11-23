@@ -221,7 +221,7 @@ async function trialAgentOf(
     if (kind !== "sandbox") return { agent: scripted(agents[kind]) };
     if (evalCase.sandbox === undefined) throw new Error(`the sandbox case ${evalCase.id} has no sandbox setup`);
     const sandbox = await openSandboxTrial(evalCase.sandbox, { toolOutputStore: store, label: evalCase.id, exec });
-    return { agent: withSandboxScripts(exposed(sandbox.agent, exposure), evalCase.tools ?? {}), sandbox };
+    return { agent: sandbox.landDownloads(withSandboxScripts(exposed(sandbox.agent, exposure), evalCase.tools ?? {})), sandbox };
 }
 
 export async function runTrial(
