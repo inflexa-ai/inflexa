@@ -26,16 +26,18 @@ import {
     type CredentialView,
     type DeleteAgentResponse,
     type DeleteMcpServerResponse,
-    type McpAuthResponse,
+    type McpAuthFrame,
+    type McpAuthorization,
     type McpLogoutResponse,
     type McpServerList,
     type McpServerView,
     type SkillList,
 } from "../../api/customization.ts";
-import type { ApiErrorCode } from "../../api/common.ts";
+import type { ApiError, ApiErrorCode } from "../../api/common.ts";
 import { mcpServerEntrySchema } from "../../lib/config.ts";
 import { customizationErrorMessage, type CustomizationError, type CustomizationService, type ImportOptions } from "../../modules/customization/service.ts";
-import { apiError, holdConnection, internalError, readBody, type ServerEnv } from "../http.ts";
+import { getLogger } from "../../lib/log.ts";
+import { apiError, holdConnection, internalError, readBody, sseResponse, type ServerEnv } from "../http.ts";
 
 const attachmentChangeSchema = z.object({ kind: z.enum(ATTACHMENT_KINDS), name: z.string().min(1) });
 
@@ -152,6 +154,14 @@ function importOptionsOf(body: { readonly analysis?: string | undefined; readonl
 function customizationError(c: Context, e: CustomizationError): Response {
     const code = codeOf(e);
     return code === null ? internalError(c, e, customizationErrorMessage(e)) : apiError(c, code, customizationErrorMessage(e));
+}
+
+/** The error body of `e`, for an error that a stream sends as a frame. An internal error is logged here, and its body says nothing of the cause. */
+function customizationErrorBody(e: CustomizationError): ApiError {
+    const code = codeOf(e);
+    if (code !== null) return { error: code, message: customizationErrorMessage(e) };
+    getLogger("server").error({ err: e }, "an MCP sign-in failed");
+    return { error: "internal_error", message: "The server failed to handle the request." };
 }
 
 /**
@@ -453,13 +463,36 @@ export function customizationRoutes(service: CustomizationService): Hono<ServerE
         ),
     );
 
-    // The response waits for the person at the browser, for up to the timeout of the sign-in.
+    // The response waits for the person at the browser, for up to the timeout of the sign-in. It streams, because
+    // the client must show the authorization page before the sign-in ends: the browser can run on a different
+    // computer, and only the client can tell the person where to go.
     routes.post("/mcp/:name/auth", async (c) => {
         holdConnection(c);
-        return (await service.mcpAuth(c.req.param("name"))).match(
-            () => c.json({ signedIn: true } satisfies McpAuthResponse),
-            (e) => customizationError(c, e),
-        );
+        let announce: (authorization: McpAuthorization) => void = () => undefined;
+        const authorized = new Promise<McpAuthorization>((resolvePromise) => {
+            announce = resolvePromise;
+        });
+        const signedIn = service.mcpAuth(c.req.param("name"), (authorization) => announce(authorization));
+        const first = await Promise.race([authorized, signedIn]);
+        // A sign-in that settles before the browser step refuses at once (a server with no OAuth), or needs no
+        // browser. A refusal keeps its status, as a JSON error body.
+        if (!("url" in first)) {
+            if (first.isErr()) return customizationError(c, first.error);
+            return sseResponse((writer) => {
+                writer.send({ type: "signed_in" } satisfies McpAuthFrame);
+                return Promise.resolve();
+            });
+        }
+        return sseResponse(async (writer) => {
+            writer.send({ type: "authorize", ...first } satisfies McpAuthFrame);
+            const outcome = await signedIn;
+            writer.send(
+                outcome.match(
+                    (): McpAuthFrame => ({ type: "signed_in" }),
+                    (e): McpAuthFrame => ({ type: "failed", error: customizationErrorBody(e) }),
+                ),
+            );
+        });
     });
 
     routes.delete("/mcp/:name/auth", async (c) =>
