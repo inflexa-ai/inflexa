@@ -1,9 +1,19 @@
 import { beforeEach, expect, test } from "bun:test";
 import { randomUUIDv7 } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { dirname } from "node:path";
 
-import { acquireInstanceLock, instanceLockPath, releaseInstanceLock, releaseHeldInstanceLocks } from "../lock.ts";
+import {
+    acquireInstanceLock,
+    instanceLockHolder,
+    instanceLockPath,
+    isProcessAlive,
+    processIdentity,
+    processStartToken,
+    releaseInstanceLock,
+    releaseHeldInstanceLocks,
+} from "../lock.ts";
 import { env } from "../env.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 
@@ -22,14 +32,22 @@ beforeEach(() => {
 
 // Write a lock file for `key` owned by `pid`, faking another instance's hold.
 function seedForeignLock(key: string, pid: number): void {
-    mkdirSync(dirname(instanceLockPath(key)), { recursive: true });
-    writeFileSync(instanceLockPath(key), String(pid));
+    seedLockText(key, JSON.stringify(processIdentity(pid)));
 }
 
-test("acquires a free key and records our pid", () => {
+function seedLockText(key: string, text: string): void {
+    mkdirSync(dirname(instanceLockPath(key)), { recursive: true });
+    writeFileSync(instanceLockPath(key), text);
+}
+
+function lockText(key: string): string {
+    return readFileSync(instanceLockPath(key), "utf8");
+}
+
+test("acquires a free key and records our pid, host, and start", () => {
     const key = "lock-test-free";
     expect(acquireInstanceLock(key)).toEqual({ acquired: true });
-    expect(readFileSync(instanceLockPath(key), "utf8").trim()).toBe(String(process.pid));
+    expect(lockText(key)).toBe(JSON.stringify({ pid: process.pid, host: hostname(), start: processStartToken(process.pid) }));
     releaseInstanceLock(key);
     expect(existsSync(instanceLockPath(key))).toBe(false);
 });
@@ -73,7 +91,53 @@ test("a dead holder's lock is reclaimed", async () => {
     await proc.exited; // awaited so the child is reaped and process.kill(pid,0) yields ESRCH
     seedForeignLock(key, deadPid);
     expect(acquireInstanceLock(key).acquired).toBe(true);
-    expect(readFileSync(instanceLockPath(key), "utf8").trim()).toBe(String(process.pid));
+    expect(lockText(key)).toBe(JSON.stringify(processIdentity(process.pid)));
+    releaseInstanceLock(key);
+});
+
+test("the platform reports a start token for a live process and none for a dead one", async () => {
+    const proc = Bun.spawn(["sleep", "60"]);
+    expect(processStartToken(proc.pid)).not.toBeNull();
+    proc.kill();
+    await proc.exited;
+    expect(processStartToken(proc.pid)).toBeNull();
+});
+
+test("a live pid with a different start time is a reused pid, and its lock is reclaimed", async () => {
+    // After a reboot the pid of the old holder can name a different live process. The lock waited for
+    // that process for ever when it held only the pid.
+    const key = "lock-test-reused";
+    const proc = Bun.spawn(["sleep", "60"]);
+    seedLockText(key, JSON.stringify({ pid: proc.pid, host: hostname(), start: "a start before the reboot" }));
+    expect(instanceLockHolder(key)).toBeNull();
+    expect(acquireInstanceLock(key)).toEqual({ acquired: true });
+    releaseInstanceLock(key);
+    proc.kill();
+    await proc.exited;
+});
+
+test("a holder on a different host is stale, and its lock is reclaimed", async () => {
+    const key = "lock-test-other-host";
+    const proc = Bun.spawn(["sleep", "60"]);
+    seedLockText(key, JSON.stringify({ ...processIdentity(proc.pid), host: `not-${hostname()}` }));
+    expect(acquireInstanceLock(key)).toEqual({ acquired: true });
+    releaseInstanceLock(key);
+    proc.kill();
+    await proc.exited;
+});
+
+test("a record with no known start falls back to the pid probe", async () => {
+    const proc = Bun.spawn(["sleep", "60"]);
+    expect(isProcessAlive({ pid: proc.pid, host: null, start: null })).toBe(true);
+    proc.kill();
+    await proc.exited;
+    expect(isProcessAlive({ pid: proc.pid, host: null, start: null })).toBe(false);
+});
+
+test("a lock file that is not a lock record is reclaimed", () => {
+    const key = "lock-test-corrupt";
+    seedLockText(key, String(process.ppid));
+    expect(acquireInstanceLock(key)).toEqual({ acquired: true });
     releaseInstanceLock(key);
 });
 

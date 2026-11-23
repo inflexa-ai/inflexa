@@ -62,6 +62,10 @@ const discoverySchema = z.object({
     apiVersion: z.number().int(),
     startedAt: z.string(),
     channel: z.enum(["development", "production"]),
+    // A server of an older version writes no identity. Its file must still read, so that a client after an
+    // update can find that server and stop it: the pid probe then decides alone.
+    host: z.string().nullable().default(null),
+    processStart: z.string().nullable().default(null),
 });
 
 /**

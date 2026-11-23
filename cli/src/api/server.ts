@@ -154,6 +154,10 @@ export type ServerDiscovery = {
     /** When the server process started, as ISO 8601. */
     startedAt: string;
     channel: ServerChannel;
+    /** The host name of the machine of the server. With `processStart`, it lets a client tell a reused pid from the server. `null` in a file that does not say. */
+    host: string | null;
+    /** The start token of the server process (`processStartToken` of `lib/lock.ts`). `null` when it is not known. */
+    processStart: string | null;
 };
 
 /** How long a `drain` stop waits for the running chat turns before it aborts them. */

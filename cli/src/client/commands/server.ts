@@ -23,6 +23,7 @@ import {
     DEFAULT_SERVER_LOOKUP_OPTS,
     describeActivity,
     describeServerError,
+    discoveryProcess,
     fetchServerActivity,
     hasActiveWork,
     lookupServer,
@@ -249,7 +250,7 @@ async function stopServer(discovery: ServerDiscovery, mode: ShutdownMode, opts: 
     opts.write(`Stopping the Inflexa server (pid ${discovery.pid}).${waitTurns}\n`);
     const waitMs = opts.stopWaitMs[mode];
     const start = opts.now();
-    while (opts.isPidAlive(discovery.pid)) {
+    while (opts.isProcessAlive(discoveryProcess(discovery))) {
         if (opts.now() - start >= waitMs) {
             return err(`The Inflexa server (pid ${discovery.pid}) still runs ${Math.round(waitMs / 1000)} s after the stop request. Its log: ${opts.logPath}`);
         }

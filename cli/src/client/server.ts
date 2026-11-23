@@ -16,7 +16,7 @@ import { fail } from "../lib/cli.ts";
 import { selfInvocation } from "../lib/self_invocation.ts";
 import { env } from "../lib/env.ts";
 import { rmResult, type FsError } from "../lib/fs.ts";
-import { acquireInstanceLock, isPidAlive, releaseInstanceLock, SERVER_SPAWN_LOCK_KEY, type LockOutcome } from "../lib/lock.ts";
+import { acquireInstanceLock, isProcessAlive, releaseInstanceLock, SERVER_SPAWN_LOCK_KEY, type LockOutcome, type ProcessIdentity } from "../lib/lock.ts";
 import { DEFAULT_CLIENT_OPTS, describeClientError, readServerDiscovery, request, serverBaseUrl, type ClientError, type ClientOpts } from "./api.ts";
 
 /** The upper bound of one probe of a server. A local listener answers in milliseconds. */
@@ -73,7 +73,7 @@ export type ServerError =
 export type ServerLookupOpts = {
     readonly discoveryPath: string;
     readonly readDiscovery: (path: string) => Result<ServerDiscovery | null, FsError>;
-    readonly isPidAlive: (pid: number) => boolean;
+    readonly isProcessAlive: (process: ProcessIdentity) => boolean;
     readonly fetch: (url: string, init: RequestInit) => Promise<Response>;
     readonly probeTimeoutMs: number;
 };
@@ -82,7 +82,7 @@ export type ServerLookupOpts = {
 export const DEFAULT_SERVER_LOOKUP_OPTS: ServerLookupOpts = {
     discoveryPath: env.serverFilePath,
     readDiscovery: readServerDiscovery,
-    isPidAlive,
+    isProcessAlive,
     fetch: (url, init) => fetch(url, init),
     probeTimeoutMs: PROBE_TIMEOUT_MS,
 };
@@ -96,9 +96,14 @@ export function serverClient(discovery: ServerDiscovery, fetchFn: ServerLookupOp
     };
 }
 
+/** The process that a discovery file names, for the same liveness rule as a lock file. */
+export function discoveryProcess(discovery: ServerDiscovery): ProcessIdentity {
+    return { pid: discovery.pid, host: discovery.host, start: discovery.processStart };
+}
+
 /**
  * Read the discovery file, and probe the server that it names with `GET /api/v1/server`. A probe that gets no
- * answer reads the pid: a dead pid is a stale file. This writes nothing, thus a read-only command can call it.
+ * answer reads the process: a dead pid, a reused pid, or a different host is a stale file. This writes nothing, thus a read-only command can call it.
  */
 export async function lookupServer(opts: ServerLookupOpts = DEFAULT_SERVER_LOOKUP_OPTS): Promise<Result<ServerLookup, ServerError>> {
     const read = opts.readDiscovery(opts.discoveryPath);
@@ -113,7 +118,7 @@ export async function lookupServer(opts: ServerLookupOpts = DEFAULT_SERVER_LOOKU
             return err({ type: "refused", discovery, error: probe.error });
         case "unreachable":
         case "aborted":
-            return ok(opts.isPidAlive(discovery.pid) ? { kind: "silent", discovery } : { kind: "stale", discovery });
+            return ok(opts.isProcessAlive(discoveryProcess(discovery)) ? { kind: "silent", discovery } : { kind: "stale", discovery });
         default: {
             const exhaustive: never = probe.error;
             throw new Error(`unhandled client error: ${JSON.stringify(exhaustive)}`);

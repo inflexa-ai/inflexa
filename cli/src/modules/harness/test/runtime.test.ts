@@ -26,7 +26,7 @@ import { inProcessChatTurns } from "@inflexa-ai/harness/testing";
 import { ContainerRuntimeError, runtimes } from "../../../lib/container.ts";
 import { env } from "../../../lib/env.ts";
 import { type Credential, type CredentialError, type CredentialScheme, type CredentialSource } from "../../../lib/credential.ts";
-import { instanceLockPath } from "../../../lib/lock.ts";
+import { instanceLockPath, processIdentity } from "../../../lib/lock.ts";
 import { addLogStream, flushLogs } from "../../../lib/log.ts";
 import { claimStoreFlight, deleteStoreFlight } from "../../../db/primary_mutation.ts";
 import { fakeFetch, respondWith, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
@@ -823,7 +823,7 @@ describe("bootHarnessRuntime", () => {
         // Fake another live inflexa process holding the machine-wide runtime lock.
         const holder = Bun.spawn(["sleep", "60"]);
         mkdirSync(dirname(lockPath), { recursive: true });
-        writeFileSync(lockPath, String(holder.pid));
+        writeFileSync(lockPath, JSON.stringify(processIdentity(holder.pid)));
         try {
             const result = await bootHarnessRuntime({ seams: recordingSeams(calls), config: testConfig() });
             expect(result._unsafeUnwrapErr()).toMatchObject({ type: "runtime_already_active", holderPid: holder.pid });
@@ -1175,10 +1175,11 @@ describe("describeBootError", () => {
     });
 
     // The holder is often the local server, which only `inflexa server stop` stops.
-    test("runtime_already_active names the holder and `inflexa server stop`", () => {
+    test("runtime_already_active names the holder, `inflexa server stop`, and the lock file", () => {
         const message = describeBootError({ type: "runtime_already_active", holderPid: 4821 });
         expect(message).toContain("pid 4821");
         expect(message).toContain("inflexa server stop");
+        expect(message).toContain(instanceLockPath("harness-runtime"));
     });
 });
 

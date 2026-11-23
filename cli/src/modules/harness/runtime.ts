@@ -49,7 +49,7 @@ import { ensureRuntime, readConfig } from "../../lib/config.ts";
 import { resolveEngineSocket, type ContainerRuntime, type ContainerRuntimeError } from "../../lib/container.ts";
 import { env, KNOWLEDGE_API_KEY_VAR, providerApiKeyVar, resolveModelApiKey } from "../../lib/env.ts";
 import { createCredentialSource, credentialErrorMessage, type Credential, type CredentialSource } from "../../lib/credential.ts";
-import { acquireInstanceLock, HARNESS_RUNTIME_LOCK_KEY, releaseInstanceLock } from "../../lib/lock.ts";
+import { acquireInstanceLock, HARNESS_RUNTIME_LOCK_KEY, instanceLockPath, releaseInstanceLock } from "../../lib/lock.ts";
 import { harnessLogger } from "../../lib/log.ts";
 import { onShutdown } from "../../lib/shutdown.ts";
 import { withinDeadline } from "../../lib/timer.ts";
@@ -313,7 +313,8 @@ export function describeBootError(e: HarnessBootError): string {
             // cannot tell the two holders apart: this module does not read the discovery file of the client.
             return (
                 `Another \`inflexa\` process (pid ${e.holderPid}) is already running the harness runtime, and only one can run on a machine.\n` +
-                "  If it is the Inflexa server (`inflexa server status` shows its pid), stop it with `inflexa server stop`. Otherwise wait for that process to end."
+                "  If it is the Inflexa server (`inflexa server status` shows its pid), stop it with `inflexa server stop`. Otherwise wait for that process to end.\n" +
+                `  The lock file is ${instanceLockPath(HARNESS_RUNTIME_LOCK_KEY)}. If no such process runs, remove that file.`
             );
         case "runtime_boot_failed":
             return `Harness runtime failed to boot: ${messageOf(e.cause)}`;

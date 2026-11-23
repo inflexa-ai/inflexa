@@ -42,6 +42,8 @@ const DISCOVERY: ServerDiscovery = {
     apiVersion: 1,
     startedAt: "2026-10-02T00:00:00.000Z",
     channel: "development",
+    host: null,
+    processStart: null,
 };
 
 /** Watch opts that answer each read with the next of `answers` (the last one repeats), and count the reads and the sleeps. */
