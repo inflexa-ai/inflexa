@@ -230,11 +230,24 @@ The env selects the workload user:
   `/etc/passwd` and `/etc/group` the same ids. Then it MUST drop to them with
   the groups of the list. A uid of 0 MUST stay 1000.
 - `SANDBOX_KEEP_GROUPS=1` MUST drop to uid 1000 and keep the groups that the
-  engine gave the process.
+  engine gave the process. A kept group is gid 1000, or a host group with no
+  mapping, which the kernel shows as the overflow gid. When the process has a
+  different group, for example gid 0 of the container root, the engine did not
+  keep the groups. Then the drop MUST clear the supplementary groups.
 - With neither, the entrypoint MUST drop to uid 1000.
 
-A malformed id MUST stop the start. `/home/sandbox` MUST have the mode `1777`,
-thus each workload user can write `$HOME`.
+A malformed id MUST stop the start. A gid of 0 in `SANDBOX_GID` or in
+`SANDBOX_GROUPS` MUST stop the start. The entrypoint MUST compare each id as a
+number, thus `00` is 0. `/home/sandbox` MUST have the mode `1777`, thus each
+workload user can write `$HOME`.
+
+Under the firewall flag, sandbox-server MUST refuse to start when it holds
+gid 0, as the primary gid or as a supplementary gid.
+
+The write probe of the cache seed MUST run as the workload user, because root
+in the container has no `CAP_DAC_OVERRIDE`. Thus a cache mount that the
+workload user can write is used, and the seed does not copy the caches to
+`/tmp`.
 
 When the flag is unset, the entrypoint MUST exec sandbox-server directly and
 MUST NOT touch `iptables`. A K8s pod gets no flag, because a NetworkPolicy of
