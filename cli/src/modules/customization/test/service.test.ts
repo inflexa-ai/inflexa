@@ -5,7 +5,7 @@ import { BUILTIN_AGENTS, revokeMcpSignIn, type McpAuthorizationCallback } from "
 import { startMcpOAuthFixture } from "@inflexa-ai/harness/testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import type { McpEntryView } from "../../../api/customization.ts";
+import type { McpAuthorization, McpEntryView } from "../../../api/customization.ts";
 import { messageOf } from "../../../lib/cause.ts";
 import { clearEnvVars } from "../../../test_support/env_vars.ts";
 import { customizationFixture, writeAgentFile, writeSkill, type CustomizationFixture } from "../../../test_support/customization.ts";
@@ -433,15 +433,11 @@ describe("MCP servers", () => {
     test("auth takes the code from the loopback callback, stores the tokens, and stops the listener", async () => {
         fixture.config = { ...fixture.config, mcp: { remote: REMOTE } };
         const seen: McpAuthorizationCallback[] = [];
+        const authorizations: McpAuthorization[] = [];
         let redirect = "";
         let browser: Promise<Response> | undefined;
         service = createCustomizationService({
             ...fixture.opts,
-            // The authorization server of the test: it sends the browser to the redirect URL with a code.
-            openBrowser: (url) => {
-                fixture.opened.push(url);
-                browser = fetch(`${redirect}?code=the-code&iss=https%3A%2F%2Fauth.example`);
-            },
             signIn: async ({ provider, waitForCallback }) => {
                 redirect = String(provider.redirectUrl);
                 await provider.redirectToAuthorization(new URL("https://auth.example/authorize"));
@@ -452,9 +448,15 @@ describe("MCP servers", () => {
             },
         });
 
-        await awaitOk(service.mcpAuth("remote"));
+        // The client of the test: the authorization server sends its browser to the callback with a code.
+        await awaitOk(
+            service.mcpAuth("remote", (authorization) => {
+                authorizations.push(authorization);
+                browser = fetch(`${authorization.callbackUrl}?code=the-code&iss=https%3A%2F%2Fauth.example`);
+            }),
+        );
 
-        expect(fixture.opened.map(String)).toEqual(["https://auth.example/authorize"]);
+        expect(authorizations).toEqual([{ url: "https://auth.example/authorize", callbackUrl: redirect }]);
         expect(await (await browser)?.text()).toBe("The sign-in is complete. You can close this page.");
         expect(seen).toEqual([{ code: "the-code", iss: "https://auth.example" }]);
         expect((await fixture.tokenStore.read(REMOTE.url))?.tokens).toEqual(TOKENS);
@@ -469,12 +471,11 @@ describe("MCP servers", () => {
             fixture.config = { ...fixture.config, mcp: { remote: { type: "http", url: oauth.url, auth: "oauth" } } };
             service = createCustomizationService({
                 ...fixture.opts,
-                // The browser: the authorization page of the fixture grants at once and redirects to the loopback callback.
-                openBrowser: (url) => void fetch(url),
                 revoke: revokeMcpSignIn,
             });
 
-            await awaitOk(service.mcpAuth("remote"));
+            // The browser: the authorization page of the fixture grants at once and redirects to the loopback callback.
+            await awaitOk(service.mcpAuth("remote", (authorization) => void fetch(authorization.url)));
 
             // The provider of a tool call reads the stored tokens with no browser.
             const forCalls = createMcpOAuthProvider({ server: "remote", url: oauth.url, store: fixture.tokenStore });
@@ -509,14 +510,14 @@ describe("MCP servers", () => {
             },
         });
 
-        expect((await service.mcpAuth("remote"))._unsafeUnwrapErr()).toMatchObject({ type: "sign_in_failed", name: "remote" });
+        expect((await service.mcpAuth("remote", () => undefined))._unsafeUnwrapErr()).toMatchObject({ type: "sign_in_failed", name: "remote" });
     });
 
     test("auth and logout refuse a server that does not sign in with OAuth, and logout deletes the tokens", async () => {
         fixture.config = { ...fixture.config, mcp: { lims: LIMS, remote: REMOTE } };
         await fixture.tokenStore.write(REMOTE.url, { tokens: TOKENS });
 
-        expect((await service.mcpAuth("lims"))._unsafeUnwrapErr()).toEqual({ type: "not_oauth", name: "lims" });
+        expect((await service.mcpAuth("lims", () => undefined))._unsafeUnwrapErr()).toEqual({ type: "not_oauth", name: "lims" });
         expect((await service.mcpLogout("lims"))._unsafeUnwrapErr()).toEqual({ type: "not_oauth", name: "lims" });
         expect(await awaitOk(service.mcpLogout("remote"))).toEqual({ status: "no_endpoint" });
         expect(await fixture.tokenStore.read(REMOTE.url)).toBeUndefined();
@@ -756,7 +757,9 @@ describe("skill files", () => {
     });
 
     test("a SKILL.md for a new name makes a custom skill, and a SKILL.md with a different name or bad frontmatter is refused", async () => {
-        const created = await awaitOk(service.writeSkillFile("plate-reader", "SKILL.md", "---\nname: plate-reader\ndescription: Read before you read a plate.\n---\n\nBody.\n"));
+        const created = await awaitOk(
+            service.writeSkillFile("plate-reader", "SKILL.md", "---\nname: plate-reader\ndescription: Read before you read a plate.\n---\n\nBody.\n"),
+        );
 
         expect(created.skill).toBe("plate-reader");
         expect((await awaitOk(service.listSkills())).skills.find((skill) => skill.name === "plate-reader")?.kind).toBe("custom");
@@ -789,7 +792,11 @@ describe("skill files", () => {
         writeSkill(fixture.userSkillsDir, "lab-protocols");
 
         expect((await service.readSkillFile("lab-protocols", path))._unsafeUnwrapErr()).toEqual({ type: "invalid_skill_path", name: "lab-protocols", path });
-        expect((await service.writeSkillFile("lab-protocols", path, "x"))._unsafeUnwrapErr()).toEqual({ type: "invalid_skill_path", name: "lab-protocols", path });
+        expect((await service.writeSkillFile("lab-protocols", path, "x"))._unsafeUnwrapErr()).toEqual({
+            type: "invalid_skill_path",
+            name: "lab-protocols",
+            path,
+        });
     });
 
     test("a path through a link that leaves the skill is refused, and a binary or a missing file does not read", async () => {

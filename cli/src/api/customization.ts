@@ -1,5 +1,7 @@
 // The wire types of the customization routes: agents, skills, connectors, credentials, and MCP servers.
 
+import type { ApiError } from "./common.ts";
+
 /** The three kinds of thing that a user attaches to an agent. */
 export const ATTACHMENT_KINDS = ["connector", "mcp", "skill"] as const;
 
@@ -408,10 +410,19 @@ export type DeleteMcpServerResponse = {
     deleted: true;
 };
 
-/** The body of a `POST /api/v1/mcp/:name/auth` response: the sign-in completed. */
-export type McpAuthResponse = {
-    signedIn: true;
+/** Where the browser signs in to an MCP server: the authorization page, and the loopback callback that waits for the redirect. */
+export type McpAuthorization = {
+    url: string;
+    /** The callback on a loopback port of the machine of the server. A browser on a different computer cannot reach it. */
+    callbackUrl: string;
 };
+
+/**
+ * One frame of the SSE response of `POST /api/v1/mcp/:name/auth`. The stream gives `authorize` first, and the
+ * outcome last. The client opens the page and shows the URL: the desktop of the person belongs to the client.
+ * A refusal before the sign-in starts, for example a server with no OAuth, is a JSON error body, not a stream.
+ */
+export type McpAuthFrame = ({ type: "authorize" } & McpAuthorization) | { type: "signed_in" } | { type: "failed"; error: ApiError };
 
 /** What the authorization server did with the tokens: revoked them, or got no request because it has no revocation endpoint or the server held no tokens. */
 export type McpRevocationView = { status: "revoked" | "no_endpoint" | "not_signed_in" } | { status: "failed"; reason: string };

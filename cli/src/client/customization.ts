@@ -1,4 +1,4 @@
-import type { ResultAsync } from "neverthrow";
+import type { Result, ResultAsync } from "neverthrow";
 
 import type {
     AddMcpServerRequest,
@@ -29,7 +29,7 @@ import type {
     RoleView,
     SkillDetail,
     DeleteMcpServerResponse,
-    McpAuthResponse,
+    McpAuthFrame,
     McpLogoutResponse,
     McpServerList,
     McpServerView,
@@ -38,7 +38,7 @@ import type {
     PutCredentialRequest,
     SkillList,
 } from "../api/customization.ts";
-import { DEFAULT_CLIENT_OPTS, request, type ClientError, type ClientOpts } from "./api.ts";
+import { DEFAULT_CLIENT_OPTS, request, streamRequest, type ClientError, type ClientOpts } from "./api.ts";
 
 /** `GET /api/v1/catalog/agents`: each built-in agent, each custom agent, and each draft, with the gaps. */
 export function fetchAgents(opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<AgentList, ClientError> {
@@ -166,9 +166,15 @@ export function deleteMcpServer(name: string, opts: ClientOpts = DEFAULT_CLIENT_
     return request<DeleteMcpServerResponse>("DELETE", `/api/v1/mcp/${encodeURIComponent(name)}`, {}, opts);
 }
 
-/** `POST /api/v1/mcp/:name/auth`: sign in to an MCP server in the browser. The response comes when the person finishes. */
-export function signInMcpServer(name: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): ResultAsync<McpAuthResponse, ClientError> {
-    return request<McpAuthResponse>("POST", `/api/v1/mcp/${encodeURIComponent(name)}/auth`, {}, opts);
+/**
+ * `POST /api/v1/mcp/:name/auth`: sign in to an MCP server in the browser. The stream gives the authorization page
+ * first, and the outcome when the person finishes.
+ */
+export function signInMcpServer(
+    name: string,
+    opts: ClientOpts = DEFAULT_CLIENT_OPTS,
+): ResultAsync<AsyncGenerator<Result<McpAuthFrame, ClientError>>, ClientError> {
+    return streamRequest<McpAuthFrame>("POST", `/api/v1/mcp/${encodeURIComponent(name)}/auth`, {}, opts);
 }
 
 /** `DELETE /api/v1/mcp/:name/auth`: delete the stored tokens of an MCP server. */

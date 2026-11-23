@@ -182,6 +182,60 @@ describe("/mcp", () => {
     });
 });
 
+describe("POST /mcp/:name/auth", () => {
+    const REMOTE = { type: "http", url: "https://mcp.example/mcp", auth: "oauth" };
+
+    /** The `data:` frames of an SSE body. */
+    async function frames(response: Response): Promise<({ type: string } | null)[]> {
+        const text = await response.text();
+        return text
+            .split("\n\n")
+            .filter((block) => block.startsWith("data: "))
+            .map((block) => JSON.parseWith(block.slice("data: ".length), z.looseObject({ type: z.string() })));
+    }
+
+    test("the stream gives the authorization page and the callback first, then the outcome, and opens no browser", async () => {
+        let callbackUrl = "";
+        routes = customizationRoutes(
+            createCustomizationService({
+                ...fixture.opts,
+                // The browser of the test comes back to the callback after the authorization page shows.
+                signIn: async ({ provider, waitForCallback }) => {
+                    callbackUrl = String(provider.redirectUrl);
+                    await provider.redirectToAuthorization(new URL("https://auth.example/authorize"));
+                    void fetch(`${callbackUrl}?code=the-code`);
+                    await waitForCallback();
+                    return { status: "authorized" };
+                },
+            }),
+        );
+        await send("POST", "/mcp", { name: "remote", entry: REMOTE });
+
+        const response = await send("POST", "/mcp/remote/auth");
+
+        expect(response.headers.get("Content-Type")).toBe("text/event-stream");
+        expect(await frames(response)).toEqual([{ type: "authorize", url: "https://auth.example/authorize", callbackUrl }, { type: "signed_in" }]);
+    });
+
+    test("a sign-in that fails after the authorization page ends the stream with the error body", async () => {
+        routes = customizationRoutes(
+            createCustomizationService({
+                ...fixture.opts,
+                signIn: async ({ provider }) => {
+                    await provider.redirectToAuthorization(new URL("https://auth.example/authorize"));
+                    return { status: "failed", reason: "the person denied the access" };
+                },
+            }),
+        );
+        await send("POST", "/mcp", { name: "remote", entry: REMOTE });
+
+        const sent = await frames(await send("POST", "/mcp/remote/auth"));
+
+        expect(sent[1]).toMatchObject({ type: "failed", error: { error: "unavailable" } });
+        expect(JSON.stringify(sent[1])).toContain("the person denied the access");
+    });
+});
+
 describe("/catalog/roles, /skills/:name, stored credentials, and /mcp/found", () => {
     test("PUT a role makes a clone the active agent of the role, and the list gives the roles", async () => {
         expect((await send("POST", "/catalog/agents/planner/clone", { newId: "lab-planner" })).status).toBe(201);

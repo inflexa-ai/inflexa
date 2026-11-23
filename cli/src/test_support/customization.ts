@@ -34,8 +34,6 @@ export type CustomizationFixture = {
     readonly workspaces: Map<string, string>;
     /** The last start failure of each MCP server, as the runtime gives it. */
     readonly mcpFailures: Map<string, McpServerFailure>;
-    /** The URLs that the service asked the browser to open. */
-    readonly opened: URL[];
     config: Config;
     opts: CustomizationOpts;
 };
@@ -60,7 +58,6 @@ export function customizationFixture(): CustomizationFixture {
     const agentsDir = join(root, "agents");
     const userSkillsDir = join(root, "skills");
     const tokenStore = createMcpTokenStore({ platform: "linux", filePath: join(root, "mcp-tokens.json") });
-    const opened: URL[] = [];
     const secrets = new Map<string, string>();
     const credentialStore: SecretStore = {
         read: (account) => Promise.resolve(secrets.get(account)),
@@ -101,7 +98,6 @@ export function customizationFixture(): CustomizationFixture {
         agentDirs,
         workspaces,
         mcpFailures,
-        opened,
         config: { telemetry: false, theme: DEFAULT_THEME_ID, leaderTimeout: 2000, embedding: { mode: "off" } },
         opts: {
             agentsDir,
@@ -124,9 +120,6 @@ export function customizationFixture(): CustomizationFixture {
             workspaceRoot: (analysis) => {
                 const root = workspaces.get(analysis);
                 return root === undefined ? errAsync(`no analysis ${analysis}`) : okAsync(root);
-            },
-            openBrowser: (url) => {
-                opened.push(url);
             },
             signIn: signInToMcpServer,
             // A test that revokes at a server sets the real revocation and a local OAuth server.

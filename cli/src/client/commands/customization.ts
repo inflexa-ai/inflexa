@@ -1,5 +1,7 @@
 import { resolve } from "node:path";
 
+import type { Result } from "neverthrow";
+
 import {
     ATTACHMENT_KINDS,
     type AgentDetail,
@@ -15,6 +17,9 @@ import {
     type SkillList,
 } from "../../api/customization.ts";
 import { fail, promptSecret } from "../../lib/cli.ts";
+import { terminalEnv } from "../../lib/env.ts";
+import { acceptPastedCallbacks, deliverCallback, pasteCallbackHint } from "../../lib/oauth_callback.ts";
+import { openExternal, sshForwardCommand, type OpenExternalError } from "../../lib/open_external.ts";
 import { describeClientError, DEFAULT_CLIENT_OPTS, type ClientError, type ClientOpts } from "../api.ts";
 import {
     addMcpServer,
@@ -543,11 +548,70 @@ export async function mcpRm(names: readonly string[], opts: ClientOpts = DEFAULT
     }
 }
 
-/** `inflexa mcp auth <name>`: sign in to an MCP server in the browser. */
-export async function mcpAuth(name: string, opts: ClientOpts = DEFAULT_CLIENT_OPTS): Promise<void> {
-    console.log(`A browser opens for the sign-in to "${name}". The command waits up to 5 minutes for you to finish.`);
-    (await signInMcpServer(name, opts)).match(identity, failOn);
-    console.log(`Signed in to "${name}".`);
+/** What `inflexa mcp auth` prints, opens, and reads. Tests replace each one. */
+export type McpAuthOpts = ClientOpts & {
+    readonly write: (line: string) => void;
+    readonly open: (url: string) => Result<void, OpenExternalError>;
+    /** `SSH_CONNECTION`, or `null`. */
+    readonly sshConnection: string | null;
+    /** Where a pasted callback URL comes from. `null`: no terminal to paste into. */
+    readonly input: NodeJS.ReadableStream | null;
+    readonly deliver: (url: URL) => Promise<Result<void, string>>;
+};
+
+/** The production {@link McpAuthOpts}. */
+export const DEFAULT_MCP_AUTH_OPTS: McpAuthOpts = {
+    ...DEFAULT_CLIENT_OPTS,
+    write: (line) => console.log(line),
+    open: (url) => openExternal(url),
+    sshConnection: terminalEnv.sshConnection,
+    input: process.stdin.isTTY ? process.stdin : null,
+    deliver: (url) => deliverCallback(url),
+};
+
+/**
+ * `inflexa mcp auth <name>`: sign in to an MCP server in the browser. The command prints the authorization URL
+ * and opens it. The callback waits on a loopback port of this machine. A browser on a different computer cannot
+ * reach it, thus the command also takes a pasted callback URL, and over SSH it prints the port-forward command.
+ */
+export async function mcpAuth(name: string, opts: McpAuthOpts = DEFAULT_MCP_AUTH_OPTS): Promise<void> {
+    const frames = (await signInMcpServer(name, opts)).match(identity, failOn);
+    let stopPaste: (() => void) | null = null;
+    try {
+        for await (const item of frames) {
+            const frame = item.match(identity, failOn);
+            switch (frame.type) {
+                case "authorize": {
+                    const port = Number(new URL(frame.callbackUrl).port);
+                    opts.write(`Sign in to "${name}" in a browser. The command waits up to 5 minutes for you to finish.\n\n  ${frame.url}\n`);
+                    // The URL is printed above, thus a failed open needs no word of its own.
+                    opts.open(frame.url).match(
+                        () => undefined,
+                        () => undefined,
+                    );
+                    if (opts.sshConnection !== null)
+                        opts.write(`Over SSH, forward the callback port first, on your computer: ${sshForwardCommand(port, opts.sshConnection)}`);
+                    if (opts.input !== null) {
+                        opts.write(pasteCallbackHint(port));
+                        stopPaste = acceptPastedCallbacks(port, { input: opts.input, say: opts.write, deliver: opts.deliver });
+                    }
+                    break;
+                }
+                case "signed_in":
+                    opts.write(`Signed in to "${name}".`);
+                    return;
+                case "failed":
+                    return fail(frame.error.message);
+                default: {
+                    const exhaustive: never = frame;
+                    throw new Error(`unhandled MCP sign-in frame: ${JSON.stringify(exhaustive)}`);
+                }
+            }
+        }
+        fail(`The server ended the sign-in to "${name}" with no outcome. \`inflexa mcp ls\` shows if it signed in.`);
+    } finally {
+        stopPaste?.();
+    }
 }
 
 function revocationText(revocation: McpRevocationView): string {

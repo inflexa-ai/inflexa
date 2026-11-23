@@ -43,6 +43,7 @@ import type {
     ImportMcpServerRequest,
     ImportSkillResponse,
     InstallMcpServerRequest,
+    McpAuthorization,
     McpCandidateView,
     McpEntryView,
     McpRevocationView,
@@ -72,7 +73,6 @@ import { env } from "../../lib/env.ts";
 import { errnoCode, mkdirResult, readFileResult, renameResult, rmResult, writeFileResult } from "../../lib/fs.ts";
 import { unknownRecordSchema } from "../../lib/json_record.ts";
 import { getLogger } from "../../lib/log.ts";
-import { openByHandHint, openExternal } from "../../lib/open_external.ts";
 import { runAfter } from "../../lib/timer.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import { resolveHarnessConfig } from "../harness/config.ts";
@@ -287,8 +287,6 @@ export type CustomizationOpts = {
     readonly mcpFailures: () => ReadonlyMap<string, McpServerFailure>;
     /** The workspace folder of an analysis, by id or name. A relative import path from a chat reads inside it. */
     readonly workspaceRoot: (analysis: string) => ResultAsync<string, string>;
-    /** Open the authorization page of a sign-in. */
-    readonly openBrowser: (url: URL) => void;
     readonly signIn: typeof signInToMcpServer;
     readonly revoke: typeof revokeMcpSignIn;
     /** How long a sign-in waits for the browser to come back. */
@@ -300,7 +298,6 @@ const AUTH_TIMEOUT_MS = 5 * 60_000;
 
 /** The production {@link CustomizationOpts}: the paths of `env`, the config file, and the token store of this platform. */
 export function defaultCustomizationOpts(mcpFailures: CustomizationOpts["mcpFailures"] = () => new Map()): CustomizationOpts {
-    const log = getLogger("customization");
     return {
         agentsDir: env.agentsDir,
         userSkillsDir: env.userSkillsDir,
@@ -317,12 +314,6 @@ export function defaultCustomizationOpts(mcpFailures: CustomizationOpts["mcpFail
         agentDirs: knownAgentDirs(),
         mcpFailures,
         workspaceRoot: (analysis) => workspaceRootForAnalysisId(analysis).mapErr((e) => ("message" in e ? e.message : e.type)),
-        openBrowser: (url) => {
-            openExternal(url.toString()).match(
-                () => undefined,
-                (e) => log.warn({ url: url.toString(), hint: openByHandHint(e, url.toString()) }, "no browser opened for the MCP sign-in"),
-            );
-        },
         signIn: signInToMcpServer,
         revoke: revokeMcpSignIn,
         authTimeoutMs: AUTH_TIMEOUT_MS,
@@ -377,7 +368,11 @@ export type CustomizationService = {
     readonly installMcp: (request: InstallMcpServerRequest) => ResultAsync<McpServerView, CustomizationError>;
     readonly setMcpEnabled: (name: string, enabled: boolean) => ResultAsync<McpServerView, CustomizationError>;
     readonly removeMcp: (name: string) => ResultAsync<void, CustomizationError>;
-    readonly mcpAuth: (name: string) => ResultAsync<void, CustomizationError>;
+    /**
+     * Sign in to an MCP server. `onAuthorize` gets the authorization page and the callback once the sign-in waits
+     * for the browser. The service opens no browser: the client of the person does.
+     */
+    readonly mcpAuth: (name: string, onAuthorize: (authorization: McpAuthorization) => void) => ResultAsync<void, CustomizationError>;
     readonly mcpLogout: (name: string) => ResultAsync<McpRevocationView, CustomizationError>;
 };
 
@@ -1216,7 +1211,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
      * The sign-in of one server. A loopback listener on a free port takes the redirect of the browser. The listener
      * and the timer stop when the sign-in settles, in each branch.
      */
-    const signIn = async (name: string, url: string): Promise<Result<void, CustomizationError>> => {
+    const signIn = async (name: string, url: string, onAuthorize: (authorization: McpAuthorization) => void): Promise<Result<void, CustomizationError>> => {
         let deliver: (callback: McpAuthorizationCallback) => void = () => undefined;
         let refuse: (reason: Error) => void = () => undefined;
         const callback = new Promise<McpAuthorizationCallback>((resolvePromise, rejectPromise) => {
@@ -1251,6 +1246,7 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
         )();
         if (listener.isErr()) return err(listener.error);
         const server = listener.value;
+        const redirectUrl = new URL("/callback", server.url).toString();
         const stopTimer = runAfter(opts.authTimeoutMs, () =>
             refuse(new Error(`no browser came back within ${Math.round(opts.authTimeoutMs / 60_000)} minutes`)),
         );
@@ -1259,8 +1255,8 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                 server: name,
                 url,
                 store: opts.tokenStore,
-                redirectUrl: new URL("/callback", server.url).toString(),
-                openBrowser: opts.openBrowser,
+                redirectUrl,
+                openBrowser: (authorizationUrl) => onAuthorize({ url: authorizationUrl.toString(), callbackUrl: redirectUrl }),
             });
             const result = await opts.signIn({ url, provider, waitForCallback: () => callback });
             if (result.status === "failed") return err({ type: "sign_in_failed", name, reason: result.reason });
@@ -1401,7 +1397,9 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                         return checkNewAgentId(id, state.files).andThen((target) => writeNewAgentFile(id, target, text).map(() => ({ id })));
                     });
                 })
-                .andThen(({ id, previous }) => findDetail(id).map((detail): ImportAgentResponse => (previous === undefined ? detail : { ...detail, previous }))),
+                .andThen(({ id, previous }) =>
+                    findDetail(id).map((detail): ImportAgentResponse => (previous === undefined ? detail : { ...detail, previous })),
+                ),
 
         exportAgent: (id, path, options = {}) =>
             customFileOf(id).andThen((file) =>
@@ -1409,7 +1407,9 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
                     if (existsSync(target) && options.replace !== true) return err({ type: "path_exists", path });
                     return readFileResult(file.path, "read the agent file")
                         .andThen((text) =>
-                            mkdirResult(dirname(target), "make the folder of the export").andThen(() => writeFileResult(target, text, "write the agent export")),
+                            mkdirResult(dirname(target), "make the folder of the export").andThen(() =>
+                                writeFileResult(target, text, "write the agent export"),
+                            ),
                         )
                         .map(() => ({ path: target }));
                 }),
@@ -1798,11 +1798,11 @@ export function createCustomizationService(opts: CustomizationOpts): Customizati
             return url === undefined ? okAsync(undefined) : signOut(name, url).map(() => undefined);
         },
 
-        mcpAuth: (name) => {
+        mcpAuth: (name, onAuthorize) => {
             const url = oauthUrlOf(name);
             if (url.isErr()) return errAsync(url.error);
             log.info({ server: name }, "an MCP sign-in starts");
-            return new ResultAsync(signIn(name, url.value));
+            return new ResultAsync(signIn(name, url.value, onAuthorize));
         },
 
         mcpLogout: (name) => {
