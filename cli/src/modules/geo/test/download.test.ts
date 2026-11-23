@@ -153,7 +153,7 @@ describe("inflexa geo download — target folder resolution (e2e)", () => {
         expect(result.stderr).toContain("epsilon");
     });
 
-    test("a copied folder is refused with the repair/relocate way forward", async () => {
+    test("a copied folder is refused with the new identity as the way forward", async () => {
         const original = tmp();
         const copy = tmp();
         await anchorAt("A3", original);
@@ -162,7 +162,7 @@ describe("inflexa geo download — target folder resolution (e2e)", () => {
 
         const result = await runCliAsync(["geo", "download", "GSE12345"], { cwd: copy, env: server.childEnv });
         expect(result.exitCode).toBe(1);
-        expect(result.stderr).toContain("This folder looks copied — run `inflexa repair` or `inflexa relocate` before downloading into it.");
+        expect(result.stderr).toContain(`${copy} is a copy of ${original}. Run \`inflexa\` there to give the copy a new identity before you download into it.`);
     });
 
     test("the download never claims the analysis instance lock", async () => {

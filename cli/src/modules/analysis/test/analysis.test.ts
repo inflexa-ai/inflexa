@@ -325,6 +325,37 @@ describe("renameAnalysisAndMoveWorkspace", () => {
         const outcome = (await renameAnalysisAndMoveWorkspace(b, str256("Taken")._unsafeUnwrap()))._unsafeUnwrap();
         expect(outcome.analysis.slug).toBe("taken-2");
     });
+
+    test("a slug whose folder is on disk with no row is taken, and the rename does not move onto it", async () => {
+        const a = (await createAnalysis({ cwd: dir, name: str256("Other")._unsafeUnwrap() }))._unsafeUnwrap();
+        mkdirSync(join(dir, defaultOutputSubdir("left")), { recursive: true });
+
+        const outcome = (await renameAnalysisAndMoveWorkspace(a, str256("Left")._unsafeUnwrap()))._unsafeUnwrap();
+        expect(outcome.analysis.slug).toBe("left-2");
+    });
+});
+
+describe("a new analysis after the database is deleted", () => {
+    let dir = "";
+
+    beforeEach(() => {
+        freshDb();
+        dir = realpathSync(mkdtempSync(join(tmpdir(), "inflexa-reset-")));
+    });
+
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("does not take the workspace folder that an old analysis of the same name left on disk", async () => {
+        const old = (await createAnalysis({ cwd: dir, name: str256("Batch")._unsafeUnwrap() }))._unsafeUnwrap();
+        mkdirSync(join(dir, defaultOutputSubdir(old.slug), "runs"), { recursive: true });
+        // The user deletes the database; the marker and the folders stay.
+        freshDb();
+
+        const fresh = (await createAnalysis({ cwd: dir, name: str256("Batch")._unsafeUnwrap() }))._unsafeUnwrap();
+        expect(fresh.slug).toBe("batch-2");
+    });
 });
 
 describe("delete → recreate does not inherit the previous analysis's artifacts", () => {

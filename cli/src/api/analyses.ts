@@ -210,7 +210,7 @@ export type AnalysisCandidate = AnalysisView & {
  * - `analysis` — one clear target. `others` holds the analyses that share the name of `ref`, newest first.
  * - `anchor` — a tracked folder with zero or more analyses, none of them a clear target.
  * - `pick` — candidates to pick from: the analyses of `project`, or the newest analyses when `ref` matched nothing.
- * - `copy` — the folder is a copy of a tracked folder. Repair or relocate it first.
+ * - `copy` — the marker folder `dir` is a copy of the tracked folder `original`, which still holds the same marker. Give the copy a new identity first.
  * - `empty` — no tracked folder at or above `cwd`.
  *
  * A candidate list holds at most the `MAX_PER_PAGE` newest analyses.
@@ -219,7 +219,7 @@ export type ResolvedContextView =
     | { kind: "analysis"; describe: string; analysis: AnalysisView; anchorPath: string; others: AnalysisCandidate[] }
     | { kind: "anchor"; describe: string; anchorPath: string; analyses: AnalysisView[] }
     | { kind: "pick"; describe: string; analyses: AnalysisView[] }
-    | { kind: "copy"; describe: string; cwd: string }
+    | { kind: "copy"; describe: string; cwd: string; dir: string; original: string }
     | { kind: "empty"; describe: string; cwd: string };
 
 /** The body of a `POST {A}/output-dir` response: the workspace folder, which exists after the call. */

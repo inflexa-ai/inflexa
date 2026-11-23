@@ -963,11 +963,39 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
         }
     });
 
+    test("a scope read that has not settled holds the next tick, as each other read of the tick does", async () => {
+        // The server can search the disk for a missing anchor folder on this read, thus it can be slow.
+        let scopeReads = 0;
+        const ws = buildWorkspace({
+            analysis: buildAnalysis({ id: "A" }),
+            sessionId: "T",
+            refreshScope: () => {
+                scopeReads += 1;
+                return new Promise<void>(() => {});
+            },
+        });
+        const poll = mountPoll(ws);
+        try {
+            await poll.tick();
+            await poll.tick();
+            expect(scopeReads).toBe(1);
+        } finally {
+            poll.dispose();
+        }
+    });
+
     test("a tick whose server does not answer reads neither the scope nor the thread", async () => {
         let scopeReads = 0;
         let threadReads = 0;
         let pausedReads = 0;
-        const ws = buildWorkspace({ analysis: buildAnalysis({ id: "A" }), sessionId: "T", refreshScope: () => void (scopeReads += 1) });
+        const ws = buildWorkspace({
+            analysis: buildAnalysis({ id: "A" }),
+            sessionId: "T",
+            refreshScope: () => {
+                scopeReads += 1;
+                return Promise.resolve();
+            },
+        });
         const poll = mountPoll(ws, {
             checkServer: () => Promise.resolve(false),
             pollThread: () => {

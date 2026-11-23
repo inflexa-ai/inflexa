@@ -36,9 +36,7 @@ async function classify(analysisId: string, rawPath: string, cwd: string): Promi
     // computed against symlink-resolved paths (consistent with the anchor's cachedPath).
     const abs = await canonicalPathAsync(target);
 
-    const markerResult = await findMarkerUpwards(abs);
-    if (markerResult.isErr()) return err({ type: "query_failed", op: "classifyInputPath:marker", cause: markerResult.error });
-    const found = markerResult.value;
+    const found = (await findMarkerUpwards(abs)).unwrapOr(null);
 
     if (found) {
         const rel = relative(found.dir, abs);
@@ -50,7 +48,12 @@ async function classify(analysisId: string, rawPath: string, cwd: string): Promi
             // marker read above: if the marker vanished between the two reads, the
             // ensured id is the one row that really exists.
             const ensured = await getOrCreateAnchorForCwd(found.dir);
-            if (ensured.isErr()) return err(ensured.error);
+            if (ensured.isErr()) {
+                // A copy must not take the identity of its original, thus its input degrades to an absolute
+                // path until the user gives the copy its own identity.
+                if (ensured.error.type === "folder_is_copy") return ok({ path: abs, isDir, analysisId, anchorId: null });
+                return err(ensured.error);
+            }
             return ok({ path: rel === "" ? "." : rel, isDir, analysisId, anchorId: ensured.value.id });
         }
     }

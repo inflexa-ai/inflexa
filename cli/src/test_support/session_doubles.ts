@@ -90,7 +90,7 @@ export function sessionScopeDouble(analysis: Analysis | null, sessionId: string 
         openSession: (threadId: string | null, _workingDir: string, next: Analysis) => {
             opened.push({ threadId, analysisId: next.id });
         },
-        refreshScope: () => {},
+        refreshScope: () => Promise.resolve(),
         quit: async () => {},
     };
     return {

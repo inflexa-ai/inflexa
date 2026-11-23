@@ -79,10 +79,18 @@ The system SHALL provide `isDirWritable(dir)` resolving to `true` when files can
 
 The system SHALL provide `findMarkerUpwards(startDir)` returning `ResultAsync` that resolves `startDir` to an absolute path and walks upward to the filesystem root, one folder at a time, returning `{ dir, marker }` for the nearest ancestor (including `startDir`) containing a valid marker, or `null` if none is found, stopping at the root without looping.
 
+A marker that the walk cannot read, or that fails its schema, MUST read as no marker. The walk MUST write a warning to the log and continue to the parent folder. The walk has no error. A parent folder can hold a marker that the user does not own, for example a marker with mode 0600 on a shared drive. An error there stops the launch and each input add in each folder below it. A deliberate repair reads the marker with `readMarker`, and it keeps the error.
+
 #### Scenario: Marker found in an ancestor
 
 - **WHEN** a marker exists at `dir` and `findMarkerUpwards` is called from a nested subdirectory of `dir`
 - **THEN** it returns `{ dir, marker }` for that ancestor
+
+#### Scenario: A marker that the walk cannot read
+
+- **GIVEN** a parent folder whose marker is truncated, or is not readable for the user
+- **WHEN** `findMarkerUpwards` is called from a folder below it
+- **THEN** it reads that marker as no marker, writes a warning to the log, and continues to the next parent
 
 #### Scenario: No marker anywhere up to root
 

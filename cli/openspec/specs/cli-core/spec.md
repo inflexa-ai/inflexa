@@ -7,13 +7,18 @@ The core user-facing commands — the context-resolving default, `new`, `ls`, `r
 
 ### Requirement: Default command resolves and acts on context
 
-The system SHALL register a default `inflexa [--analysis <x>] [--project <p>]` command (commander root action) that sends the working folder and the flags to the resolve route of the local server, prints the context description that the server returns first (loud context), then acts by kind: `analysis` → open chat; `anchor` with one analysis → open it, with several → a picker including "start a new one", with none → confirm starting one; `pick` → a picker over the candidates; `empty` → confirm starting a new analysis at cwd; `copy` → surface the copy and direct the user to the move backstop (clone/fork resolution is deferred — see move-backstop). The prompts SHALL run in the terminal of the command, before the renderer takes it. The action lives in `src/tui/app.launch.tsx` as `launchDefault` (it opens a chat).
+The system SHALL register a default `inflexa [--analysis <x>] [--project <p>]` command (commander root action) that sends the working folder and the flags to the resolve route of the local server, prints the context description that the server returns first (loud context), then acts by kind: `analysis` → open chat; `anchor` with one analysis → open it, with several → a picker including "start a new one", with none → confirm starting one; `pick` → a picker over the candidates; `empty` → confirm starting a new analysis at cwd; `copy` → surface the copy and its original, and offer a new identity for the copy (clone/fork resolution is deferred — see move-backstop). Before the command offers a new analysis, or asks for its name, it MUST make sure that the working folder is writable. When the folder is not writable, the command MUST say so, tell the user to start Inflexa from a writable folder, and exit non-zero. The prompts SHALL run in the terminal of the command, before the renderer takes it. The action lives in `src/tui/app.launch.tsx` as `launchDefault` (it opens a chat).
 
 #### Scenario: Empty directory offers to start one
 
 - **WHEN** `inflexa` runs in a directory with no anchor
 - **THEN** it prints the empty context and asks to start a new analysis here
 - **AND** confirming creates an analysis at cwd and opens chat
+
+#### Scenario: A folder that is not writable
+
+- **WHEN** `inflexa` or `inflexa new` runs in a folder with no anchor that the user cannot write to
+- **THEN** it says that the folder is not writable and tells the user to start Inflexa from a writable folder, before a prompt
 
 #### Scenario: Single analysis opens directly
 
@@ -28,7 +33,7 @@ The system SHALL register a default `inflexa [--analysis <x>] [--project <p>]` c
 #### Scenario: Copied folder is not auto-resolved
 
 - **WHEN** context resolves to a copied folder
-- **THEN** it prints that the folder looks like a copy and directs to `inflexa repair` / `inflexa relocate`, without opening or auto-resolving
+- **THEN** it prints that the folder is a copy of its original and asks to give it a new identity, without opening or auto-resolving
 
 ### Requirement: inflexa new creates and opens an analysis
 

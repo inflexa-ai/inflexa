@@ -34,7 +34,7 @@ export function buildWorkspace(overrides: Partial<Workspace> = {}): Workspace {
         openDialog: () => undefined,
         closeDialog: () => undefined,
         openSession: () => undefined,
-        refreshScope: () => undefined,
+        refreshScope: () => Promise.resolve(),
         quit: () => Promise.resolve(),
         ...overrides,
     };

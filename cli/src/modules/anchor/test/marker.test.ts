@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -106,6 +106,25 @@ describe("findMarkerUpwards", () => {
         const found = result._unsafeUnwrap();
         expect(found?.dir).toBe(dir);
         expect(found?.marker.anchorId).toBe("anchor-1");
+    });
+
+    test("walks past a corrupt marker to the marker of a parent", async () => {
+        const dir = tmp();
+        (await writeMarker(dir, "anchor-1"))._unsafeUnwrap();
+        const child = join(dir, "child");
+        writeRawMarker(child, "{ trunc");
+        const found = (await findMarkerUpwards(child))._unsafeUnwrap();
+        expect(found).toEqual({ dir, marker: { schemaVersion: 1, anchorId: "anchor-1" } });
+    });
+
+    test("reads a marker that it cannot open as no marker, for each folder below it", async () => {
+        const dir = tmp();
+        writeRawMarker(dir, JSON.stringify({ schemaVersion: 1, anchorId: "colleague" }));
+        // A colleague's marker on a shared drive, with mode 0600 for a different user.
+        chmodSync(markerPath(dir), 0o000);
+        const deep = join(dir, "a", "b");
+        mkdirSync(deep, { recursive: true });
+        expect((await findMarkerUpwards(deep))._unsafeUnwrap()).toBeNull();
     });
 
     test("returns ok(null) when no ancestor holds a marker", async () => {

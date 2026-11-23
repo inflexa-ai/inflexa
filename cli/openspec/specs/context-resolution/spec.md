@@ -41,7 +41,7 @@ The system SHALL provide `resolveContext(cwd, flags)` returning `ResultAsync<Res
 
 ### Requirement: Copy guard during resolution
 
-When resolving via a found marker, the system SHALL run `classifyMarkerSighting`; on a `"copy"` result it SHALL return `kind: "copy"` (carrying `cwd` and the marker) rather than resolving normally, so the command never auto-resolves a copied folder.
+When resolving via a found marker, the system SHALL run `classifyMarkerSighting`; on a `copy` result it SHALL return `kind: "copy"` (carrying `cwd`, the folder of the marker as `dir`, the `original` folder, and the marker) rather than resolving normally, so the command never auto-resolves a copied folder.
 
 #### Scenario: Copied folder surfaces a copy context
 
@@ -72,7 +72,7 @@ The system SHALL provide `describeContext(ctx)` returning a one-line summary sui
 
 A client MUST resolve its context through the resolve route of the local server. It MUST send the absolute path of its own working folder as `cwd`, with the optional analysis and project references of its flags. The server MUST run `resolveContext` with that `cwd`, never with the folder of its own process. The anchor reconciliation of the resolve MUST search for a moved folder from that `cwd`. A `cwd` that is not absolute MUST get 400 `validation_error`.
 
-The answer MUST carry the resolved context and its `describeContext` line, so that the client prints the line before any action. A launch of the chat MUST ask for the anchor recovery under `cwd` first, which heals a moved anchor and creates nothing. A read command MUST ask the resolve to record no sighting of the anchor folder. A read is not a sighting, and an agent can run an `auto` command with no prompt. When an analysis reference matches more analyses by name, the answer MUST also carry the other candidates, so the client can report the collision.
+The answer MUST carry the resolved context and its `describeContext` line, so that the client prints the line before any action. A launch of the chat MUST ask for the anchor recovery under `cwd`, which heals a moved anchor and creates nothing. The server MUST answer the resolve first, and then run the recovery of the other anchors, per `anchor-resolve`. A read command MUST ask the resolve to record no sighting of the anchor folder. A read is not a sighting, and an agent can run an `auto` command with no prompt. When an analysis reference matches more analyses by name, the answer MUST also carry the other candidates, so the client can report the collision.
 
 The read of one analysis (`GET {A}`) MUST also take the folder of the client, as the `cwd` query value. The anchor reconciliation of that read MUST search for a moved folder from that `cwd`. A `cwd` that is not absolute MUST get 400 `validation_error`.
 

@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 import { fail } from "../../lib/cli.ts";
-import { isDirWritable } from "../anchor/marker.ts";
+import { isDirWritable } from "../../lib/fs.ts";
 import { downloadGeoSeries, parseByteSize, parseGseAccession, type GeoDownloadError, type GeoProgress } from "./geo.ts";
 
 /**

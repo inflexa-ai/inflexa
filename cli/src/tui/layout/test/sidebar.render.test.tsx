@@ -97,7 +97,11 @@ afterEach(() => {
 
 // A minimal static Workspace: the test never swaps sessions, so a plain object (not the reactive
 // store) is sufficient — the sidebar reads it like any props object.
-function wsFor(analysis: Analysis | null, workingDir: string, scope: { anchor?: AnchorView; inputCount?: number; refreshScope?: () => void } = {}): Workspace {
+function wsFor(
+    analysis: Analysis | null,
+    workingDir: string,
+    scope: { anchor?: AnchorView; inputCount?: number; refreshScope?: () => Promise<void> } = {},
+): Workspace {
     return {
         analysis,
         sessionId: "no-such-session", // no thread snapshot is seeded, so the SESSION detail row stays a placeholder
@@ -108,7 +112,7 @@ function wsFor(analysis: Analysis | null, workingDir: string, scope: { anchor?: 
         openDialog: () => {},
         closeDialog: () => {},
         openSession: () => {},
-        refreshScope: scope.refreshScope ?? (() => {}),
+        refreshScope: scope.refreshScope ?? (() => Promise.resolve()),
         quit: async () => {},
     };
 }
@@ -138,6 +142,7 @@ describe("Sidebar input count follows the workspace store", () => {
                 inputCount: 1,
                 refreshScope: () => {
                     refreshes += 1;
+                    return Promise.resolve();
                 },
             }),
         );
@@ -346,7 +351,7 @@ describe("Sidebar SESSION section", () => {
             openDialog: () => {},
             closeDialog: () => {},
             openSession: () => {},
-            refreshScope: () => {},
+            refreshScope: () => Promise.resolve(),
             quit: async () => {},
         };
         return () => (

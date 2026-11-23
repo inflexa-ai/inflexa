@@ -31,7 +31,7 @@ export async function resolveGeoDownloadFolder(flags: ContextFlags): Promise<str
             return fail(`No analysis matches "${present(flags.analysis, "the analysis flag")}".${known}`);
         }
         case "copy":
-            return fail("This folder looks copied — run `inflexa repair` or `inflexa relocate` before downloading into it.");
+            return fail(`${ctx.dir} is a copy of ${ctx.original}. Run \`inflexa\` there to give the copy a new identity before you download into it.`);
         case "empty":
             return fail("No analysis here — run `inflexa new` to create one, or pass --analysis <id|name>.");
     }

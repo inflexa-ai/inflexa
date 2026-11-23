@@ -2,9 +2,11 @@ import type { AnalysisSummary, AnalysisView, InputView } from "../../api/analyse
 import { MAX_PER_PAGE } from "../../api/common.ts";
 import { confirm, fail, promptText, select } from "../../lib/cli.ts";
 import { openExternal } from "../../lib/open_external.ts";
+import { isDirWritable } from "../../lib/fs.ts";
 import { expandAndResolve } from "../../lib/paths.ts";
 import { str256, type IdOrName, type Str256 } from "../../lib/types.ts";
 import type { Analysis } from "../../types/analysis.ts";
+import { giveCopyNewIdentity } from "../anchors.ts";
 import { DEFAULT_CLIENT_OPTS, describeClientError, type ClientError, type ClientOpts } from "../api.ts";
 import {
     addInputs,
@@ -49,6 +51,15 @@ async function openTarget(analysisId: string, opts: ClientOpts): Promise<ChatTar
     return { workingDir: workingDirOf(detail), analysis: toAnalysis(detail) };
 }
 
+/**
+ * Exit before a prompt for a new analysis when `folder` is not writable: the analysis workspace lives in the
+ * folder, and the server refuses the create there. The server shares the machine and the user of this
+ * process, thus the check here gives the answer that the server gives later.
+ */
+async function requireWritableFolder(folder: string): Promise<void> {
+    if (!(await isDirWritable(folder))) fail(`${folder} is not writable, so an analysis cannot start there. Start Inflexa from a writable folder.`);
+}
+
 // Prompt for a valid analysis name, validating live and asking again until one is given.
 async function promptName(): Promise<Str256> {
     const raw = await promptText("Analysis name", {
@@ -88,6 +99,8 @@ export async function resolveNewTarget(
     flags: { name?: string; paths: string[]; project?: string },
     opts: ClientOpts = DEFAULT_CLIENT_OPTS,
 ): Promise<ChatTarget> {
+    const cwd = process.cwd();
+    await requireWritableFolder(cwd);
     // Name is required (1–256 code points): validate a provided one, otherwise prompt for it.
     const name =
         flags.name === undefined
@@ -96,7 +109,6 @@ export async function resolveNewTarget(
                   (s) => s,
                   (e) => fail(e === "empty" ? "A name is required." : "Keep the name to 256 characters or fewer."),
               );
-    const cwd = process.cwd();
     const created = (await createAnalysis({ name, folder: cwd, inputs: flags.paths.map((p) => expandAndResolve(cwd, p)), project: flags.project }, opts)).match(
         (v) => v,
         failClient,
@@ -138,6 +150,7 @@ export async function resolveDefaultTarget(flags: ContextFlags, opts: ClientOpts
             const [only] = ctx.analyses;
             if (ctx.analyses.length === 1 && only) return openTarget(only.id, opts);
             if (ctx.analyses.length === 0) {
+                await requireWritableFolder(cwd);
                 if (await confirm(`No analyses here yet. Start one in ${ctx.anchorPath}?`)) return startNewTarget(cwd, opts);
                 console.log("Cancelled.");
                 return null;
@@ -153,16 +166,25 @@ export async function resolveDefaultTarget(flags: ContextFlags, opts: ClientOpts
             return openTarget(choice, opts);
         }
         case "empty":
+            await requireWritableFolder(cwd);
             if (await confirm(`Start a new analysis in ${ctx.cwd}?`)) return startNewTarget(cwd, opts);
             console.log("Cancelled.");
             return null;
-        case "copy":
-            // Never auto-resolve a copy (spec). The clone/fork flow is the anchor module's job and is not
-            // wired yet — direct the user to the backstop instead of guessing.
-            // TODO(extend): offer re-mint+clone vs fork once the copy-resolution lands.
-            console.log("  This folder looks like a copy of a tracked folder.");
-            console.log("  Re-mint or relocate its identity before use: `inflexa repair` / `inflexa relocate`.");
-            return null;
+        case "copy": {
+            // Never auto-resolve a copy (spec). The original still holds the same marker, thus a repair would move
+            // the identity to the copy and make the original the copy. The copy gets its own identity, and the
+            // analyses stay with the original.
+            // TODO(extend): offer to clone the analyses of the original into the copy, or to fork them.
+            console.log(`  This folder is a copy of ${ctx.original}. Its analyses stay with the original.`);
+            if (!(await confirm(`Give ${ctx.dir} a new identity?`))) {
+                console.log("Cancelled.");
+                return null;
+            }
+            const outcome = (await giveCopyNewIdentity({ path: ctx.dir }, opts)).match((v) => v, failClient);
+            console.log(`  ${outcome.path} has the new identity ${outcome.anchorId}.`);
+            // The copy is now an anchor of its own with no analysis, thus the resolve again offers to start one.
+            return resolveDefaultTarget(flags, opts);
+        }
         default: {
             const exhaustive: never = ctx;
             throw new Error(`unhandled context kind: ${JSON.stringify(exhaustive)}`);
@@ -203,7 +225,7 @@ export async function resolveSingleAnalysisOrFail(
         case "empty":
             return fail(emptyHint);
         case "copy":
-            return fail("This folder is a copied anchor — run `inflexa repair` or `inflexa relocate` first.");
+            return fail(`${ctx.dir} is a copy of ${ctx.original}. Run \`inflexa\` there to give the copy a new identity first.`);
         default: {
             const exhaustive: never = ctx;
             throw new Error(`unhandled context kind: ${JSON.stringify(exhaustive)}`);
@@ -285,7 +307,7 @@ export async function analysisStatus(flags: ContextFlags, opts: ClientOpts = DEF
             console.log(`  no anchor here; \`inflexa\` would start a new analysis in ${ctx.cwd}`);
             return;
         case "copy":
-            console.log(`  copied folder — re-mint or relocate before use (\`inflexa repair\`/\`inflexa relocate\`)`);
+            console.log(`  copied folder: ${ctx.dir} is a copy of ${ctx.original} — run \`inflexa\` there to give it a new identity`);
             return;
         default: {
             const exhaustive: never = ctx;

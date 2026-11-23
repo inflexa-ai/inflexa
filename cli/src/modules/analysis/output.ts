@@ -3,8 +3,7 @@ import { err, errAsync, ok, okAsync, ResultAsync, type Result } from "neverthrow
 import type { Analysis } from "../../types/analysis.ts";
 import type { DbError } from "../../db/errors.ts";
 import { findAnalysesByRef } from "../../db/primary_query.ts";
-import { mkdirResultAsync, pathExistsAsync, renameResultAsync, rmResultAsync, type FsError } from "../../lib/fs.ts";
-import { isDirWritable } from "../anchor/marker.ts";
+import { isDirWritable, mkdirResultAsync, pathExistsAsync, renameResultAsync, rmResultAsync, type FsError } from "../../lib/fs.ts";
 import { resolveAnchor } from "../anchor/anchor.ts";
 
 /**

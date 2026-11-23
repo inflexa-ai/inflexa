@@ -11,7 +11,7 @@ import { deleteAnalysesForAnchor, deleteAnchor, relocateRawInputPrefix, updateAn
 import { pathExistsAsync } from "../../lib/fs.ts";
 import { canonicalPathAsync } from "../../lib/paths.ts";
 import { readMarker, type MarkerError } from "./marker.ts";
-import { resolveAnchor } from "./anchor.ts";
+import { classifyMarkerSighting, resolveAnchor } from "./anchor.ts";
 
 // The explicit move backstop. `resolveAnchor` already self-heals a moved folder
 // automatically on the next lookup (cached-path → cwd/ancestor → bounded search); these
@@ -27,6 +27,7 @@ export type RepairError =
     | { type: "marker_unreadable"; dir: string; cause: MarkerError }
     | { type: "no_marker"; dir: string }
     | { type: "no_anchor_row"; anchorId: string }
+    | { type: "folder_is_copy"; dir: string; original: string }
     | { type: "db_failed"; cause: DbError };
 
 /** What a repair did: the anchor of the marker now points at `after`, which it maybe did before. */
@@ -35,6 +36,10 @@ export type RepairOutcome = { outcome: "repaired" | "unchanged"; anchorId: strin
 /**
  * Sync the anchor whose marker sits at `path` back to that path. The marker travelled with the folder, so
  * its on-disk identity is the truth; the stored `cachedPath` is the stale hint this corrects.
+ *
+ * A folder whose anchor still has its marker at the cached path is a copy, not a move: a repair there would
+ * give the identity of the original to the copy, and the original would then read as the copy. The repair
+ * refuses it, and the caller offers the copy a new identity instead.
  */
 export function repairAnchorAt(path: string): ResultAsync<RepairOutcome, RepairError> {
     return new ResultAsync(repairAnchor(path));
@@ -46,6 +51,9 @@ async function repairAnchor(path: string): Promise<Result<RepairOutcome, RepairE
     if (marker.isErr()) return err({ type: "marker_unreadable", dir, cause: marker.error });
     if (marker.value === null) return err({ type: "no_marker", dir });
     const anchorId = marker.value.anchorId;
+    const sighting = await classifyMarkerSighting(dir, marker.value);
+    if (sighting.isErr()) return err({ type: "db_failed", cause: sighting.error });
+    if (sighting.value.kind === "copy") return err({ type: "folder_is_copy", dir, original: sighting.value.original });
 
     return getAnchor(anchorId)
         .mapErr((cause): RepairError => ({ type: "db_failed", cause }))
