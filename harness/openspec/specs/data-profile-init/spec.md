@@ -5,9 +5,8 @@
 Define the data-profile workflow — the per-analysis pass that characterizes the
 input files so downstream planning has a real data context to reason over. The
 workflow runs the `data-profiler` sandbox agent inside a DBOS-durable body, then
-registers the input files as artifacts, indexes per-file descriptions into the
-analysis vector store, and stores a result snapshot in the
-`data_profile_status` ledger.
+indexes the profile into the analysis vector store, and stores a result snapshot
+in the `data_profile_status` ledger.
 
 **Input materialization is the embedder's responsibility, not core's.** The
 harness is a host-agnostic library whose every embedder wires its seams at a
@@ -16,12 +15,11 @@ downloads from object storage; the CLI copies or links local files. Staging is
 therefore a precondition the caller establishes *before* invoking core, not a
 capability core invokes: the harness holds no stager and declares no staging
 seam, and no core code calls stage. The workflow body assumes the
-`data/inputs/` tree is already populated and profiles exactly the files in the
-`StagedInput[]` manifest handed to it in `DataProfileWorkflowInput.stagedInputs`
-— it never downloads. The manifest is JSON-serializable, rides in the DBOS
-workflow input, and survives recovery; it carries the opaque source `fileId`
-losslessly (a tree re-scan recovers paths and hashes but not the id that feeds
-artifact registration and the re-profile staleness snapshot). Because inputs are
+`data/inputs/` tree is already populated and scans that tree — it never downloads.
+The embedder hands a `StagedInputSummary` in `DataProfileWorkflowInput.inputSummary`:
+the file count, the total bytes, and the input signature that the embedder computes
+with `computeInputSignature`. The summary has a fixed width, thus the DBOS workflow
+input does not grow with the file count. Because inputs are
 immutable and staged exactly once before the run starts, staging need not be a
 durable step — a run recovered on another pod finds the tree already present. A
 staging failure is a caller-side condition: the caller marks the profile failed
@@ -31,37 +29,38 @@ revoked.
 The agent delivers its result exclusively through a terminal `submit_profile`
 tool, run via `runWithSalvage` (see the harness-agent-loop spec); the tool input
 is validated against `ProfileSubmissionSchema`, so there is no message-text JSON
-parsing. Sandbox resources are estimated per-run from the staged manifest rather
-than fixed, and the dataset's `domain`/`subtype` are free-form strings, not a
-fixed enum.
+parsing. The profiler sandbox has a small fixed size, and the dataset's
+`domain`/`subtype` are free-form strings, not a fixed enum.
 
 ## Requirements
 
 ### Requirement: Core profiles an already-staged input tree
 
 The workflow body SHALL assume the `data/inputs/` tree is already populated and
-SHALL profile exactly the files in the `StagedInput[]` manifest carried in
-`DataProfileWorkflowInput.stagedInputs`. The harness SHALL hold no stager and
-declare no staging seam, and the body SHALL NOT download input files. When the
-manifest is empty the body SHALL complete the profile as a no-op without starting
-a sandbox.
+SHALL profile the files of that tree. The workflow input SHALL carry the
+`StagedInputSummary` in `DataProfileWorkflowInput.inputSummary`, and not one entry
+for each file. The harness SHALL hold no stager and declare no staging seam, and the
+body SHALL NOT download input files. When the summary counts zero files the body
+SHALL complete the profile as a no-op without starting a sandbox.
 
-#### Scenario: Body profiles the staged manifest without downloading
+#### Scenario: Body profiles the staged tree without downloading
 
-- **WHEN** the body runs with a non-empty `stagedInputs` manifest
-- **THEN** it registers and profiles exactly those files and performs no download
+- **WHEN** the body runs with an `inputSummary` whose `count` is not zero
+- **THEN** it scans and profiles the staged tree and performs no download
 
-#### Scenario: Empty manifest completes as a no-op
+#### Scenario: An empty input set completes as a no-op
 
-- **WHEN** the body runs with an empty `stagedInputs` manifest
+- **WHEN** the body runs with an `inputSummary` whose `count` is zero
 - **THEN** it marks the profile completed, revokes the run authorization, and starts no sandbox
 
 ### Requirement: The staged-input manifest carries the size and mtime of each file
 
-Every `StagedInput` the embedder hands the data-profile trigger SHALL carry `mtimeMs: number` — the
-source file's last-modification time in epoch milliseconds — alongside the existing `size`. Together
-`(fileId, size, mtimeMs)` feed the kept-files `inputSignature` that a completed profile persists:
-the audit record of which bytes the profile covered. Nothing compares it against a later manifest
+Every `StagedInput` of the embedder's manifest SHALL carry `mtimeMs: number` — the
+source file's last-modification time in epoch milliseconds — alongside `size`. It carries no
+content hash: staging reads no file content. Together `(fileId, size, mtimeMs)` feed the
+kept-files `inputSignature` that the embedder computes with `computeInputSignature` and hands to
+the trigger in the `StagedInputSummary`. A completed profile persists it verbatim: the audit
+record of which bytes the profile covered. Nothing compares it against a later manifest
 (see the data-profile-rerun spec).
 
 `mtimeMs` SHALL be a value the embedder already holds when it produces the manifest: the CLI reads it
@@ -76,30 +75,25 @@ never interprets, compares, or validates it, and it never reads the source files
 
 #### Scenario: The harness does not interpret the signature
 
-- **WHEN** the data-profile workflow consumes a `StagedInput`
-- **THEN** it SHALL fold `mtimeMs` verbatim into the input signature the completed result persists
-- **AND** it SHALL NOT stat the source file, compare mtimes, or reject a manifest on the basis of them
+- **WHEN** the data-profile workflow consumes an `inputSummary`
+- **THEN** it SHALL persist its `signature` verbatim as the input signature of the completed result
+- **AND** it SHALL NOT stat the source file, compare mtimes, or reject a summary on the basis of them
 
-### Requirement: Sandbox resources are estimated from the staged manifest
+### Requirement: The profiler sandbox has a fixed size
 
-The body MUST acquire the lease of the profile before its first exec. The size of the request MUST come from
-`estimateDataProfileResources(stagedInputs)`, not from a fixed spec. The estimate derives from the file count, the total
-size, and the in-memory expansion of each format. An empty manifest
-MUST estimate `{ cpu: 1, memoryGb: 2 }`. The lease key is the id of the profile workflow, thus the profiler agent uses the same lease. The body MUST release the lease at the end of the profile, also after a failure.
+The body MUST acquire the lease of the profile before its first exec. The size of the request MUST be
+`DATA_PROFILE_RESOURCES`, `{ cpu: 2, memoryGb: 4 }`, and it MUST NOT depend on the input bytes. The profiler
+reads headers and container footers, and it inspects one example file for each group. It never reads a whole
+file, thus a size from the input bytes asked for memory that the profile does not use. The lease key is the id of the profile workflow, thus the profiler agent uses the same lease. The body MUST release the lease at the end of the profile, also after a failure.
 
-#### Scenario: Larger inputs raise the estimate
+#### Scenario: A large input does not raise the size
 
-- **WHEN** the manifest holds a multi-gigabyte file
-- **THEN** the estimated `memoryGb` exceeds the 2 GiB floor
-
-#### Scenario: Empty manifest uses the floor
-
-- **WHEN** `estimateDataProfileResources` is called with an empty file list
-- **THEN** it returns `{ cpu: 1, memoryGb: 2 }`
+- **WHEN** the staged tree holds a 100 GB BAM file
+- **THEN** the body acquires `{ cpu: 2, memoryGb: 4 }`
 
 #### Scenario: The profiler agent uses the lease of the body
 
-- **GIVEN** a profile body that acquired its lease with the estimate
+- **GIVEN** a profile body that acquired its lease with the fixed size
 - **WHEN** the profiler agent calls `execute_command`
 - **THEN** the command runs on the machine of that lease, and the agent did not call `acquire_sandbox`
 
@@ -126,10 +120,9 @@ scientific domain appropriate to the data it profiled (e.g. `"transcriptomics"`,
 - **WHEN** a profile sets `domain` to an arbitrary scientific-domain string
 - **THEN** `ProfilerOutputSchema` validation passes
 
-### Requirement: Profile outputs are registered, indexed, and snapshotted
+### Requirement: Profile outputs are indexed and snapshotted
 
-On success the body SHALL register each staged file as a `role: "input"` artifact at
-`data/{relativePath}`, index the profile into the analysis vector store, and store a
+On success the body SHALL index the profile into the analysis vector store, and store a
 result snapshot in the `data_profile_status` ledger via `completeDataProfile`. The
 profiler's scratch scripts SHALL be confined to `runs/data-profile/profile`.
 

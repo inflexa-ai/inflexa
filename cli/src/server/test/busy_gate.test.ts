@@ -19,7 +19,7 @@ function poolWithRunningProfile(analysisId: string): Querier {
                 data_profile_completed_at: null,
                 data_profile_result: null,
                 data_profile_workflow_id: workflowId,
-                seed_input_file_ids: ["f1"],
+                seed_input_count: 1,
             };
             return [row];
         }

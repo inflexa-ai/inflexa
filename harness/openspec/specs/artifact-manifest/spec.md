@@ -154,7 +154,18 @@ fast path that skips hashing. The reconcile step SHALL also content-attest the
 collector's tracked inputs via `fillInputHashesFromDisk`: for each tracked input
 that is not an `artifacts`-source read and lacks a valid content hash, it maps
 the container path onto the host workspace tree, bounds it to
-`{workspaceRoot}`, and hashes the file from disk.
+`{workspaceRoot}`, and hashes the file from disk. Each ref that gets a hash also
+gets `size`, from the same `stat`. Thus a host reads the hash and the size of a
+data input from the ref, not from `cortex_artifacts`.
+
+The checks and the stats SHALL run one ref at a time, in ref order, thus the
+drops keep that order. The hashes SHALL run after them in a queue of fixed width.
+A bounded in-memory map of the process SHALL keep each hash, keyed on the host
+path, `dev`, `ino`, `size`, `mtimeMs`, and `ctimeMs` of the stat. A hit SHALL
+give the kept hash and read no byte: a step reads the same inputs as the steps
+before it. An edit in place changes the mtime or the ctime, and a replacement
+changes the inode, thus a hit is always the same bytes. The first failure in
+ref order SHALL be the one that fails the step.
 
 An input that is not a content-attestable file **of this analysis** SHALL be
 dropped via `collector.dropInput` and SHALL NOT fail the step:
@@ -230,6 +241,18 @@ and no drop SHALL ever register a hashless lineage edge.
 - **GIVEN** a tracked input that resolves to a directory (e.g. `ls` of a mount)
 - **WHEN** `fillInputHashesFromDisk` runs
 - **THEN** `collector.dropInput` is called for that ref and the step does NOT fail
+
+#### Scenario: An attested input carries its size
+
+- **GIVEN** a tracked input read of a staged data file
+- **WHEN** `fillInputHashesFromDisk` runs
+- **THEN** the ref carries the hash of the file and the `size` of its `stat`
+
+#### Scenario: An input edited in place gets a new hash
+
+- **GIVEN** an input that an earlier reconcile of the process hashed
+- **WHEN** the file is rewritten with the same size and the same mtime, and `fillInputHashesFromDisk` runs again
+- **THEN** the ref carries the hash of the new bytes, because the ctime of the key changed
 
 #### Scenario: A read resolving outside the analysis tree is dropped, not failed
 
@@ -475,7 +498,6 @@ artifact table directly.
 `ResultAsync<…, DbError>`:
 
 - `upsertArtifact(pool, entry)` and `upsertArtifacts(pool, entries)`: the upserts of the artifact upsert semantics requirement.
-- `queryInputArtifacts(pool, analysisId, paths)`: the `input` rows at the paths.
 - `queryUnsyncedStepArtifacts(pool, resourceId, runId, stepId)`: the rows of the optional external sync tracking requirement.
 - `queryStepArtifactPaths(pool, resourceId, runId, stepId, limit)`: the step outputs of a step, most consequential first.
 - `queryAnalysisArtifacts(pool, analysisId)`: each artifact of an analysis, ordered by path.
@@ -495,7 +517,7 @@ step body changes an `err` into a throw with `unwrapOrThrow`. Each other caller 
 
 #### Scenario: No matching row is an empty ok
 
-- **WHEN** the harness calls `queryInputArtifacts` with paths that no `input` row holds
+- **WHEN** the harness calls `queryArtifactOrigins` with paths that no row holds
 - **THEN** it gives `ok([])`
 
 ### Requirement: One read gives a page of the artifact ledger of an analysis

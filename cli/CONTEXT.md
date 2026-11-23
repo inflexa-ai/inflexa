@@ -63,8 +63,8 @@ and its logic-local types. The routes of the local server call its logic.
   comes from `@inflexa-ai/prov-kernel`; the recorder owns only the lifecycle
   around it.
 - **`staging/`** — it puts the analysis input files under the `data/` root of the
-  analysis workspace. It gives each file a content hash, and it writes the
-  `StagedInput` manifest that the harness accepts.
+  analysis workspace. It reads no file content, and it writes the
+  `StagedInput` manifest, whose summary the data-profile trigger accepts.
 
 ## Shared infrastructure
 

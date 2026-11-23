@@ -54,14 +54,16 @@ The runtime boot MUST belong to the local server, which boots at its own start. 
 - **WHEN** a client adds an input to an analysis
 - **THEN** the server runs the input-change drive at the first fire of its timer after the runtime is ready
 
-### Requirement: Staging precedes the trigger and the manifest rides verbatim
+### Requirement: Staging precedes the trigger and the summary of the manifest rides to it
 
 Every path that dispatches a data-profile workflow SHALL stage the analysis's inputs into the session
-data dir first, seed the ledger with the resulting manifest, and hand that manifest to the trigger
-unchanged. The trigger SHALL be invoked with a local auth context and the analysis's cli id as the
-harness `analysisId` (the ids must be identical — harness records key on it). Staging content-hashes
-each file and mirrors the tree — deleting staged files no current input produces — so it SHALL run only
-once a (re-)trigger has been decided, never as part of a parity comparison.
+data dir first, seed the ledger with the count of the resulting manifest, and hand the trigger the
+`StagedInputSummary` of that manifest: the count, the total bytes, and `computeInputSignature`. The
+trigger SHALL be invoked with a local auth context and the analysis's cli id as the
+harness `analysisId` (the ids must be identical — harness records key on it). Staging mirrors the
+tree — deleting staged files no current input produces — so it SHALL run only
+once a (re-)trigger has been decided, never as part of a parity comparison. Each warning of the
+staging pass and of the enumeration SHALL ride on the outcome of the drive in `warnings`.
 
 Because tree mirroring deletes any on-disk file absent from the manifest the *calling* staging run
 built, and because the harness's ledger CAS serializes only the workflow dispatch that happens *after*
@@ -70,13 +72,13 @@ model the per-analysis instance lock excludes other processes (it is re-entrant 
 serve this purpose in-process); the in-process callers SHALL serialize among themselves.
 
 The same serialization SHALL cover the ledger clear that an emptied input set performs, because
-clearing nulls `seed_input_file_ids` and would otherwise be able to land between a concurrent drive's
+clearing nulls `seed_input_count` and would otherwise be able to land between a concurrent drive's
 seed write and its trigger, causing that drive to be refused for an absent seed.
 
-#### Scenario: Trigger receives exactly what staging produced
+#### Scenario: Trigger receives the summary of what staging produced
 
 - **WHEN** staging returns a manifest of N entries
-- **THEN** the workflow input carries those N entries unmodified, in order, and the harness reads each staged file at its manifest path
+- **THEN** the seed is N, and the workflow input carries `inputSummary` with `count` N, the sum of the sizes, and the input signature of the manifest, and no entry for each file
 
 #### Scenario: Analysis with no resolvable inputs does not trigger
 
@@ -202,7 +204,9 @@ difference it might have observed.
 
 Both SHALL share the rest of the ladder: the orphaned-`running` reconcile, the emptied-set clear (an
 emptied input set is an input mutation too), and the live-run defer, which suppresses materialization
-because staging reconcile-deletes a tree that run's sandbox is reading.
+because staging reconcile-deletes a tree that run's sandbox is reading. An input set that is empty only
+because a source is not reachable now is not emptied: the drive SHALL NOT clear the profile, and it
+SHALL yield `no_inputs` with the source in `warnings` (see the input-staging spec).
 
 The comparison is removed rather than narrowed because it was an inference standing in for a fact. A
 `(fileId, size, mtimeMs)` difference is produced by `git checkout`, `cp -r`, `rsync` without `-a`,
@@ -242,6 +246,12 @@ raises no input event.
 - **GIVEN** an analysis whose inputs have all been removed
 - **WHEN** either entry point runs against a settled profile row
 - **THEN** the profile SHALL be cleared and the outcome SHALL be `cleared`
+
+#### Scenario: An unreachable source does not clear the profile
+
+- **GIVEN** a settled profile row, and an input set whose only source is not reachable and has nothing staged
+- **WHEN** either entry point runs
+- **THEN** the profile SHALL stay, and the outcome SHALL be `no_inputs` with the source in `warnings`
 
 #### Scenario: A live run defers both drives
 

@@ -21,12 +21,12 @@ result.
 
 ### Requirement: A running profile always names a non-empty seeded input set
 
-Every ledger transition into `'running'` SHALL claim a row only when `seed_input_file_ids` is a
-non-empty JSON array. This applies to `tryStartDataProfile`, `tryRerunDataProfile`, and
+Every ledger transition into `'running'` SHALL claim a row only when `seed_input_count` is
+greater than zero. This applies to `tryStartDataProfile`, `tryRerunDataProfile`, and
 `tryRetryDataProfile` alike.
 The predicate SHALL live in the CAS `UPDATE ... WHERE` clause, so that "a `running` row records the
 input set it is profiling" is an invariant of the ledger rather than a property of any one caller's
-read-then-write sequence. A NULL seed and an empty (`[]`) seed SHALL be treated identically as
+read-then-write sequence. A NULL seed and a seed of `0` SHALL be treated identically as
 "unseeded".
 
 A caller MAY additionally pre-read the seed column to produce a precise operator message, but such a
@@ -36,13 +36,13 @@ no recorded input set.
 
 #### Scenario: A NULL seed refuses the start claim
 
-- **WHEN** `tryStartDataProfile(querier, analysisId)` is called for a row whose `data_profile_status` is `'pending'` and whose `seed_input_file_ids` is NULL
+- **WHEN** `tryStartDataProfile(querier, analysisId)` is called for a row whose `data_profile_status` is `'pending'` and whose `seed_input_count` is NULL
 - **THEN** it SHALL resolve to `ok(false)`
 - **AND** `data_profile_status` SHALL remain `'pending'`
 
-#### Scenario: An empty seed array refuses the start claim
+#### Scenario: A seed of zero files refuses the start claim
 
-- **WHEN** `tryStartDataProfile(querier, analysisId)` is called for a row whose `seed_input_file_ids` is `[]`
+- **WHEN** `tryStartDataProfile(querier, analysisId)` is called for a row whose `seed_input_count` is `0`
 - **THEN** it SHALL resolve to `ok(false)`
 - **AND** the row SHALL be untouched
 
@@ -50,43 +50,43 @@ no recorded input set.
 
 - **WHEN** `clearDataProfile` nulls a row's status and seed after a caller's seed pre-read observed a non-empty seed, and that caller then invokes `tryStartDataProfile`
 - **THEN** the claim SHALL resolve to `ok(false)`
-- **AND** no row SHALL exist with `data_profile_status = 'running'` and a NULL or empty `seed_input_file_ids`
+- **AND** no row SHALL exist with `data_profile_status = 'running'` and a NULL or zero `seed_input_count`
 
 #### Scenario: The rerun and retry claims carry the same conjunct
 
-- **WHEN** `tryRerunDataProfile` is called for a `'completed'` row, or `tryRetryDataProfile` for a `'failed'` row, and in either case `seed_input_file_ids` is NULL or `[]`
+- **WHEN** `tryRerunDataProfile` is called for a `'completed'` row, or `tryRetryDataProfile` for a `'failed'` row, and in either case `seed_input_count` is NULL or `0`
 - **THEN** the claim SHALL resolve to `ok(false)` and the row SHALL be untouched
 
 ### Requirement: The trigger rejects an unseeded analysis before dispatch
 
-`triggerDataProfile` MUST return `"failed"` without a claim when `stagedInputs` names at least
-one file and the seed is NULL or empty. The trigger MUST log the rejection with the analysis id.
-When `stagedInputs` is empty and the seed names at least one file, the trigger MUST also return
+`triggerDataProfile` MUST return `"failed"` without a claim when `inputSummary.count` is greater
+than zero and the seed is NULL or empty. The trigger MUST log the rejection with the analysis id.
+When `inputSummary.count` is zero and the seed names at least one file, the trigger MUST also return
 `"failed"` without a claim. The caller and the ledger diverge in that case. This pre-read is the
 source of the operator-facing reason. The CAS conjuncts of the claims and of the empty-set
 completion are the enforcement.
 
 #### Scenario: An unseeded analysis is refused before any claim
 
-- **WHEN** `triggerDataProfile` runs with a `stagedInputs` that names a file, for an analysis whose `seed_input_file_ids` is NULL
+- **WHEN** `triggerDataProfile` runs with an `inputSummary` whose `count` is not zero, for an analysis whose `seed_input_count` is NULL
 - **THEN** it MUST return `"failed"`
 - **AND** the ledger row MUST be untouched (no transition to `'running'` is attempted)
 
 #### Scenario: An analysis seeded with an empty set is refused
 
-- **WHEN** `triggerDataProfile` runs with a `stagedInputs` that names a file, for an analysis whose `seed_input_file_ids` is `[]`
+- **WHEN** `triggerDataProfile` runs with an `inputSummary` whose `count` is not zero, for an analysis whose `seed_input_count` is `0`
 - **THEN** it MUST return `"failed"` and the ledger row MUST be untouched
 
-#### Scenario: An empty manifest against a seed that names files is refused
+#### Scenario: An empty input set against a seed that names files is refused
 
-- **WHEN** `triggerDataProfile` runs with an empty `stagedInputs` for an analysis whose `seed_input_file_ids` names at least one file
+- **WHEN** `triggerDataProfile` runs with an `inputSummary` whose `count` is zero for an analysis whose `seed_input_count` is greater than zero
 - **THEN** it MUST return `"failed"` and the ledger row MUST be untouched
 
 ### Requirement: Atomic completed → running re-profile transition
 
 `tryRerunDataProfile(querier, analysisId)` SHALL atomically transition `data_profile_status` from
 `'completed'` to `'running'` with a single `UPDATE ... WHERE data_profile_status = 'completed' AND
-seed_input_file_ids IS NOT NULL AND jsonb_array_length(seed_input_file_ids) > 0`. It SHALL set
+seed_input_count > 0`. It SHALL set
 `data_profile_started_at` to the current timestamp and clear `data_profile_error` and
 `data_profile_completed_at`. It SHALL NOT clear `data_profile_result` — the prior profile is preserved
 so the API can serve it during the re-profile. It SHALL resolve to `ok(true)` when the CAS won and
@@ -95,7 +95,7 @@ error, both stay in the ok channel.
 
 #### Scenario: Completed profile transitions to running
 
-- **WHEN** `tryRerunDataProfile(querier, analysisId)` is called for an analysis with `data_profile_status = 'completed'` and a non-empty `seed_input_file_ids`
+- **WHEN** `tryRerunDataProfile(querier, analysisId)` is called for an analysis with `data_profile_status = 'completed'` and a `seed_input_count` greater than zero
 - **THEN** it SHALL resolve to `ok(true)`
 - **AND** `data_profile_status` SHALL be `'running'`
 - **AND** `data_profile_started_at` SHALL be updated
@@ -118,7 +118,7 @@ error, both stay in the ok channel.
 
 `clearDataProfile(querier, analysisId)` SHALL null the profile ledger columns
 (`data_profile_status`, `data_profile_error`, `data_profile_started_at`,
-`data_profile_completed_at`, `data_profile_result`, `seed_input_file_ids`) with a
+`data_profile_completed_at`, `data_profile_result`, `seed_input_count`) with a
 single UPDATE guarded by `data_profile_status IS DISTINCT FROM 'running'` — a live
 workflow's completion write would resurrect half-cleared state, so a running profile
 is never cleared and the caller re-evaluates parity after that run completes. It
@@ -134,7 +134,7 @@ startable states (`'pending'` or NULL) into `running` — because the seed upser
 deliberately never rewrites profile status, so without this claim an analysis whose inputs return
 after a clear could never be profiled again by any path. That claim SHALL nonetheless remain subject
 to the seed conjunct: because `clearDataProfile` nulls the seed alongside the status, a cleared row
-becomes claimable only once a later seed upsert has repopulated `seed_input_file_ids`.
+becomes claimable only once a later seed upsert has repopulated `seed_input_count`.
 
 #### Scenario: Clearing a completed profile
 
@@ -161,7 +161,7 @@ becomes claimable only once a later seed upsert has repopulated `seed_input_file
 
 #### Scenario: A cleared-then-reseeded row is claimable
 
-- **WHEN** a seed upsert repopulates `seed_input_file_ids` on a NULL-status row and `tryStartDataProfile` is then called
+- **WHEN** a seed upsert repopulates `seed_input_count` on a NULL-status row and `tryStartDataProfile` is then called
 - **THEN** it SHALL resolve to `ok(true)` and `data_profile_status` SHALL be `'running'`
 
 ### Requirement: A profile that covered little of its input set is not reported as fresh
@@ -273,8 +273,8 @@ A re-profile SHALL be invoked by the party that changed the analysis's input set
 moment it changes. No harness read path SHALL decide, from a stored profile and a stored
 seed, that a profile needs re-running.
 
-The harness holds no current input set. The managed service holds `seed_input_file_ids` —
-ids it wrote itself at the last seed — so comparing them against a profile derived from
+The harness holds no current input set. The managed service holds `seed_input_count` —
+a count it wrote itself at the last seed — so comparing it against a profile derived from
 that same seed can only detect a disagreement between two of its own writes, never a
 divergence from the authority that owns the files. The CLI holds the live tree but reaches
 it only when a chat opens, which is not when the tree changed. Both, however, are present
@@ -287,7 +287,7 @@ files it cannot see.
 
 #### Scenario: A completed row whose seed names unprofiled files is not re-triggered
 
-- **GIVEN** a `completed` profile row whose `seed_input_file_ids` names files the stored result never covered
+- **GIVEN** a `completed` profile row whose `seed_input_count` counts files the stored result never covered
 - **WHEN** any harness read path reads that row
 - **THEN** it SHALL report the profile as current
 - **AND** no re-profile SHALL be triggered by the read
@@ -303,7 +303,9 @@ The `data_profile_result` JSONB stored by `completeDataProfile` SHALL carry, in 
 to the resolved profile (see the data-profile-init spec):
 
 - `inputSignature: { count: number; digest: string }` — the record of *which* files a
-  profile covered and *whether the same bytes* were profiled. `count` is the number of
+  profile covered and *whether the same bytes* were profiled. The embedder computes it
+  with `computeInputSignature` over its manifest, and the trigger carries it in
+  `inputSummary.signature`; the body persists it verbatim. `count` is the number of
   **kept** staged inputs; `digest` is a stable hash over the kept inputs' identities and
   their per-file size and mtime, computed in a canonical order so the value depends on
   the set and not on enumeration order.
@@ -331,7 +333,7 @@ cost the whole dataset at every profile completion for a field nothing compares.
 
 #### Scenario: Initial profile stores the input signature
 
-- **WHEN** the data-profile body completes for an analysis with 3 kept staged input files
+- **WHEN** the data-profile body completes for an analysis whose `inputSummary.signature` the embedder computed over 3 kept staged input files
 - **THEN** `data_profile_result.inputSignature.count` SHALL be 3
 - **AND** `data_profile_result.inputSignature.digest` SHALL be a stable hash over those inputs' identities, sizes, and mtimes
 - **AND** `data_profile_result.profiledAt` SHALL be an ISO 8601 timestamp near the completion time
@@ -365,10 +367,10 @@ cost the whole dataset at every profile completion for a field nothing compares.
 
 `completeEmptyDataProfile(querier, analysisId)` MUST stamp a row `'completed'` with a single
 UPDATE. The guard MUST be `data_profile_status IS DISTINCT FROM 'running' AND
-(seed_input_file_ids IS NULL OR jsonb_array_length(seed_input_file_ids) = 0)`. The write MUST
+(seed_input_count IS NULL OR seed_input_count = 0)`. The write MUST
 set `data_profile_started_at` and `data_profile_completed_at` to one timestamp, because no
 workflow ran. The write MUST set `data_profile_error`, `data_profile_result`, and
-`data_profile_workflow_id` to NULL. The write MUST set `seed_input_file_ids` to `[]`, so that
+`data_profile_workflow_id` to NULL. The write MUST set `seed_input_count` to `0`, so that
 the completed row names the set that it covers.
 
 The operation MUST resolve to `ok(true)` when it stamped the row. It MUST resolve to `ok(false)`
@@ -379,22 +381,22 @@ The seed predicate is the negation of the claim conjunct. Thus a claim into `run
 empty-set completion can never both win on one row. A seed upsert that lands between a caller's
 pre-read and the stamp is never hidden behind a finished profile.
 
-A `completed` row whose seed is `[]` MUST NOT be claimable by `tryRerunDataProfile`. A later seed
+A `completed` row whose seed is `0` MUST NOT be claimable by `tryRerunDataProfile`. A later seed
 upsert that names files makes the row claimable. Then the rerun claim MUST take it as any
 completed row.
 
 #### Scenario: A never-profiled row with no seed completes at once
 
-- **WHEN** `completeEmptyDataProfile(querier, analysisId)` is called for a row whose `data_profile_status` is NULL and whose `seed_input_file_ids` is NULL
+- **WHEN** `completeEmptyDataProfile(querier, analysisId)` is called for a row whose `data_profile_status` is NULL and whose `seed_input_count` is NULL
 - **THEN** it MUST resolve to `ok(true)`
 - **AND** `data_profile_status` MUST be `'completed'`
 - **AND** `data_profile_result` and `data_profile_workflow_id` MUST be NULL
-- **AND** `seed_input_file_ids` MUST be `[]`
+- **AND** `seed_input_count` MUST be `0`
 - **AND** `data_profile_started_at` MUST equal `data_profile_completed_at`
 
 #### Scenario: A prior profile whose files are gone is replaced
 
-- **WHEN** `completeEmptyDataProfile` is called for a `'completed'` row with a stored `data_profile_result` and a seed of `[]`
+- **WHEN** `completeEmptyDataProfile` is called for a `'completed'` row with a stored `data_profile_result` and a seed of `0`
 - **THEN** it MUST resolve to `ok(true)` and `data_profile_result` MUST be NULL
 
 #### Scenario: A live run is never stamped
@@ -404,17 +406,17 @@ completed row.
 
 #### Scenario: A seed that names files refuses the stamp
 
-- **WHEN** `completeEmptyDataProfile` is called for a row whose `seed_input_file_ids` names at least one file
+- **WHEN** `completeEmptyDataProfile` is called for a row whose `seed_input_count` is greater than zero
 - **THEN** it MUST resolve to `ok(false)` and the row MUST be untouched
 
 #### Scenario: A completed-empty row is claimable for a rerun after a reseed
 
-- **WHEN** a seed upsert names files on a `'completed'` row whose seed was `[]`, and `tryRerunDataProfile` is then called
+- **WHEN** a seed upsert names files on a `'completed'` row whose seed was `0`, and `tryRerunDataProfile` is then called
 - **THEN** it MUST resolve to `ok(true)` and `data_profile_status` MUST be `'running'`
 
 ### Requirement: The trigger completes an analysis with no input files at once
 
-When `stagedInputs` is empty and the seed is NULL or `[]`, `triggerDataProfile` MUST call
+When `inputSummary.count` is zero and the seed is NULL or `0`, `triggerDataProfile` MUST call
 `completeEmptyDataProfile`. When the stamp landed, the trigger MUST return `"completed"`. The
 trigger MUST attempt no claim into `'running'`, and it MUST start no workflow. When the stamp
 refused the row and the row is `'running'`, the trigger MUST return `"already_running"`. In every
@@ -424,22 +426,22 @@ other refusal the trigger MUST return `"failed"` and log the rejection with the 
 
 #### Scenario: A never-profiled analysis with no inputs is completed
 
-- **WHEN** `triggerDataProfile` runs with an empty `stagedInputs` for an analysis whose `seed_input_file_ids` is NULL
+- **WHEN** `triggerDataProfile` runs with an `inputSummary` whose `count` is zero for an analysis whose `seed_input_count` is NULL
 - **THEN** it MUST return `"completed"`
-- **AND** `data_profile_status` MUST be `'completed'` with a NULL `data_profile_result` and a seed of `[]`
+- **AND** `data_profile_status` MUST be `'completed'` with a NULL `data_profile_result` and a seed of `0`
 - **AND** no workflow MUST be started
 
 #### Scenario: An analysis seeded with an empty set is completed
 
-- **WHEN** `triggerDataProfile` runs with an empty `stagedInputs` for an analysis whose `seed_input_file_ids` is `[]`
+- **WHEN** `triggerDataProfile` runs with an `inputSummary` whose `count` is zero for an analysis whose `seed_input_count` is `0`
 - **THEN** it MUST return `"completed"` and `data_profile_status` MUST be `'completed'`
 
-#### Scenario: An empty manifest against a live run reports the run
+#### Scenario: An empty input set against a live run reports the run
 
-- **WHEN** `triggerDataProfile` runs with an empty `stagedInputs` while `data_profile_status = 'running'` and the seed names no file
+- **WHEN** `triggerDataProfile` runs with an `inputSummary` whose `count` is zero while `data_profile_status = 'running'` and the seed names no file
 - **THEN** it MUST return `"already_running"` and the row MUST be untouched
 
-#### Scenario: An empty manifest for a missing analysis row fails
+#### Scenario: An empty input set for a missing analysis row fails
 
-- **WHEN** `triggerDataProfile` runs with an empty `stagedInputs` for an analysis with no `cortex_analysis_state` row
+- **WHEN** `triggerDataProfile` runs with an `inputSummary` whose `count` is zero for an analysis with no `cortex_analysis_state` row
 - **THEN** it MUST return `"failed"`

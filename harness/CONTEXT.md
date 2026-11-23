@@ -19,8 +19,8 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
   when it copies or links a local file in its own repository. An input is
   immutable, and it is staged one time only, thus a recovered run finds the tree
   in place. Staging is not a durable step. `executeAnalysis` reads the tree
-  directly. `runDataProfile` receives the staged-input manifest (`StagedInput[]`,
-  the one staging *type* of the harness) in its workflow input. The embedder
+  directly. `runDataProfile` receives the `StagedInputSummary` of the staged
+  manifest (the count, the total bytes, and the input signature) in its workflow input. The embedder
   handles a staging failure, and it marks the profile `failed`.
 - **Run** — One execution of a workflow against an analysis. Its identifier is
   `runId`, a bare UUID that *is* the DBOS `workflowID`. There is no composite
