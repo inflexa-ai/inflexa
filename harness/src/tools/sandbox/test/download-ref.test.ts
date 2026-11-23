@@ -185,6 +185,26 @@ describe("the host check", () => {
     });
 });
 
+describe("a URL that the server does not have", () => {
+    test("gives the files of its folder, thus the next call can name the right file", async () => {
+        routes.set("ftp.ensembl.org/pub/release-116/fasta/homo_sapiens/dna/", (_req, res) => {
+            res.writeHead(200, { "content-type": "text/html" }).end(
+                '<a href="?C=N;O=D">Name</a> <a href="/pub/release-116/fasta/">Parent Directory</a> <a href="Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz">x</a> <a href="CHECKSUMS">y</a> <a href="https://elsewhere.org/a">z</a>',
+            );
+        });
+        const out = await download(["https://ftp.ensembl.org/pub/release-116/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.toplevel.fa.gz"]);
+        expect(out.files[0]?.status).toBe("failed");
+        expect(out.files[0]?.error).toBe(
+            "the server answered HTTP 404. The folder https://ftp.ensembl.org/pub/release-116/fasta/homo_sapiens/dna/ holds: Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz, CHECKSUMS",
+        );
+    });
+
+    test("keeps the plain reason when the folder does not answer", async () => {
+        const out = await download(["https://ftp.ebi.ac.uk/gone/a.txt"]);
+        expect(out.files[0]?.error).toBe("the server answered HTTP 404");
+    });
+});
+
 describe("the redirects", () => {
     test("a redirect to a private address fails that file, and no file is written for it", async () => {
         redirect("mirror.org/a.txt", "https://intranet.example/a.txt");

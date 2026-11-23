@@ -518,6 +518,8 @@ export async function openSandboxTrial(
         imagePackagesFile: real?.imagePackagesFile ?? join(dir, "env", "image-packages.json"),
         // The reference store of the trial. A case that scripts `list_available_refs` never reads it.
         refStorePath: refsRoot,
+        // As the CLI binds it, thus a step agent holds `download_ref`. A case scripts its answer.
+        referenceDownloads: { storePath: refsRoot, autoApproveHosts: [] },
         extendAnalysisFarm:
             real?.extendAnalysisFarm ??
             ((_analysisId, queries) =>

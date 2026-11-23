@@ -48,6 +48,8 @@ import { defineTool, type Tool } from "../define-tool.js";
  */
 const REFS_ROOT = REFS_CONTAINER_PATH;
 const MAX_ENTRIES = 200;
+/** A bare listing of a subtree with at most this many files gives the files themselves, with their looks. */
+const SMALL_TREE_FILES = 40;
 const MAX_SCANNED_ENTRIES = 2_000;
 const MAX_PATH_BYTES = 40_000;
 const MAX_ENVELOPE_BYTES = 64_000;
@@ -703,7 +705,7 @@ function unlookedNote(unlooked: number): string {
 function renderContent(path: string, scan: RawScan, entries: readonly ReferenceInventoryEntry[], unlooked: number, canDownload: boolean): string {
     if (scan.state === "unavailable")
         return canDownload
-            ? "No reference store is readable now. To get a reference, download it with download_ref from a URL that the user gave or that a page you fetched shows."
+            ? "No reference store is readable now. You can download a reference into the store with download_ref."
             : "No reference store is provisioned for this session. Nothing in the analysis environment can fetch reference data, and a later call " +
                   "in this run gives the same answer. Plan with the data at hand, or ask for the reference by what it is.";
     if (scan.state === "not_found") return `Reference path does not exist: ${path}`;
@@ -731,7 +733,7 @@ function renderContent(path: string, scan: RawScan, entries: readonly ReferenceI
 function noMatchContent(path: string, query: string, unlooked: number, canDownload: boolean): string {
     const miss = `No reference beneath ${path} matches "${query}".`;
     const next = canDownload
-        ? `The sandbox has no network. You can download the reference with download_ref from a URL that the user gave or that a page you fetched shows. Do not guess a path or a URL.`
+        ? `The sandbox has no network. You can download the reference into the store with download_ref.`
         : `The store at ${REFS_ROOT} is the only reference data that the sandbox can read, and the sandbox has no network. ` +
           "Say that the dataset is absent now. Do not guess a path, and do not use a different dataset in its place.";
     return [miss, next, ...(unlooked > 0 ? [unlookedNote(unlooked)] : [])].join(" ");
@@ -824,9 +826,13 @@ export function createListAvailableRefsTool(deps: ListAvailableRefsDeps): Tool<z
                 return ok(response);
             }
 
-            // A query searches the leaves; a bare listing browses this level.
+            // A query searches the leaves. A bare listing gives the files of a small subtree with their looks, because a
+            // download nests each file under its host and the path of its URL, and the names of those folders tell
+            // nothing. A larger subtree browses this level.
             const needleGiven = (query?.trim() ?? "") !== "";
-            const raw = await scanStore(storeRoot, posixPath.relative(REFS_ROOT, requested.path) || ".", needleGiven);
+            const relative = posixPath.relative(REFS_ROOT, requested.path) || ".";
+            const leaves = await scanStore(storeRoot, relative, true);
+            const raw = needleGiven || (!leaves.truncated && leaves.files.length <= SMALL_TREE_FILES) ? leaves : await scanStore(storeRoot, relative, false);
             const { looks, unlooked } = await lookAtFiles(storeRoot, raw.files, ctx.signal);
             const looked = withLooks(raw.entries, looks);
             const categories = collectCategories(looked);

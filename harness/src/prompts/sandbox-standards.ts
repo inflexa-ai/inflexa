@@ -38,14 +38,9 @@ export const sandboxOrientCorePrompt = `# Sandbox Environment
 
 Your commands run in a sandbox with no network: each download, API call, and
 package install fails, and no retry succeeds. Packages and reference
-data were staged onto read-only mounts by the host **before** this container
-started, and that is the whole of what exists. A lookup of an outside source
+data are on read-only mounts that the host fills. The packages were staged
+**before** this container started, and that is the whole of what exists. A lookup of an outside source
 runs on the host, in \`run_script\`.
-
-Find a reference file with \`list_available_refs\`, narrowed to the collection
-that you need. When a reference is missing and you hold \`download_ref\`,
-download it into the reference store with that tool, from a URL that the user
-gave or that a page you fetched shows. Never use a URL from your memory.
 
 \`samtools\`, \`bcftools\`, \`tabix\`, \`bedtools\`, and \`vcftools\` are installed.
 `;
@@ -66,12 +61,11 @@ function replaceExactlyOnce(haystack: string, needle: string, replacement: strin
 const imageToolchainOrientCorePrompt = replaceExactlyOnce(
     sandboxOrientCorePrompt,
     `Packages and reference
-data were staged onto read-only mounts by the host **before** this container
-started, and that is the whole of what exists.`,
+data are on read-only mounts that the host fills. The packages were staged
+**before** this container started, and that is the whole of what exists.`,
     `The packages of your farm and the reference
-data were staged onto read-only mounts by the host **before** this container
-started. An acquisition of a new package is a host action, done outside this
-sandbox.`,
+data are on read-only mounts that the host fills.
+An acquisition of a new package is a host action, done outside this sandbox.`,
 );
 
 /**

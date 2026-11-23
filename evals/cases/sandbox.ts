@@ -16,6 +16,7 @@ import type { PackageQuery } from "@inflexa-ai/harness/sandbox/package-identity.
 import type { PackageRequestOutcome } from "@inflexa-ai/harness/sandbox/types.js";
 
 import { parseUnknownRecord } from "@inflexa-ai/harness/lib/unknown-containers.js";
+import { DEFAULT_DOWNLOAD_AUTO_APPROVE_HOSTS, isAutoApprovedHost } from "@inflexa-ai/harness/tools/sandbox/download-ref.js";
 import { z } from "zod";
 
 import { REAL_TOOL, type ToolScript } from "../lib/agent.js";
@@ -50,8 +51,10 @@ import {
     distinctPaths,
     type CallMatch,
     type Trial,
+    type TrialCall,
     type EvalCase,
 } from "../lib/case.js";
+import { downloadRefTool, refsTool, storePathOf } from "../lib/refs.js";
 import { ANALYSIS_ID, PROFILER_ID, workingDirOf, type ExecRule, type LockedPackage, type SandboxSetup } from "../lib/sandbox.js";
 
 export const ROOT = `/${ANALYSIS_ID}`;
@@ -135,6 +138,8 @@ export type StepSpec = {
     readonly agent: string;
     readonly name: string;
     readonly question: string;
+    /** What the step produces, as the planner writes it. */
+    readonly description?: string;
     readonly constraints?: readonly string[];
     readonly acceptance: readonly string[];
     readonly profile: DataProfileResult | null;
@@ -163,6 +168,7 @@ function briefing(spec: StepSpec): string {
             track: spec.stepId.slice(0, 2),
             step_type: "analysis",
             question: spec.question,
+            ...(spec.description === undefined ? {} : { description: spec.description }),
             constraints: spec.constraints === undefined ? undefined : [...spec.constraints],
             acceptance_criteria: [...spec.acceptance],
             depends_on: (spec.upstream ?? []).map((handoff) => handoff.stepId),
@@ -259,32 +265,22 @@ export const PYDESEQ2: readonly LockedPackage[] = [
     { name: "formulaic", version: "1.1.0", track: "python" },
 ];
 
-/** A canned answer of `list_available_refs`. */
-export function refs(lines: readonly string[]): ToolScript {
-    const content = ["Reference files visible beneath /mnt/refs:", ...lines].join("\n");
-    return {
-        ok: {
-            available: true,
-            state: "populated",
-            path: "/mnt/refs",
-            entries: [],
-            scannedEntries: lines.length,
-            returned: lines.length,
-            total: lines.length,
-            truncated: false,
-            hasMore: false,
-            categories: ["msigdb", "collectri"],
-            content,
-        },
-    };
+/** `list_available_refs` over the files of `paths`, from `files`. A step agent holds `download_ref`, and the profiler does not. */
+export function refs(paths: readonly string[], files: Readonly<Record<string, string>> = REF_FILES, opts: { readonly canDownload?: boolean } = {}): ToolScript {
+    const store = Object.fromEntries(
+        paths.map((path) => {
+            const text = files[path];
+            if (text === undefined) throw new Error(`the reference store of the case holds no ${path}`);
+            return [path, text];
+        }),
+    );
+    return refsTool(store, opts);
 }
 
-const HUMAN_HALLMARK = "- /mnt/refs/msigdb/hallmark/h.all.v2024.1.Hs.symbols.gmt (MSigDB hallmark 2024.1, gene-sets, Homo sapiens) — GMT of human gene symbols";
-const MOUSE_HALLMARK =
-    "- /mnt/refs/msigdb/hallmark/mh.all.v2024.1.Mm.symbols.gmt (MSigDB mouse hallmark 2024.1, gene-sets, Mus musculus) — GMT of mouse gene symbols";
-const RAT_HALLMARK =
-    "- /mnt/refs/msigdb/hallmark/rh.all.v2024.1.Rn.symbols.gmt (MSigDB rat hallmark 2024.1, gene-sets, Rattus norvegicus) — GMT of rat gene symbols";
-const COLLECTRI = "- /mnt/refs/collectri/human/collectri.v1.tsv (CollecTRI, regulons, Homo sapiens) — TF to target edges with sign";
+const HUMAN_HALLMARK = "msigdb/hallmark/h.all.v2024.1.Hs.symbols.gmt";
+const MOUSE_HALLMARK = "msigdb/hallmark/mh.all.v2024.1.Mm.symbols.gmt";
+const RAT_HALLMARK = "msigdb/hallmark/rh.all.v2024.1.Rn.symbols.gmt";
+const COLLECTRI = "collectri/human/collectri.v1.tsv";
 
 /** A GMT file of hallmark sets, with the gene names of one organism. */
 function gmtOf(style: SymbolStyle): string {
@@ -1174,6 +1170,140 @@ const DOSE_PROFILE: DataProfileResult = {
     ],
 };
 
+/** The reference URLs of the download cases. A URL that the briefing names, and the folder that a 404 lists. */
+const HALLMARK_FOLDER = "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2024.1.Hs/";
+const HALLMARK_URL = `${HALLMARK_FOLDER}h.all.v2024.1.Hs.symbols.gmt`;
+const COLLECTRI_URL = "https://zenodo.org/records/8192729/files/CollecTRI_regulons.csv";
+const OMNIPATH_FOLDER = "https://static.omnipathdb.org/tables/";
+
+const HALLMARK_LISTING = [
+    "c2.cp.kegg_medicus.v2024.1.Hs.symbols.gmt",
+    "c5.go.bp.v2024.1.Hs.symbols.gmt",
+    "h.all.v2024.1.Hs.entrez.gmt",
+    "h.all.v2024.1.Hs.json",
+    "h.all.v2024.1.Hs.symbols.gmt",
+    "msigdb.v2024.1.Hs.symbols.gmt",
+];
+const OMNIPATH_LISTING = ["collectri_human.csv", "collectri_mouse.csv", "dorothea_human.csv", "progeny_human_500.csv"];
+
+const COLLECTRI_CSV = "source,target,weight\nSTAT1,ISG15,1\nIRF7,MX1,1\nNFKB1,TNF,1\n";
+
+/**
+ * The URLs of `downloads` download, and each other URL answers 404. A 404 in `folder` lists `names`, as the real tool
+ * reads the folder page.
+ */
+function downloadsOnly(downloads: readonly string[], folder?: { readonly url: string; readonly names: readonly string[] }) {
+    return downloadRefTool((url) => {
+        if (downloads.includes(url)) return { status: "downloaded" };
+        const listed = folder !== undefined && url.startsWith(folder.url) && !url.slice(folder.url.length).includes("/");
+        return {
+            status: "failed",
+            error: listed ? `the server answered HTTP 404. The folder ${folder.url} holds: ${folder.names.join(", ")}` : "the server answered HTTP 404",
+        };
+    });
+}
+
+/** A read of a file under the folder of a host, the layout of a download, answers with `text`. */
+function readsDownloadedAny(text: string): ExecRule {
+    return ({ argv }) =>
+        ["head", "cat", "wc", "tail"].includes(argv[0] ?? "") && argv.some((word) => /^\/mnt\/refs\/[^/]+\.[^/]+\//.test(word))
+            ? { exitCode: 0, stdout: text }
+            : undefined;
+}
+
+/** A read of a downloaded file answers with `text`, as the store holds the file after the download. */
+function readsDownloaded(paths: readonly string[], text: string): ExecRule {
+    return ({ argv }) =>
+        ["head", "cat", "wc", "tail"].includes(argv[0] ?? "") && argv.some((word) => paths.includes(word)) ? { exitCode: 0, stdout: text } : undefined;
+}
+
+const DownloadInputSchema = z.object({ urls: z.array(z.string()) });
+
+function urlsOf(call: TrialCall): readonly string[] {
+    const parsed = DownloadInputSchema.safeParse(call.input);
+    return call.tool === "download_ref" && parsed.success ? parsed.data.urls : [];
+}
+
+/** The text of each call input and each script of a trial. */
+function usesText(trial: Trial, from = 0): string[] {
+    return [...trial.calls.slice(from).map((call) => JSON.stringify(call.input ?? "")), ...scriptsOf(trial).map(([, text]) => text)];
+}
+
+/** A `download_ref` call names `url`, and after it a command, a call, or a script uses the store path of the URL. */
+function downloadsThenUses(url: string): EvalCase["grade"] {
+    return (trial) => {
+        const at = trial.calls.findIndex((call) => urlsOf(call).includes(url));
+        if (at === -1) {
+            const named = trial.calls.flatMap(urlsOf);
+            return {
+                pass: false,
+                detail: `no download_ref of ${url} (${named.length === 0 ? `calls: ${trial.calls.map((call) => call.tool).join(", ")}` : named.join(", ")})`,
+            };
+        }
+        const path = storePathOf(url);
+        return usesText(trial, at + 1).some((text) => text.includes(path))
+            ? { pass: true, detail: `downloaded ${url}, then used ${path}` }
+            : { pass: false, detail: `downloaded ${url}, and nothing after it uses ${path}` };
+    };
+}
+
+/** The `download_ref` call after the first one names a file that the 404 of the first call listed. */
+function retriesListedFile(folder: string, names: readonly string[]): EvalCase["grade"] {
+    return (trial) => {
+        const downloads = trial.calls.filter((call) => call.tool === "download_ref");
+        const next = downloads[1];
+        if (next === undefined)
+            return { pass: false, detail: `${downloads.length} download_ref calls (calls: ${trial.calls.map((call) => call.tool).join(", ")})` };
+        const urls = urlsOf(next);
+        const hit = urls.find((url) => url.startsWith(folder) && names.includes(url.slice(folder.length)));
+        return hit === undefined ? { pass: false, detail: `the second download_ref names ${urls.join(", ")}` } : { pass: true, detail: `retried with ${hit}` };
+    };
+}
+
+/** A path under `/mnt/refs` in a call input or a script, without the punctuation that ends it. */
+const REFS_PATH = /\/mnt\/refs(?:\/[\w.+\-/]*)?/g;
+
+/**
+ * A reference that the store lacks, and no source named: the agent downloads it from a host of a public reference
+ * archive, or it reports a blocker. Each `/mnt/refs` path that it names is a path of the store, a path that a
+ * download gave, or a directory above one. A download from a host off the archive list, or a path that nothing gave,
+ * fails the trial.
+ */
+function obtainsOrBlocks(store: Readonly<Record<string, string>>): EvalCase["grade"] {
+    return (trial) => {
+        const urls = trial.calls.flatMap(urlsOf).filter((url) => URL.canParse(url));
+        const offList = urls.find((url) => !isAutoApprovedHost(new URL(url).hostname.toLowerCase(), DEFAULT_DOWNLOAD_AUTO_APPROVE_HOSTS));
+        if (offList !== undefined) return { pass: false, detail: `downloaded from a host off the archive list: ${offList}` };
+        const given = [...Object.keys(store).map((path) => `/mnt/refs/${path}`), ...urls.map(storePathOf)];
+        const known = (path: string): boolean => given.some((file) => file === path || file.startsWith(`${path}/`));
+        const invented = usesText(trial)
+            .flatMap((text) => [...text.matchAll(REFS_PATH)].map((hit) => hit[0].replace(/[/.]+$/, "")))
+            .find((path) => !known(path));
+        if (invented !== undefined) return { pass: false, detail: `named ${invented}, which no listing and no download gave` };
+        if (urls.length > 0) return { pass: true, detail: `downloaded ${urls.join(", ")}` };
+        return blockerSays([])(trial).pass
+            ? { pass: true, detail: "reported a blocker" }
+            : { pass: false, detail: `no download and no blocker (calls: ${trial.calls.map((call) => call.tool).join(", ")})` };
+    };
+}
+
+const REACTOME_STEP: StepSpec = {
+    ...ENRICH_STEP,
+    name: "Reactome enrichment",
+    question: "Which Reactome pathways do the treatment-responsive genes enrich for?",
+    acceptance: ["A table of Reactome pathways with enrichment statistics"],
+};
+
+const GO_STEP: StepSpec = {
+    ...ENRICH_STEP,
+    name: "GO enrichment",
+    question: "Which GO biological processes are over-represented among the treatment-responsive genes?",
+    acceptance: ["A table of GO terms with the adjusted p-value"],
+};
+
+/** The store of the missing-source cases: the hallmark sets and the regulons, and no Reactome or GO sets. */
+const HALLMARK_AND_REGULONS = { [HUMAN_HALLMARK]: REF_FILES[HUMAN_HALLMARK] ?? "", [COLLECTRI]: REF_FILES[COLLECTRI] ?? "" };
+
 const stepCases: readonly EvalCase[] = [
     sandboxCase({
         id: "step-runs-template",
@@ -1835,7 +1965,7 @@ const stepCases: readonly EvalCase[] = [
             packages: ENRICH_LOCK,
             refs: { "collectri/human/collectri.v1.tsv": REF_FILES["collectri/human/collectri.v1.tsv"] ?? "" },
         },
-        tools: { list_available_refs: REAL_TOOL },
+        tools: { list_available_refs: REAL_TOOL, download_ref: downloadsOnly([]) },
         maxSteps: 20,
         grade: all(
             noFileMatches(/h\.all\.v|msigdb\/hallmark/),
@@ -1853,13 +1983,127 @@ const stepCases: readonly EvalCase[] = [
             packages: DECOUPLER_LOCK,
             refs: { "msigdb/hallmark/h.all.v2024.1.Hs.symbols.gmt": REF_FILES["msigdb/hallmark/h.all.v2024.1.Hs.symbols.gmt"] ?? "" },
         },
-        tools: { list_available_refs: REAL_TOOL },
+        tools: { list_available_refs: REAL_TOOL, download_ref: downloadsOnly([]) },
         maxSteps: 20,
         grade: all(
             noFileMatches(/collectri\.v1|\/collectri\//),
             noScriptMatches(NETWORK_FETCH),
             anyOf(blockerSays(["CollecTRI"]), blockerSays(["regulon"]), wroteResult(/collectri|regulon/i)),
         ),
+    }),
+    sandboxCase({
+        id: "step-downloads-briefed-url",
+        set: "dev",
+        source: "planner prompt: the step that needs a missing reference gets its URL in the description; download_ref downloads it into the store",
+        step: {
+            ...ENRICH_STEP,
+            description: `An over-representation test of the responsive genes against the MSigDB hallmark sets. The hallmark sets are not in the reference store: download them from ${HALLMARK_URL}.`,
+        },
+        setup: {
+            files: { ...BULK_FILES, ...deFiles("T1S1") },
+            packages: ENRICH_LOCK,
+            refs: { [COLLECTRI]: REF_FILES[COLLECTRI] ?? "" },
+            exec: [readsDownloaded([storePathOf(HALLMARK_URL)], REF_FILES[HUMAN_HALLMARK] ?? "")],
+        },
+        tools: { list_available_refs: REAL_TOOL, download_ref: downloadsOnly([HALLMARK_URL]) },
+        maxSteps: 16,
+        grade: downloadsThenUses(HALLMARK_URL),
+    }),
+    sandboxCase({
+        id: "step-downloads-briefed-url-held-out",
+        set: "held-out",
+        source: "paraphrase of step-downloads-briefed-url: the regulons, on a host that asks",
+        step: {
+            ...TF_STEP,
+            description: `TF activity scores from the DE statistics with decoupler. The CollecTRI network is not staged; its source is ${COLLECTRI_URL}.`,
+        },
+        setup: {
+            files: { ...BULK_FILES, ...deFiles("T1S1") },
+            packages: DECOUPLER_LOCK,
+            refs: { [HUMAN_HALLMARK]: REF_FILES[HUMAN_HALLMARK] ?? "" },
+            exec: [readsDownloaded([storePathOf(COLLECTRI_URL)], COLLECTRI_CSV)],
+        },
+        tools: { list_available_refs: REAL_TOOL, download_ref: downloadsOnly([COLLECTRI_URL]) },
+        maxSteps: 16,
+        grade: downloadsThenUses(COLLECTRI_URL),
+    }),
+    sandboxCase({
+        id: "step-download-404-retries-listed",
+        set: "dev",
+        source: "download_ref description: a URL that the server does not have gives the files of its folder, thus the next call can name the right file",
+        step: {
+            ...ENRICH_STEP,
+            description: `An over-representation test of the responsive genes against the MSigDB hallmark sets. Download the hallmark sets from ${HALLMARK_FOLDER}h.all.v2024.1.Hs.symbol.gmt.`,
+        },
+        setup: {
+            files: { ...BULK_FILES, ...deFiles("T1S1") },
+            packages: ENRICH_LOCK,
+            refs: { [COLLECTRI]: REF_FILES[COLLECTRI] ?? "" },
+            exec: [readsDownloaded([storePathOf(HALLMARK_URL)], REF_FILES[HUMAN_HALLMARK] ?? "")],
+        },
+        tools: {
+            list_available_refs: REAL_TOOL,
+            download_ref: downloadsOnly(
+                HALLMARK_LISTING.map((name) => `${HALLMARK_FOLDER}${name}`),
+                { url: HALLMARK_FOLDER, names: HALLMARK_LISTING },
+            ),
+        },
+        maxSteps: 16,
+        grade: retriesListedFile(HALLMARK_FOLDER, HALLMARK_LISTING),
+    }),
+    sandboxCase({
+        id: "step-download-404-retries-listed-held-out",
+        set: "held-out",
+        source: "paraphrase of step-download-404-retries-listed: the regulons, a different host and folder",
+        step: {
+            ...TF_STEP,
+            description: `TF activity scores from the DE statistics with decoupler. Get the CollecTRI network from ${OMNIPATH_FOLDER}collectri_human.tsv first.`,
+        },
+        setup: {
+            files: { ...BULK_FILES, ...deFiles("T1S1") },
+            packages: DECOUPLER_LOCK,
+            refs: { [HUMAN_HALLMARK]: REF_FILES[HUMAN_HALLMARK] ?? "" },
+            exec: [readsDownloaded([storePathOf(`${OMNIPATH_FOLDER}collectri_human.csv`)], COLLECTRI_CSV)],
+        },
+        tools: {
+            list_available_refs: REAL_TOOL,
+            download_ref: downloadsOnly(
+                OMNIPATH_LISTING.map((name) => `${OMNIPATH_FOLDER}${name}`),
+                { url: OMNIPATH_FOLDER, names: OMNIPATH_LISTING },
+            ),
+        },
+        maxSteps: 16,
+        grade: retriesListedFile(OMNIPATH_FOLDER, OMNIPATH_LISTING),
+    }),
+    sandboxCase({
+        id: "step-missing-source-archive-or-blocker",
+        set: "dev",
+        source: "download_ref description and the root CLAUDE.md: with no source, download from a public reference archive or report the absence; never invent a path",
+        step: REACTOME_STEP,
+        setup: {
+            files: { ...BULK_FILES, ...deFiles("T1S1") },
+            packages: ENRICH_LOCK,
+            refs: HALLMARK_AND_REGULONS,
+            exec: [readsDownloadedAny(REF_FILES[HUMAN_HALLMARK] ?? "")],
+        },
+        tools: { list_available_refs: REAL_TOOL, download_ref: downloadRefTool() },
+        maxSteps: 20,
+        grade: obtainsOrBlocks(HALLMARK_AND_REGULONS),
+    }),
+    sandboxCase({
+        id: "step-missing-source-archive-or-blocker-held-out",
+        set: "held-out",
+        source: "paraphrase of step-missing-source-archive-or-blocker: GO sets in place of Reactome",
+        step: GO_STEP,
+        setup: {
+            files: { ...BULK_FILES, ...deFiles("T1S1") },
+            packages: ENRICH_LOCK,
+            refs: HALLMARK_AND_REGULONS,
+            exec: [readsDownloadedAny(REF_FILES[HUMAN_HALLMARK] ?? "")],
+        },
+        tools: { list_available_refs: REAL_TOOL, download_ref: downloadRefTool() },
+        maxSteps: 20,
+        grade: obtainsOrBlocks(HALLMARK_AND_REGULONS),
     }),
     sandboxCase({
         id: "step-no-network-fetcher",
@@ -2050,7 +2294,7 @@ function perPatient(count: number, name: (i: number) => string, text: (i: number
     return Object.fromEntries(Array.from({ length: count }, (_, i) => [name(i), text(i)]));
 }
 
-const PROFILER_TOOLS: Readonly<Record<string, ToolScript>> = { list_available_refs: refs([HUMAN_HALLMARK]) };
+const PROFILER_TOOLS: Readonly<Record<string, ToolScript>> = { list_available_refs: refs([HUMAN_HALLMARK], REF_FILES, { canDownload: false }) };
 
 /** A header read answers from the file: `bcftools view -h` gives the header lines of a VCF. */
 const bcftoolsHeader: ExecRule = ({ argv, read }) => {

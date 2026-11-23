@@ -17,6 +17,7 @@ import type { KnowledgeClient, RecommendResponse } from "@inflexa-ai/harness/too
 import { z } from "zod";
 
 import { EVAL_SNAPSHOT, evalKnowledgeClient, REAL_TOOL, type ToolScript } from "../lib/agent.js";
+import { refsGrounding, refsTool, type RefStore } from "../lib/refs.js";
 import { parseUnknownRecord } from "@inflexa-ai/harness/lib/unknown-containers.js";
 
 import {
@@ -82,20 +83,48 @@ const UNREPLICATED_PROFILE: DataProfileResult = {
     qualityAssessment: { concerns: [] },
 };
 
+const GO_BP_URL = "https://data.broadinstitute.org/gsea-msigdb/msigdb/release/2024.1.Hs/c5.go.bp.v2024.1.Hs.symbols.gmt";
+const REACTOME_URL = "https://reactome.org/download/current/ReactomePathways.gmt.zip";
+
+/** The description of a step whose name or question matches `need` holds `url`, thus the step agent gets the source. */
+function urlInStep(url: string, need: RegExp): EvalCase["grade"] {
+    return plans(`a step that needs the reference and names ${url} in its description`, (steps) =>
+        steps.some((step) => need.test(`${step.name} ${step.question}`) && step.description.includes(url)),
+    );
+}
+
 /** No plan: the design defect goes back to the user as a blocker or a question, not into a run. */
 const NO_PLAN_FOR_DEFECT = all(never(["submit_plan"]), callsAny(["report_blocker", "request_clarification"]));
 
-const REFS_WITH_GENE_SETS = [
-    "## Available Reference Data",
-    "",
-    "Reference files visible beneath /:",
-    "- msigdb/hallmark/h.all.v2024.1.Hs.symbols.gmt (file, 189412 bytes; MSigDB hallmark, 2024.1, gene-sets, Homo sapiens)",
-    "    GMT — 50 hallmark gene sets of human gene symbols",
-    "- msigdb/c2-kegg/c2.cp.kegg_medicus.v2024.1.Hs.symbols.gmt (file, 1022210 bytes; MSigDB KEGG MEDICUS, 2024.1, gene-sets, Homo sapiens)",
-    "    GMT — KEGG MEDICUS pathways of human gene symbols",
-    "- gencode/v46/gencode.v46.annotation.gtf.gz (file, 50123441 bytes; GENCODE, 46, annotation, Homo sapiens)",
-    "    GTF — the gene annotation of the human genome",
-].join("\n");
+/** A GMT of three sets, as the start of a file of a collection shows it. */
+function gmtStart(sets: readonly (readonly [string, readonly string[]])[]): string {
+    return `${sets.map(([name, genes]) => [name, `https://www.gsea-msigdb.org/gsea/msigdb/geneset/${name}`, ...genes].join("\t")).join("\n")}\n`;
+}
+
+/** The reference store of the planner cases: the human hallmark and KEGG sets, and the human annotation. */
+const GENE_SET_STORE: RefStore = {
+    "msigdb/hallmark/h.all.v2024.1.Hs.symbols.gmt": {
+        text: gmtStart([
+            ["HALLMARK_ADIPOGENESIS", ["ABCA1", "ABCB8", "ACAA2", "ACADL", "ACADM"]],
+            ["HALLMARK_ALLOGRAFT_REJECTION", ["AARS1", "ABCE1", "ABI1", "ACHE", "ACVR2A"]],
+            ["HALLMARK_ANDROGEN_RESPONSE", ["ABCC4", "ABHD2", "ACSL3", "ACTN1", "ADAMTS1"]],
+        ]),
+        bytes: 189_412,
+    },
+    "msigdb/c2-kegg/c2.cp.kegg_medicus.v2024.1.Hs.symbols.gmt": {
+        text: gmtStart([
+            ["KEGG_MEDICUS_ENV_FACTOR_ARSENIC_TO_ELECTRON_TRANSFER", ["ATP5F1A", "COX1", "CYCS", "NDUFA1"]],
+            ["KEGG_MEDICUS_REFERENCE_TGF_BETA_SIGNALING", ["SMAD2", "SMAD3", "SMAD4", "TGFB1", "TGFBR1"]],
+        ]),
+        bytes: 1_022_210,
+    },
+    "gencode/v46/gencode.v46.annotation.gtf.gz": {
+        text: '##description: evidence-based annotation of the human genome (GRCh38), version 46 (Ensembl 112)\n##provider: GENCODE\n##format: gtf\nchr1\tHAVANA\tgene\t11869\t14409\t.\t+\t.\tgene_id "ENSG00000290825.1"; gene_type "lncRNA"; gene_name "DDX11L2";\n',
+        bytes: 50_123_441,
+    },
+};
+
+const REFS_WITH_GENE_SETS = refsGrounding(GENE_SET_STORE);
 
 const R_BASE = ["DESeq2", "edgeR", "limma", "apeglm", "fgsea", "clusterProfiler", "msigdbr", "ComplexHeatmap"];
 const PYTHON_BASE = ["pandas", "numpy", "scipy", "gseapy", "matplotlib", "seaborn", "scikit-learn"];
@@ -144,7 +173,7 @@ const PLANNER_TOOLS: Readonly<Record<string, ToolScript>> = {
     search_semantic_scholar: { ok: { success: true, papers: [] } },
     search_arxiv: { ok: { success: true, papers: [] } },
     search_github_repos: { ok: { success: true, repos: [] } },
-    list_available_refs: { ok: { available: true, content: REFS_WITH_GENE_SETS.split("\n").slice(2).join("\n") } },
+    list_available_refs: refsTool(GENE_SET_STORE),
     list_available_packages: { ok: { available: true, total: 15, returned: 15, hasMore: false, content: PACKAGES.split("\n").slice(2).join("\n") } },
 };
 
@@ -448,13 +477,18 @@ function cohortSeed(researchQuestion: string): string {
 }
 
 /** The census of the routing cases: the references and the packages that an immune and a repurposing step need. */
-const ROUTING_REFS = [
-    REFS_WITH_GENE_SETS,
-    "- immune/lm22/LM22.txt (file, 112340 bytes; LM22 leukocyte signature matrix, CIBERSORT, signatures, Homo sapiens)",
-    "    TSV — 547 genes by 22 human immune cell types",
-    "- lincs/l1000/cp_signatures.gmt (file, 48211340 bytes; LINCS L1000 compound signatures, 2020, gene-sets, Homo sapiens)",
-    "    GMT — the up and the down genes of each compound perturbation, by drug name",
-].join("\n");
+const ROUTING_STORE: RefStore = {
+    ...GENE_SET_STORE,
+    "immune/lm22/LM22.txt": {
+        text: "Gene symbol\tB cells naive\tB cells memory\tPlasma cells\tT cells CD8\tT cells CD4 naive\nABCB4\t555.71\t10.74\t7.23\t4.31\t4.6\nABCB9\t15.6\t22.09\t653.39\t24.23\t35.67\n",
+        bytes: 112_340,
+    },
+    "lincs/l1000/cp_signatures.gmt": {
+        text: "vorinostat_up\tLINCS L1000 consensus signature\tHIST1H2BK\tCDKN1A\tTUBA1A\nvorinostat_down\tLINCS L1000 consensus signature\tMYC\tCCND1\tE2F1\nsirolimus_up\tLINCS L1000 consensus signature\tTXNIP\tARRDC4\tPDK4\n",
+        bytes: 48_211_340,
+    },
+};
+const ROUTING_REFS = refsGrounding(ROUTING_STORE);
 const ROUTING_R = [...R_BASE, "immunedeconv", "GSVA"];
 const ROUTING_PACKAGES = [
     "## Available Packages",
@@ -470,7 +504,7 @@ const ROUTING_POOL = poolOf(ROUTING_R, PYTHON_BASE);
 /** The listings of the routing cases agree with their census. */
 const ROUTING_TOOLS: Readonly<Record<string, ToolScript>> = {
     ...PLANNER_TOOLS,
-    list_available_refs: { ok: { available: true, content: ROUTING_REFS.split("\n").slice(2).join("\n") } },
+    list_available_refs: refsTool(ROUTING_STORE),
     list_available_packages: {
         ok: { available: true, total: 17, returned: 17, hasMore: false, content: ROUTING_PACKAGES.split("\n").slice(2).join("\n") },
     },
@@ -505,15 +539,23 @@ const MOUSE_PROFILE: DataProfileResult = {
     organism: { scientificName: "Mus musculus", taxonId: "10090", source: "metadata", confidence: "high" },
 };
 
-const MOUSE_REFS = [
-    "- msigdb/hallmark/mh.all.v2024.1.Mm.symbols.gmt (file, 171230 bytes; MSigDB mouse hallmark, 2024.1, gene-sets, Mus musculus)",
-    "    GMT — 50 hallmark gene sets of mouse gene symbols",
-    "- gencode/vM35/gencode.vM35.annotation.gtf.gz (file, 31220114 bytes; GENCODE, M35, annotation, Mus musculus)",
-    "    GTF — the gene annotation of the mouse genome",
-].join("\n");
-
-/** The reference census of a mouse study: the human sets come first, and the mouse sets of the same collection follow. */
-const BOTH_ORGANISM_REFS = [REFS_WITH_GENE_SETS, MOUSE_REFS].join("\n");
+/** The reference store of a mouse study: the human sets, and the mouse sets of the same collection. */
+const BOTH_ORGANISM_STORE: RefStore = {
+    ...GENE_SET_STORE,
+    "msigdb/hallmark/mh.all.v2024.1.Mm.symbols.gmt": {
+        text: gmtStart([
+            ["HALLMARK_ADIPOGENESIS", ["Abca1", "Abcb8", "Acaa2", "Acadl", "Acadm"]],
+            ["HALLMARK_ALLOGRAFT_REJECTION", ["Aars1", "Abce1", "Abi1", "Ache", "Acvr2a"]],
+            ["HALLMARK_ANDROGEN_RESPONSE", ["Abcc4", "Abhd2", "Acsl3", "Actn1", "Adamts1"]],
+        ]),
+        bytes: 171_230,
+    },
+    "gencode/vM35/gencode.vM35.annotation.gtf.gz": {
+        text: '##description: evidence-based annotation of the mouse genome (GRCm39), version M35 (Ensembl 112)\n##provider: GENCODE\n##format: gtf\nchr1\tHAVANA\tgene\t3143476\t3144545\t.\t+\t.\tgene_id "ENSMUSG00000102693.2"; gene_type "TEC"; gene_name "4933401J01Rik";\n',
+        bytes: 31_220_114,
+    },
+};
+const BOTH_ORGANISM_REFS = refsGrounding(BOTH_ORGANISM_STORE);
 
 function organismSeed(refs: string, researchQuestion: string): string {
     return composePlannerSeed({
@@ -524,8 +566,8 @@ function organismSeed(refs: string, researchQuestion: string): string {
     });
 }
 
-function refsTools(refs: string): Readonly<Record<string, ToolScript>> {
-    return { ...PLANNER_TOOLS, list_available_refs: { ok: { available: true, content: refs.split("\n").slice(2).join("\n") } } };
+function refsTools(store: RefStore): Readonly<Record<string, ToolScript>> {
+    return { ...PLANNER_TOOLS, list_available_refs: refsTool(store) };
 }
 
 const MOUSE_WORDS = /\bmouse\b|\bmurine\b|Mus musculus|\bMm\b|mh\.all|ortholog/i;
@@ -835,6 +877,24 @@ export const plannerCases: readonly EvalCase[] = [
         grade: decides("request_clarification", ["submit_plan", "report_blocker"]),
     },
     {
+        id: "plan-reference-url-in-step",
+        set: "dev",
+        source: "planner prompt: when the user gave the source of a missing reference, put that URL in the description of the step that needs it",
+        user: seed(
+            `Which GO biological processes do the genes that change between treated and control enrich for? The GO sets are not in the store: get them from ${GO_BP_URL}`,
+        ),
+        ...PLANNER,
+        grade: all(never(["request_clarification"]), urlInStep(GO_BP_URL, /\bGO\b|gene ontology|biological process/i)),
+    },
+    {
+        id: "plan-reference-url-in-step-held-out",
+        set: "held-out",
+        source: "paraphrase of plan-reference-url-in-step: a different reference and host",
+        user: seed(`Test the DE genes of the treatment for Reactome pathway enrichment. You can download the Reactome gene sets at ${REACTOME_URL}.`),
+        ...PLANNER,
+        grade: all(never(["request_clarification"]), urlInStep(REACTOME_URL, /reactome/i)),
+    },
+    {
         id: "plan-optional-reference-plans",
         set: "dev",
         source: "planner prompt: an optional reference that is absent is a plan with its fallback stated, not a clarification (counter-case of plan-missing-reference)",
@@ -922,7 +982,7 @@ export const plannerCases: readonly EvalCase[] = [
         source: "planner prompt: match the organism to the dataset; a human resource on mouse data gives confident, meaningless numbers",
         user: organismSeed(BOTH_ORGANISM_REFS, "Which genes change between treated and control, and which hallmark pathways do they point to?"),
         ...PLANNER,
-        tools: refsTools(BOTH_ORGANISM_REFS),
+        tools: refsTools(BOTH_ORGANISM_STORE),
         grade: MATCHES_ORGANISM,
     },
     {
@@ -934,7 +994,7 @@ export const plannerCases: readonly EvalCase[] = [
             "Rank the genes by their response to the treatment, and run a GSEA of the ranking against the hallmark collection.",
         ),
         ...PLANNER,
-        tools: refsTools(BOTH_ORGANISM_REFS),
+        tools: refsTools(BOTH_ORGANISM_STORE),
         grade: MATCHES_ORGANISM,
     },
     {

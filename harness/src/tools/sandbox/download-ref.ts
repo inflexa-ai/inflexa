@@ -25,6 +25,8 @@ import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
 
+import { parseHTML } from "linkedom";
+
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
@@ -326,7 +328,10 @@ function firstHeader(headers: IncomingHttpHeaders, name: string): string | undef
     return Array.isArray(value) ? value[0] : value;
 }
 
-type Transfer = { readonly kind: "done"; readonly headers: IncomingHttpHeaders } | { readonly kind: "failed"; readonly reason: string };
+type Transfer =
+    | { readonly kind: "done"; readonly headers: IncomingHttpHeaders }
+    /** `missing` is the URL that answered 404, after the redirects. */
+    | { readonly kind: "failed"; readonly reason: string; readonly missing?: URL };
 
 /**
  * The response of the first address that connects, in the order of the resolution. A host can resolve to an address
@@ -401,7 +406,9 @@ async function transfer(start: URL, part: string, opts: DownloadRefOpts, signal:
         }
         if (status !== 200 && !resumes) {
             response.body.destroy();
-            return { kind: "failed", reason: `the server answered HTTP ${status}` };
+            return status === 404
+                ? { kind: "failed", reason: "the server answered HTTP 404", missing: current }
+                : { kind: "failed", reason: `the server answered HTTP ${status}` };
         }
 
         const length = Number.parseInt(firstHeader(response.headers, "content-length") ?? "", 10);
@@ -418,6 +425,88 @@ async function transfer(start: URL, part: string, opts: DownloadRefOpts, signal:
         }
         return { kind: "done", headers: response.headers };
     }
+}
+
+const LISTING_MAX_BYTES = 512 * 1024;
+const LISTING_MAX_NAMES = 100;
+
+/** The body of a page as text, at most {@link LISTING_MAX_BYTES}, with the redirects, the HTTPS rule, and the address guard of a download. */
+async function fetchPage(start: URL, opts: DownloadRefOpts, signal: AbortSignal): Promise<{ readonly url: URL; readonly text: string } | undefined> {
+    let current = start;
+    for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
+        if (current.protocol !== "https:") return undefined;
+        const addresses = await opts.resolveHost(hostOf(current));
+        if (addresses.length === 0 || addresses.some((entry) => isGuardedAddress(entry.address))) return undefined;
+        const response = await requestFirstReachable(
+            current,
+            addresses,
+            { headers: { "user-agent": HARNESS_USER_AGENT, "accept-encoding": "identity" }, signal },
+            opts,
+        );
+        const location = firstHeader(response.headers, "location");
+        if (REDIRECT_STATUSES.has(response.status) && location !== undefined) {
+            response.body.destroy();
+            current = new URL(location, current);
+            continue;
+        }
+        if (response.status !== 200) {
+            response.body.destroy();
+            return undefined;
+        }
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of response.body) {
+            const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+            chunks.push(bytes);
+            size += bytes.length;
+            if (size >= LISTING_MAX_BYTES) break;
+        }
+        response.body.destroy();
+        return { url: current, text: Buffer.concat(chunks).subarray(0, LISTING_MAX_BYTES).toString("utf8") };
+    }
+    return undefined;
+}
+
+/** The entries that a folder page links to: a name, or a name with `/` for a folder. Each link that leaves the folder is out. */
+export function listingNames(html: string): string[] {
+    const names = new Set<string>();
+    const { document } = parseHTML(html);
+    for (const anchor of document.querySelectorAll("a[href]")) {
+        const raw = (anchor.getAttribute("href") ?? "").split("#")[0]?.split("?")[0] ?? "";
+        if (raw === "" || raw.startsWith("/") || raw.startsWith("..") || raw.includes("://") || raw.startsWith("mailto:")) continue;
+        let name: string;
+        try {
+            name = decodeURIComponent(raw);
+        } catch {
+            continue;
+        }
+        const [segment, ...rest] = name.split("/").filter((part) => part !== "");
+        if (segment === undefined || rest.length > 0) continue;
+        names.add(name.endsWith("/") ? `${segment}/` : segment);
+    }
+    return [...names];
+}
+
+/**
+ * The reason of a 404 with the entries of the folder of the URL, thus a URL that is close to right corrects itself with
+ * the next call. A folder that does not answer, or that lists nothing, leaves the reason as it is.
+ */
+async function withParentListing(reason: string, missing: URL, opts: DownloadRefOpts, signal: AbortSignal): Promise<string> {
+    const parent = new URL("./", missing);
+    parent.search = "";
+    let page: Awaited<ReturnType<typeof fetchPage>>;
+    try {
+        page = await fetchPage(parent, opts, signal);
+    } catch (cause) {
+        if (signal.aborted) throw cause;
+        return reason;
+    }
+    if (page === undefined) return reason;
+    const names = listingNames(page.text);
+    if (names.length === 0) return reason;
+    const shown = names.slice(0, LISTING_MAX_NAMES);
+    const more = names.length > shown.length ? `, and ${names.length - shown.length} more` : "";
+    return `${reason}. The folder ${page.url.toString()} holds: ${shown.join(", ")}${more}`;
 }
 
 function describeRefusal(refusal: ExtractRefusal): string {
@@ -512,7 +601,10 @@ async function downloadOne(
     await mkdir(dir, { recursive: true });
     const part = join(dir, `${urlName}.part`);
     const done = await transfer(target.url, part, opts, signal);
-    if (done.kind === "failed") return { url: target.key, status: "failed", error: done.reason };
+    if (done.kind === "failed") {
+        const error = done.missing === undefined ? done.reason : await withParentListing(done.reason, done.missing, opts, signal);
+        return { url: target.key, status: "failed", error };
+    }
 
     const name = dispositionName(firstHeader(done.headers, "content-disposition")) ?? urlName;
     const file = join(dir, name);
@@ -539,11 +631,7 @@ async function downloadOne(
 }
 
 const DownloadRefInputSchema = z.object({
-    urls: z
-        .array(z.string().min(1).max(2048))
-        .min(1)
-        .max(MAX_URLS)
-        .describe("HTTPS URLs of the files, all on one host. Take each URL from the user or from a page that you fetched."),
+    urls: z.array(z.string().min(1).max(2048)).min(1).max(MAX_URLS).describe("HTTPS URLs of the files, all on one host."),
     extract: z
         .boolean()
         .optional()
@@ -562,11 +650,11 @@ export function createDownloadRefTool(
         id: "download_ref",
         description:
             "Download reference files over HTTPS into the reference store, which each sandbox reads at /mnt/refs. " +
-            "Use it for a reference that the store does not hold, from a URL that the user gave or that a page you fetched shows. " +
-            "Never use a URL from memory. One call takes the URLs of one host. " +
+            "Use it for a reference that the store does not hold. One call takes the URLs of one host. " +
             "Each file goes to /mnt/refs/<host>/<path of the URL>, and the result gives the path of each file. " +
             "A URL that an earlier call downloaded gives its existing path, with no new transfer. " +
             "A host that is not a known public reference database asks the user first. " +
+            "A URL that the server does not have gives the files of its folder, thus the next call can name the right file. " +
             "A failed file is a normal result: report it, and continue with the data that you have.",
         inputSchema: DownloadRefInputSchema,
         view: "none",

@@ -103,7 +103,7 @@ The tool MUST give an unavailable store, an empty store, and a populated store a
 - **GIVEN** an agent that has `download_ref`
 - **WHEN** a query matches no reference in a populated store
 - **THEN** the content says that no reference matches and that the sandbox has no network
-- **AND** it says that the agent can download the reference from a source that it read
+- **AND** it says that the agent can download the reference into the store
 
 #### Scenario: A query that matches nothing names the store as the only source
 
@@ -147,21 +147,6 @@ paths exclusively through `list_available_refs`.
 
 - **WHEN** a sandbox is created with a reference store mounted
 - **THEN** the container env contains no reference-store variables
-
-### Requirement: Sandbox agent prompts direct agents to the reference store
-
-The instructions of a sandbox agent MUST tell the agent to find reference files with `list_available_refs`. They MUST say that the sandbox has no network. When the agent has `download_ref`, the instructions MUST tell it how to get a missing reference. The source URL must come from the user or from a page that the agent fetched.
-
-#### Scenario: Shared sandbox standards point at the ref store
-
-- **GIVEN** the shared standards prompt of the sandbox agents
-- **THEN** it tells the agent to use `list_available_refs`, narrowed to the collection that it needs, and it says that the sandbox has no network
-
-#### Scenario: A missing reference and the download tool
-
-- **GIVEN** a step agent with `download_ref`
-- **THEN** its instructions say to download a missing reference from a URL that the user gave or that a fetched page shows
-- **AND** they say not to use a URL from the memory of the agent
 
 ### Requirement: Discovery takes a quick look at each file
 

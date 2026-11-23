@@ -11,7 +11,8 @@
 import { parseUnknownRecord } from "@inflexa-ai/harness/lib/unknown-containers.js";
 
 import type { ScriptedResult, ToolScript } from "../lib/agent.js";
-import { all, asked, neverWith, notAsked, type EvalCase } from "../lib/case.js";
+import { all, anyOf, asked, callsAny, inputLacks, never, neverWith, notAsked, submits, type EvalCase } from "../lib/case.js";
+import { downloadRefTool, INFLEXA_REFS_BLOCKED, refsTool } from "../lib/refs.js";
 
 function argvOf(input: unknown): string[] {
     const argv = parseUnknownRecord(input)?.argv;
@@ -22,49 +23,37 @@ function ran(stdout: string): ScriptedResult {
     return { ok: { status: "ran", exitCode: 0, stdout, stderr: "" } };
 }
 
-/** `run_inflexa`: help for each `--help`, the reference list of the case for `refs list`, and success for the rest. */
-function inflexa(refsList: string): ToolScript {
-    return (input) => {
-        const argv = argvOf(input);
-        if (argv.includes("--help"))
-            return ran(
-                `Usage: inflexa ${argv.filter((word) => word !== "--help").join(" ")} [options]\n\nRun the command. Options are listed in the command surface.`,
-            );
-        if (argv[0] === "refs" && argv[1] === "list") return ran(refsList);
-        if (argv[0] === "store" && argv[1] === "ls") return ran("pool: 412 R packages, 230 Python packages\nflights: none");
-        return ran("queued");
-    };
-}
+/** `run_inflexa`: help for each `--help`, the block of `refs`, the pool for `store ls`, and success for the rest. */
+const INFLEXA: ToolScript = (input) => {
+    const argv = argvOf(input);
+    if (argv[0] === "refs") return INFLEXA_REFS_BLOCKED;
+    if (argv.includes("--help"))
+        return ran(
+            `Usage: inflexa ${argv.filter((word) => word !== "--help").join(" ")} [options]\n\nRun the command. Options are listed in the command surface.`,
+        );
+    if (argv[0] === "store" && argv[1] === "ls") return ran("pool: 412 R packages, 230 Python packages\nflights: none");
+    return ran("queued");
+};
 
-const REFS_GRCH38_ABSENT = "genomes:\n  GRCm39        installed  2.7 GB\n  GRCh38        available  3.1 GB\nannotations:\n  gencode-v46   installed";
-const REFS_GRCH38_INSTALLED = "genomes:\n  GRCh38        installed  3.1 GB\n  GRCm39        available  2.7 GB\nannotations:\n  gencode-v46   installed";
-
-const REFS_TOOL_ABSENT = {
-    ok: {
-        collections: [
-            {
-                collection: "genomes",
-                datasets: [
-                    { id: "GRCm39", installed: true },
-                    { id: "GRCh38", installed: false },
-                ],
-            },
-        ],
+const MOUSE_GENOME = {
+    "ftp.ensembl.org/pub/release-112/fasta/mus_musculus/dna/Mus_musculus.GRCm39.dna.primary_assembly.fa.gz": {
+        text: ">1 dna:primary_assembly primary_assembly:GRCm39:1:1:195154279:1 REF\nNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN\n",
+        bytes: 773_241_352,
+    },
+    "ftp.ebi.ac.uk/pub/databases/gencode/Gencode_mouse/release_M35/gencode.vM35.annotation.gtf.gz": {
+        text: '##description: evidence-based annotation of the mouse genome (GRCm39), version M35 (Ensembl 112)\n##provider: GENCODE\n##format: gtf\nchr1\tHAVANA\tgene\t3143476\t3144545\t.\t+\t.\tgene_id "ENSMUSG00000102693.2";\n',
+        bytes: 31_220_114,
     },
 };
-const REFS_TOOL_INSTALLED = {
-    ok: {
-        collections: [
-            {
-                collection: "genomes",
-                datasets: [
-                    { id: "GRCh38", installed: true },
-                    { id: "GRCm39", installed: false },
-                ],
-            },
-        ],
+const HUMAN_GENOME = {
+    "ftp.ensembl.org/pub/release-112/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz": {
+        text: ">1 dna:primary_assembly primary_assembly:GRCh38:1:1:248956422:1 REF\nNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN\n",
+        bytes: 881_211_416,
     },
 };
+
+/** The agents cannot run `inflexa refs`: the CLI blocks it, and `download_ref` replaces it. */
+const NO_INFLEXA_REFS = inputLacks("run_inflexa", ['"refs"']);
 
 const LAUNCH_DIR = {
     ok: {
@@ -88,11 +77,11 @@ function refsDownloadCase(id: string, set: EvalCase["set"], user: string): EvalC
     return {
         id,
         set,
-        source: "complaint: the agent asks for approval a second time; a gated command asks through its tool",
+        source: "cli policy: the agents cannot run inflexa refs; a missing reference downloads with download_ref",
         user,
-        maxSteps: 4,
-        tools: { list_available_refs: REFS_TOOL_ABSENT, run_inflexa: inflexa(REFS_GRCH38_ABSENT) },
-        grade: asked("run_inflexa", ["refs", "download", "GRCh38"]),
+        maxSteps: 6,
+        tools: { list_available_refs: refsTool(MOUSE_GENOME), download_ref: downloadRefTool(), run_inflexa: INFLEXA },
+        grade: all(anyOf(...["GRCh38", "hg38", "GCA_000001405", "GCF_000001405"].map((name) => submits("download_ref", [name]))), NO_INFLEXA_REFS),
     };
 }
 
@@ -100,11 +89,11 @@ function refsInstalledCase(id: string, set: EvalCase["set"], user: string): Eval
     return {
         id,
         set,
-        source: "run_inflexa description: look before telling the user; counter-case of refs-download-asks",
+        source: "list_available_refs description: look before telling the user; counter-case of refs-download-asks",
         user,
         maxSteps: 4,
-        tools: { list_available_refs: REFS_TOOL_INSTALLED, run_inflexa: inflexa(REFS_GRCH38_INSTALLED) },
-        grade: notAsked("run_inflexa", ["download"]),
+        tools: { list_available_refs: refsTool({ ...HUMAN_GENOME, ...MOUSE_GENOME }), download_ref: downloadRefTool(), run_inflexa: INFLEXA },
+        grade: all(callsAny(["list_available_refs"]), never(["download_ref"]), NO_INFLEXA_REFS),
     };
 }
 
@@ -139,7 +128,7 @@ function storeAddCase(id: string, set: EvalCase["set"], user: string): EvalCase 
         source: "run_inflexa description: a missing package is a gated store add, one package for each call",
         user,
         maxSteps: 4,
-        tools: { list_available_packages: PACKAGE_ABSENT, run_inflexa: inflexa(REFS_GRCH38_ABSENT) },
+        tools: { list_available_packages: PACKAGE_ABSENT, run_inflexa: INFLEXA },
         grade: all(asked("run_inflexa", ["store", "add", "apeglm"]), notAsked("run_inflexa", ["refs"])),
     };
 }

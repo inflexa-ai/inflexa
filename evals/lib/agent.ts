@@ -153,6 +153,7 @@ export function conversationAgent(): Promise<AgentDefinition> {
         services: evalServices(),
         toolOutputStore: unusedToolOutputStore,
         hostTools: cliHostTools(),
+        referenceDownloads: { storePath: "/eval/refs", autoApproveHosts: [] },
     }).forTurn();
 }
 
