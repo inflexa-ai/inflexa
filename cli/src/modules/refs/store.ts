@@ -6,9 +6,6 @@ import { randomUUIDv7 } from "bun";
 
 import {
     REFERENCE_DATA_CATALOG,
-    REFERENCE_INSTALL_RECEIPT_VERSION,
-    parseReferenceInstallReceipt,
-    referenceReceiptContentDigest,
     referenceArtifactKey,
     resolveReferenceInstallPlan,
     type ReferenceArtifact,
@@ -16,10 +13,15 @@ import {
     type ReferenceDataset,
     type ReferenceInstallPlan,
     type ReferenceInstallPlanDataset,
+    type UnknownReferenceDatasetError,
+} from "./catalog.ts";
+import {
+    REFERENCE_INSTALL_RECEIPT_VERSION,
+    parseReferenceInstallReceipt,
+    referenceReceiptContentDigest,
     type ReferenceInstallReceipt,
     type ReferenceReceiptArtifact,
-    type UnknownReferenceDatasetError,
-} from "@inflexa-ai/harness";
+} from "./receipt.ts";
 import { err, ok, type Result } from "neverthrow";
 import PQueue from "p-queue";
 import { z } from "zod";
@@ -109,7 +111,7 @@ export type ReferenceListLicense = {
 
 /**
  * One catalog dataset projected for the list document: its catalog identity and provenance (with the
- * harness `recommendation` nesting flattened to `group`/`recommended`), the cheap local state, and —
+ * catalog `recommendation` nesting flattened to `group`/`recommended`), the cheap local state, and —
  * only when the dataset's files are present from a completed install (`state` is `installed` or
  * `update_available`) — the installed version and install timestamp. A `partial` dataset carries a
  * receipt but is not usable, so its receipt is deliberately not surfaced: key presence must never
@@ -146,7 +148,7 @@ export type ReferenceListDataset = {
 /**
  * The `refs list --json` wire shape, and the in-process surface a host-side planner imports directly.
  * A CLI-owned projection built field-by-field from a `ReferenceStoreInspection` — deliberately NOT a
- * serialization of the harness catalog/receipt types, so a harness release cannot silently mutate the
+ * serialization of the catalog/receipt types, so a catalog change cannot silently mutate the
  * shape the CLI documents as stable. Key order is pinned by explicit literal construction; dataset
  * order is catalog order.
  */
@@ -335,7 +337,7 @@ export type ReferenceDownloadProgress =
 export type ReferenceInstallDeps = {
     /** Public store root. */
     readonly root: string;
-    /** Catalog/plan seam used by tests; production always defaults to the immutable harness source. */
+    /** Catalog/plan seam used by tests; production always defaults to the immutable catalog. */
     readonly source?: ReferenceCatalogSource;
     /** Fetch implementation; defaults to the runtime fetch. */
     readonly fetch?: FetchLike;

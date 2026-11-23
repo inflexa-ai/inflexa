@@ -843,6 +843,28 @@ describe("POST /api/v1/open-directory", () => {
         expect(opened).toEqual([env.refsDir]);
     });
 
+    test("`reference_store` opens the folder of `refs.dir`", async () => {
+        const store = mkdtempSync(join(tmpdir(), "inflexa-refs-"));
+        homes.push(store);
+        writeFileSync(env.configPath, JSON.stringify({ telemetry: false, refs: { dir: store } }));
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "reference_store" }));
+        expect(response.status).toBe(200);
+        expect(opened).toEqual([store]);
+        expect(existsSync(env.refsDir)).toBe(false);
+    });
+
+    test("a relative `refs.dir` is 409 `conflict` that names the key, and opens nothing", async () => {
+        writeFileSync(env.configPath, JSON.stringify({ telemetry: false, refs: { dir: "refs" } }));
+        const { routes, opened } = opener();
+        const response = await routes.request("/open-directory", json("POST", { target: "reference_store" }));
+        expect(response.status).toBe(409);
+        const body = await errorBody(response);
+        expect(body).toHaveProperty("error", "conflict");
+        expect(body).toHaveProperty("message", expect.stringContaining("`refs.dir`"));
+        expect(opened).toEqual([]);
+    });
+
     test("`package_store` opens the store folder and answers `opened: true`", async () => {
         mkdirSync(env.packageStoreDir, { recursive: true });
         const { routes, opened } = opener();

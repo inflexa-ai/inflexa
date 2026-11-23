@@ -285,7 +285,7 @@ function truncateOutput(text: string): string {
 /**
  * Render one argv element for the approval prompt. An element carrying
  * whitespace or a quote is wrapped in quotes — an unquoted join would show
- * `refs download my file` for a three-element argv whose one operand is
+ * `geo download my file` for a three-element argv whose one operand is
  * "my file", and the user would approve word boundaries that are not the ones
  * spawning. Display-only: the spawn receives the raw array (no shell), so this
  * must be faithful to a reader, not a correct shell escaper; an element carrying

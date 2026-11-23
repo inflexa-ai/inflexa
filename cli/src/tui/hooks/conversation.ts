@@ -36,7 +36,7 @@ import { getLogger } from "../../lib/log.ts";
 import { runAfter } from "../../lib/timer.ts";
 import { isKnownPart, isSubAgentEvent, readFileReference, readPlanCard, readPresentation, subAgentActivityLabel } from "../../modules/harness/chat_printer.ts";
 import { leaderSeq, sequenceLabel } from "../keymap.ts";
-import { clearAsks, pushAsk, settleAsk } from "./asks.ts";
+import { clearTurnAsks, pushAsk, settleAsk } from "./asks.ts";
 import { clearTurnPause, notePausePart, pausePartOf } from "./pauses.ts";
 import { refreshReportChildren } from "./report_children.ts";
 import { bootState } from "./boot.ts";
@@ -588,7 +588,7 @@ function restartAssistantTurn(): void {
     turnMessages = [];
     openTools.clear();
     deepestSubAgentDepth = 0;
-    clearAsks();
+    clearTurnAsks();
     clearTurnPause();
     setStreamPartId(null);
     setStreamText("");
@@ -766,7 +766,7 @@ function finishTurn(result: TurnResult, assistantId: string, startedAt: number):
     // The turn is settling: drop any still-pending asks so the docked prompt can never outlive its
     // turn. Each terminal re-emit already settled its own entry during the turn; this is the final
     // sweep for the abort/failure path where a terminal re-emission may never arrive. A pause ends with its turn too.
-    clearAsks();
+    clearTurnAsks();
     clearTurnPause();
     // The turn is ending — clear any armed interrupt window so it never carries into idle or the next turn.
     disarmInterrupt();
@@ -1122,7 +1122,7 @@ export function resetHotState(): void {
     turnStartedAt = 0;
     // Drop any pending asks so a swap/abort mid-decision never leaves a stale docked prompt. The same holds for a
     // pause, and the read of a paused turn of the swapped-away thread stops.
-    clearAsks();
+    clearTurnAsks();
     watchedTurn?.stop();
     watchedTurn = null;
     clearTurnPause();

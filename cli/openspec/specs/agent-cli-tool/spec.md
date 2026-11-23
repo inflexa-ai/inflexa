@@ -26,12 +26,12 @@ The tool SHALL classify each argv before running it. An argv that classification
 
 #### Scenario: A help invocation runs without a prompt
 
-- **WHEN** the tool is invoked with `["--help"]` or `["refs", "--help"]`
+- **WHEN** the tool is invoked with `["--help"]` or `["geo", "--help"]`
 - **THEN** it spawns the CLI and returns the help text with no approval prompt
 
 #### Scenario: An action invocation requires approval
 
-- **WHEN** the tool is invoked with an argv that classification resolves to an action (e.g. `["refs", "download", "reactome-pathways", "--yes"]`)
+- **WHEN** the tool is invoked with an argv that classification resolves to an action (e.g. `["geo", "download", "GSE12345"]`)
 - **THEN** it raises an approval request and does not spawn until the user approves
 
 #### Scenario: A rejection ends the turn without spawning
@@ -109,8 +109,8 @@ For a command registered with the `auto` policy, the tool SHALL spawn immediatel
 
 #### Scenario: A safe-flagged invocation runs free
 
-- **GIVEN** `refs list` registered as `auto` with safeFlags covering `urls` and `json`
-- **WHEN** the tool is invoked with `["refs", "list", "--json"]`
+- **GIVEN** `mcp ls` registered as `auto` with safeFlags covering `json`
+- **WHEN** the tool is invoked with `["mcp", "ls", "--json"]`
 - **THEN** it spawns without prompting and returns the captured output
 
 #### Scenario: An out-of-set flag escalates to approval
@@ -127,9 +127,9 @@ For a command registered with the `auto` policy, the tool SHALL spawn immediatel
 
 #### Scenario: Positional operands do not escalate
 
-- **GIVEN** `refs verify` registered as `auto` with safeFlags covering `json`
-- **WHEN** the tool is invoked with `["refs", "verify", "reactome-pathways", "--json"]`
-- **THEN** the invocation runs free — the positional dataset id plays no part in the auto decision
+- **GIVEN** `agent show` registered as `auto` with safeFlags covering `json`
+- **WHEN** the tool is invoked with `["agent", "show", "analyst", "--json"]`
+- **THEN** the invocation runs free — the positional agent id plays no part in the auto decision
 
 ### Requirement: Classification is the commander parse, not a string heuristic
 
@@ -137,8 +137,8 @@ The tool SHALL classify an argv by parsing it against the real commander program
 
 #### Scenario: A masked help flag is gated, not auto-allowed
 
-- **WHEN** the tool is invoked with `["refs", "download", "reactome-pathways", "--", "--help"]`
-- **THEN** classification resolves it to the `refs download` action (the post-terminator `--help` is an operand) and it requires approval
+- **WHEN** the tool is invoked with `["geo", "download", "GSE12345", "--", "--help"]`
+- **THEN** classification resolves it to the `geo download` action (the post-terminator `--help` is an operand) and it requires approval
 
 #### Scenario: A malformed argv is returned to the model, not spawned
 
@@ -170,12 +170,12 @@ A command starts its detached child with a hidden worker-mode option: `--run-flu
 
 ### Requirement: The standing grant keys on the resolved subcommand path
 
-The approval request SHALL display the exact argv as its `command` (an element carrying whitespace rendered quoted, so the word boundaries the user reads are the word boundaries that spawn), and SHALL set the harness `grantKey` to the resolved subcommand path only (the command names, with no argument or option values) — for example `inflexa refs download`. An `always` reply SHALL therefore auto-approve later invocations that resolve to the same subcommand path in the same analysis, without re-prompting for a different argument. The prompt SHALL make the granted subcommand-path class visible so an `always` is an informed decision.
+The approval request SHALL display the exact argv as its `command` (an element carrying whitespace rendered quoted, so the word boundaries the user reads are the word boundaries that spawn), and SHALL set the harness `grantKey` to the resolved subcommand path only (the command names, with no argument or option values) — for example `inflexa geo download`. An `always` reply SHALL therefore auto-approve later invocations that resolve to the same subcommand path in the same analysis, without re-prompting for a different argument. The prompt SHALL make the granted subcommand-path class visible so an `always` is an informed decision.
 
 #### Scenario: Approving one dataset covers the next on the same subcommand
 
-- **GIVEN** an analysis where `["refs","download","reactome-pathways","--yes"]` was approved with `always`
-- **WHEN** the tool is later invoked with `["refs","download","wikipathways-human","--yes"]` in that analysis
+- **GIVEN** an analysis where `["geo","download","GSE12345"]` was approved with `always`
+- **WHEN** the tool is later invoked with `["geo","download","GSE67890"]` in that analysis
 - **THEN** it spawns without a new approval prompt
 
 #### Scenario: The prompt shows the exact command
@@ -189,7 +189,7 @@ The tool SHALL spawn the CLI with an argv array (never through a shell), `stdin`
 
 #### Scenario: An interactive command declines rather than hangs
 
-- **WHEN** the tool spawns a command whose interactive path is gated on a TTY (e.g. `refs download` without `--yes`)
+- **WHEN** the tool spawns a command whose interactive path is gated on a TTY (a command that asks for consent only on a TTY)
 - **THEN** the ignored `stdin` makes the subprocess non-interactive so it declines instead of waiting for input
 
 #### Scenario: A hung child is terminated
@@ -349,8 +349,8 @@ This tool's standing invariant is that what the user approves is exactly what ex
 #### Scenario: A call shows its argv and declares the error
 
 - **GIVEN** the `run_inflexa` tool
-- **WHEN** its view reads a call with the argv `["refs", "list"]`
-- **THEN** the shown input is `{ "argv": ["refs", "list"] }`, and the view declares `error`
+- **WHEN** its view reads a call with the argv `["mcp", "ls"]`
+- **THEN** the shown input is `{ "argv": ["mcp", "ls"] }`, and the view declares `error`
 
 #### Scenario: A call that ran shows its status, its exit code, and each stream with text
 
@@ -387,4 +387,3 @@ The conversation of the agent runs inside the local server, thus a command that 
 
 - **WHEN** the tool is invoked with `["server", "walk", "/"]`
 - **THEN** it returns a blocked result to the model without prompting and without spawning
-

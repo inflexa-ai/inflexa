@@ -18,6 +18,7 @@ import type { Workspace } from "../contexts/workspace.ts";
 import type { RunStepView } from "../components/run_block.tsx";
 import { bootState, checkServer } from "./boot.ts";
 import { otherClientTurn, pollOpenThread, watchPausedTurn } from "./conversation.ts";
+import { refreshPolledAsks } from "./asks.ts";
 import { refreshPausedWork } from "./pauses.ts";
 import { chatStatus, type ChatStatus } from "./status.ts";
 
@@ -892,6 +893,11 @@ export type WatchSeams = {
      * stream, thus its pause prompt docks. `threadId` is `null` before a thread is bound. Real: {@link pollPausedWork}.
      */
     readonly pollPaused: (analysisId: string, threadId: string | null) => Promise<void>;
+    /**
+     * Read the pending asks of the analysis, and dock each one that the ask queue does not hold, for example the ask
+     * of a run step, which no turn streams. Real: {@link refreshPolledAsks}.
+     */
+    readonly pollAsks: (analysisId: string) => Promise<void>;
     /** Arm a repeating timer; returns its disarm. Real: `runEvery`. */
     readonly arm: (fn: () => void, ms: number) => () => void;
 };
@@ -927,6 +933,7 @@ const realWatchSeams: WatchSeams = {
     checkServer: () => checkServer(),
     pollThread: (analysisId, threadId) => pollOpenThread(analysisId, threadId),
     pollPaused: (analysisId, threadId) => pollPausedWork(analysisId, threadId),
+    pollAsks: (analysisId) => refreshPolledAsks(analysisId),
     arm: (fn, ms) => runEvery(ms, fn),
 };
 
@@ -959,8 +966,8 @@ export const pollTicks = pollTick;
  *
  * The server sends no event, thus this poll is how the TUI sees what a different client changes: a tick
  * refreshes the ledger, probes the server, and, when the server that the boot store saw ready answers,
- * reads the scope of the analysis, the usage of the session ({@link pollTicks}), the open thread, and the paused work
- * of the analysis ({@link pollPausedWork}). A
+ * reads the scope of the analysis, the usage of the session ({@link pollTicks}), the open thread, the paused work
+ * of the analysis ({@link pollPausedWork}), and the pending asks of the analysis. A
  * change shows at the latest one idle tick later. A caller that learns of a new run, for example from a
  * run card of the turn, calls {@link refreshSidebarData} itself.
  */
@@ -994,6 +1001,15 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
         const threadId = workspace.sessionId;
         if (phase !== "ready" || analysisId === null) return;
         void seams.pollPaused(analysisId, threadId);
+    });
+
+    // Trigger 1c — the pending asks at the open of an analysis. The ask of a run step docks at the open, not one
+    // poll tick later, and an ask of the analysis that the user left leaves the queue.
+    createEffect(() => {
+        const phase = bootState().phase;
+        const analysisId = workspace.analysis?.id ?? null;
+        if (phase !== "ready" || analysisId === null) return;
+        void seams.pollAsks(analysisId);
     });
 
     // Trigger 2 — the busy→idle down-edge. `prev` is closure-local per watcher invocation; seeded to
@@ -1046,7 +1062,7 @@ export function watchSidebarData(workspace: Workspace, seams: WatchSeams = realW
             setPollTick((n) => n + 1);
             const threadId = workspace.sessionId;
             if (threadId !== null) await seams.pollThread(analysisId, threadId);
-            await seams.pollPaused(analysisId, threadId);
+            await Promise.all([seams.pollPaused(analysisId, threadId), seams.pollAsks(analysisId)]);
         } finally {
             await scope.catch((e: unknown) => getLogger("chat").warn({ err: e, analysisId }, "the scope read of a sidebar tick failed"));
         }

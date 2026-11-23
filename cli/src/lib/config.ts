@@ -1,5 +1,6 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeSync } from "node:fs";
-import { dirname } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
 import { Result, ok, err } from "neverthrow";
 import { z } from "zod";
 
@@ -169,6 +170,16 @@ const configSchema = z.object({
         .object({
             /** How many acquisition flights run at one time. */
             flightConcurrency: z.number().int().min(1).max(8).optional(),
+        })
+        .optional()
+        .catch(undefined),
+    // The reference store. `dir` moves the store, for example to an external drive, and it is an absolute path or a
+    // `~/` path (see resolveRefsDir). `autoApproveHosts` adds hosts to the default auto-approve list of the harness
+    // download tool. Per-field `.catch(undefined)`, as the embedding block: a malformed field degrades to unset alone.
+    refs: z
+        .object({
+            dir: z.string().min(1).optional().catch(undefined),
+            autoApproveHosts: z.array(z.string().min(1)).optional().catch(undefined),
         })
         .optional()
         .catch(undefined),
@@ -484,8 +495,8 @@ function declaredShape(schema: z.core.$ZodType): Record<string, z.core.$ZodType>
  * follow. Alphabetical is the only order derivable from the value itself.
  */
 function canonicalKeyOrder(value: unknown, schema: z.core.$ZodType | null): unknown {
-    // Array ORDER is data — only the elements' interior keys get reordered. No `configSchema` field is an
-    // array, so an element's own declaration is never reachable; its keys fall to the alphabetical rule.
+    // Array ORDER is data — only the elements' interior keys get reordered. No `configSchema` array holds
+    // objects, so an element's own declaration is never reachable; its keys fall to the alphabetical rule.
     if (Array.isArray(value)) return value.map((item) => canonicalKeyOrder(item, null));
     const parsedRecord = unknownRecordSchema.safeParse(value);
     if (!parsedRecord.success) return value;
@@ -684,6 +695,22 @@ export function resolveConnectionMode(): "cliproxy" | "direct" {
     const parsed = modelsConfigSchema.safeParse(raw);
     if (!parsed.success) return "cliproxy";
     return parsed.data.connection?.mode ?? "cliproxy";
+}
+
+/** The `refs.dir` config value is a relative path that does not start with `~/`. */
+export type RefsDirError = { type: "refs_dir_relative"; value: string };
+
+/**
+ * The host path of the reference store: the `refs.dir` config value, or `env.refsDir` when it is absent. A `~/`
+ * value expands to the home folder. Each other relative value is an error, because a path relative to the folder of
+ * the server has no meaning for the user. The resolver makes no directory: the download tool of the harness makes it
+ * at the first download.
+ */
+export function resolveRefsDir(config: Config = readConfig()): Result<string, RefsDirError> {
+    const dir = config.refs?.dir;
+    if (dir === undefined) return ok(env.refsDir);
+    if (dir.startsWith("~/")) return ok(join(homedir(), dir.slice(2)));
+    return isAbsolute(dir) ? ok(dir) : err({ type: "refs_dir_relative", value: dir });
 }
 
 // resolvePostgresConfig runs on nearly every boot path and is called repeatedly within one; latch so the

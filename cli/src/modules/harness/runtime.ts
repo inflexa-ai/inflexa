@@ -45,7 +45,7 @@ import {
     type ThreadAgentResolver,
 } from "@inflexa-ai/harness";
 
-import { ensureRuntime, readConfig } from "../../lib/config.ts";
+import { ensureRuntime, readConfig, resolveRefsDir, type RefsDirError } from "../../lib/config.ts";
 import {
     ContainerRuntimeError,
     engineCapacity,
@@ -235,6 +235,7 @@ export type HarnessBootError =
     | { type: "embedding_dimension_mismatch"; expected: number; actual: number }
     | { type: "content_materialize_failed"; cause: ContentError }
     | { type: "skills_dir_missing"; path: string | null }
+    | { type: "refs_dir_invalid"; cause: RefsDirError }
     | { type: "proxy_key_missing"; cause: ChatSetupError }
     | { type: "model_api_key_missing"; providerVar: string }
     | { type: "model_unresolved"; cause: ChatSetupError }
@@ -279,6 +280,8 @@ export function describeBootError(e: HarnessBootError): string {
             ].join("\n");
         case "skills_dir_missing":
             return `Skills directory not found${e.path ? ` at ${e.path}` : ""}. Set \`harness.skillsDir\` in config.json (a checkout's \`skills/\` tree).`;
+        case "refs_dir_invalid":
+            return `The \`refs.dir\` path "${e.cause.value}" is relative. The path must be absolute, or start with \`~/\`. Fix it in config.json and re-run.`;
         case "content_materialize_failed":
             return [
                 `Could not unpack the bundled skills and report page assets into ${env.contentDir} (${e.cause.type}).`,
@@ -878,6 +881,9 @@ async function bootHarnessRuntimeOnce(
         return err({ type: "skills_dir_missing", path: cfg.skillsDir });
     }
     const builtinSkillsDir = cfg.skillsDir;
+    const refsDirResult = resolveRefsDir();
+    if (refsDirResult.isErr()) return err({ type: "refs_dir_invalid", cause: refsDirResult.error });
+    const refsDir = refsDirResult.value;
     const embedderResult = seams.resolveEmbedding();
     if (embedderResult.isErr()) return err({ type: "embedding_unresolved", cause: embedderResult.error });
     const embedding = embedderResult.value;
@@ -1133,7 +1139,7 @@ async function bootHarnessRuntimeOnce(
             // (e.g. a reference download during a chat) reaches the next sandbox with no
             // restart. A boot-time existence gate here would freeze the cold-start state
             // for the whole process lifetime and defeat that re-check.
-            refStorePath: env.refsDir,
+            refStorePath: refsDir,
             resourceLimits: resourcePolicy.perStep,
             resolveWorkspaceRoot,
             // The docker backend's diagnostics (lib-store degradation, recovery
@@ -1229,7 +1235,7 @@ async function bootHarnessRuntimeOnce(
             modelProvider: connection.provider,
             // The stable delegating sandbox emitters the run-engine bundles inject.
             sandboxEmitters: emitters,
-            refStorePath: env.refsDir,
+            refStorePath: refsDir,
             farmLockFile,
             imagePackagesFile,
             // The farm-extension seam, which gives each sandbox agent the `link_packages`
@@ -1265,7 +1271,7 @@ async function bootHarnessRuntimeOnce(
                 model: sandboxModel,
                 runAuthorizer,
                 embedding,
-                refStorePath: env.refsDir,
+                refStorePath: refsDir,
                 farmLockFile,
                 imagePackagesFile,
                 // The same farm-extension realization as the step agents (the
@@ -1307,7 +1313,7 @@ async function bootHarnessRuntimeOnce(
             webSearch: createSearxngEngine({ baseUrl: env.searxngBaseUrl }),
             // Gives the planner reference discovery over the same store the sandbox
             // mounts, so a plan can name what this install actually holds.
-            refStorePath: env.refsDir,
+            refStorePath: refsDir,
             // The farm lock stays the fallback; the POOL reader below is what this
             // agent answers from. Its question is "what does the store hold", and
             // the farm of a new analysis is empty — a farm view here would read
@@ -1460,6 +1466,9 @@ async function bootHarnessRuntimeOnce(
                 // One person owns a local install, and the local credential holds no secret, thus a turn
                 // that a recovery runs after a restart gets the same credential as a new turn.
                 credentialFor: () => makeLocalAuth(),
+                // The conversation agent and each step agent get `download_ref`. It writes into the same store
+                // that `refStorePath` reads, and `refs.autoApproveHosts` adds to the default hosts of the harness.
+                referenceDownloads: { storePath: refsDir, autoApproveHosts: readConfig().refs?.autoApproveHosts ?? [] },
             },
             pool: composition.pool,
             dbos: {

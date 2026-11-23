@@ -10,8 +10,8 @@ import { classifyInflexaArgv } from "../inflexa_classify.ts";
 describe("classifyInflexaArgv — introspection", () => {
     test.each([
         ["root --help", ["--help"]],
-        ["subgroup --help", ["refs", "--help"]],
-        ["leaf --help", ["refs", "download", "--help"]],
+        ["subgroup --help", ["geo", "--help"]],
+        ["leaf --help", ["geo", "download", "--help"]],
         ["--version", ["--version"]],
     ])("%s classifies as introspection", async (_label, argv) => {
         const result = await classifyInflexaArgv(argv);
@@ -19,49 +19,49 @@ describe("classifyInflexaArgv — introspection", () => {
     });
 
     test("a bare parent group (no action, prints its own help) is introspection", async () => {
-        const result = await classifyInflexaArgv(["refs"]);
+        const result = await classifyInflexaArgv(["geo"]);
         expect(result.kind).toBe("introspection");
     });
 });
 
 describe("classifyInflexaArgv — action", () => {
     test("a real leaf command resolves to its argv + path + grantKey + policy + setOptions", async () => {
-        const argv = ["refs", "download", "reactome-pathways", "--yes"];
+        const argv = ["geo", "download", "GSE12345", "--max-size", "64GB"];
         const result = await classifyInflexaArgv(argv);
         expect(result).toEqual({
             kind: "action",
             argv,
-            path: ["inflexa", "refs", "download"],
-            grantKey: "inflexa refs download",
+            path: ["inflexa", "geo", "download"],
+            grantKey: "inflexa geo download",
             policy: { kind: "approval", transfer: true },
-            // `--yes` is explicitly set; the positional dataset id contributes nothing.
-            setOptions: ["yes"],
-            operands: ["reactome-pathways"],
+            // `--max-size` is explicitly set; the positional accession contributes nothing.
+            setOptions: ["maxSize"],
+            operands: ["GSE12345"],
         });
     });
 
     test("a post-`--` `--help` is an operand, so the argv is an action, NOT introspection", async () => {
-        const argv = ["refs", "download", "reactome-pathways", "--", "--help"];
+        const argv = ["geo", "download", "--", "--help"];
         const result = await classifyInflexaArgv(argv);
         // The injection defense: `--help` after `--` never reaches the help path; it hits the action.
         // The post-`--` `--help` is an operand, never the option, so setOptions stays empty.
         expect(result).toEqual({
             kind: "action",
             argv,
-            path: ["inflexa", "refs", "download"],
-            grantKey: "inflexa refs download",
+            path: ["inflexa", "geo", "download"],
+            grantKey: "inflexa geo download",
             policy: { kind: "approval", transfer: true },
             setOptions: [],
-            operands: ["reactome-pathways", "--help"],
+            operands: ["--help"],
         });
     });
 
     test("different arguments of the same command collapse to one grantKey", async () => {
-        const reactome = await classifyInflexaArgv(["refs", "download", "reactome-pathways", "--yes"]);
-        const wikipathways = await classifyInflexaArgv(["refs", "download", "wikipathways-human", "--yes"]);
-        if (reactome.kind !== "action" || wikipathways.kind !== "action") throw new Error("expected actions");
-        expect(reactome.grantKey).toBe(wikipathways.grantKey);
-        expect(wikipathways.grantKey).toBe("inflexa refs download");
+        const first = await classifyInflexaArgv(["geo", "download", "GSE12345"]);
+        const second = await classifyInflexaArgv(["geo", "download", "GSE67890"]);
+        if (first.kind !== "action" || second.kind !== "action") throw new Error("expected actions");
+        expect(first.grantKey).toBe(second.grantKey);
+        expect(second.grantKey).toBe("inflexa geo download");
     });
 
     test("bare `inflexa` (empty argv) is the root action, keyed on the root name alone, carrying the root's blocked policy", async () => {
@@ -93,31 +93,31 @@ describe("classifyInflexaArgv — malformed", () => {
     });
 
     test("an unknown option is malformed", async () => {
-        const result = await classifyInflexaArgv(["refs", "--nope"]);
+        const result = await classifyInflexaArgv(["geo", "--nope"]);
         expect(result.kind).toBe("malformed");
     });
 
     // The root carries a default `.action()`, which disables commander's implicit `help` command. The registered
     // `help [topic]` command takes its place, thus `help <command>` is an action of its own.
     test("`help <command>` is the registered help command", async () => {
-        const result = await classifyInflexaArgv(["help", "refs"]);
+        const result = await classifyInflexaArgv(["help", "geo"]);
         expect(result).toMatchObject({ kind: "action", grantKey: "inflexa help", policy: { kind: "auto" } });
     });
 });
 
 describe("classifyInflexaArgv — defensive tokenization", () => {
     test("a single packed command string is split quote-awarely, and the verdict carries the tokenized argv", async () => {
-        const result = await classifyInflexaArgv(["refs download reactome-pathways --yes"]);
+        const result = await classifyInflexaArgv(["geo download GSE12345 --max-size 64GB"]);
         // The verdict's argv IS the tokenized form — the single normalization a
         // caller may spawn; re-deriving it from the input would diverge.
         expect(result).toEqual({
             kind: "action",
-            argv: ["refs", "download", "reactome-pathways", "--yes"],
-            path: ["inflexa", "refs", "download"],
-            grantKey: "inflexa refs download",
+            argv: ["geo", "download", "GSE12345", "--max-size", "64GB"],
+            path: ["inflexa", "geo", "download"],
+            grantKey: "inflexa geo download",
             policy: { kind: "approval", transfer: true },
-            setOptions: ["yes"],
-            operands: ["reactome-pathways"],
+            setOptions: ["maxSize"],
+            operands: ["GSE12345"],
         });
     });
 
@@ -142,15 +142,15 @@ describe("classifyInflexaArgv — policy + setOptions", () => {
     });
 
     test("an approval command's verdict carries the approval policy", async () => {
-        const result = await classifyInflexaArgv(["refs", "download", "reactome-pathways", "--yes"]);
+        const result = await classifyInflexaArgv(["geo", "download", "GSE12345"]);
         if (result.kind !== "action") throw new Error("expected action");
         expect(result.policy).toEqual({ kind: "approval", transfer: true });
     });
 
     test("an auto command's verdict carries the auto policy and its safeFlags", async () => {
-        const result = await classifyInflexaArgv(["refs", "list", "--json"]);
+        const result = await classifyInflexaArgv(["mcp", "ls", "--json"]);
         if (result.kind !== "action") throw new Error("expected action");
-        expect(result.policy).toEqual({ kind: "auto", safeFlags: ["urls", "json"] });
+        expect(result.policy).toEqual({ kind: "auto", safeFlags: ["json"] });
         expect(result.setOptions).toEqual(["json"]);
     });
 
@@ -182,8 +182,8 @@ describe("classifyInflexaArgv — policy + setOptions", () => {
     });
 
     test("post-`--` operands contribute nothing to setOptions", async () => {
-        // Everything after `--` is an operand (a variadic id here), never parsed as the `--yes` option.
-        const result = await classifyInflexaArgv(["refs", "download", "some-id", "--", "--yes"]);
+        // Everything after `--` is an operand (the accession here), never parsed as the `--max-size` option.
+        const result = await classifyInflexaArgv(["geo", "download", "--", "--max-size"]);
         if (result.kind !== "action") throw new Error("expected action");
         expect(result.setOptions).toEqual([]);
     });

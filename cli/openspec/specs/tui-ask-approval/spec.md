@@ -193,9 +193,10 @@ surface an error notice and leave the ask queued, so the user can answer it agai
 
 Multiple concurrent asks SHALL queue; the prompt SHALL show the head ask and a
 count hint when more are queued, and the user SHALL answer them one by one.
-Turn teardown (completion, failure, or abort) SHALL clear the pending queue so
-a stale prompt can never outlive its turn — a terminal re-emission is not
-guaranteed on abort.
+Turn teardown (completion, failure, or abort) SHALL remove the asks of that
+turn from the queue so a stale prompt can never outlive its turn — a terminal
+re-emission is not guaranteed on abort. Turn teardown SHALL NOT remove the ask
+of a step.
 
 #### Scenario: Two concurrent asks answered in order
 
@@ -211,9 +212,10 @@ guaranteed on abort.
 
 ### Requirement: Asks are live-turn-only visuals
 
-Ask cards and the docked prompt SHALL exist only within the live turn that
-produced them: the CLI SHALL NOT reconstruct `data-ask` parts on transcript
-reload. The harness ask ledger remains the durable record of every ask and its
+The ask cards of a turn and its docked prompt SHALL exist only within the live
+turn that produced them: the CLI SHALL NOT reconstruct `data-ask` parts on
+transcript reload. The pending ask of a step is not part of a turn, and the
+poll docks it (see the requirement on the asks of a step). The harness ask ledger remains the durable record of every ask and its
 outcome.
 
 #### Scenario: Reload does not resurrect asks
@@ -287,3 +289,19 @@ reject.
 - **GIVEN** a REPL ask prompt for a pending ask
 - **WHEN** the user cancels the prompt
 - **THEN** the REPL sends a reject, and the turn ends with the model-visible denial
+
+### Requirement: The poll docks the pending asks of a step
+
+At each poll of the sidebar, the TUI MUST read the pending asks of the open analysis from the server. It MUST dock each pending ask whose id is not in the queue, after the asks that are already there. It MUST remove an ask of a step from the queue when the poll no longer lists it. An answer MUST go through the same answer route as the ask of a turn.
+
+#### Scenario: A step waits for a download approval
+
+- **GIVEN** a run whose step waits for the approval of a download, and no chat turn
+- **WHEN** the next poll of the sidebar completes
+- **THEN** the docked prompt shows the ask of the step, and an `once` answer lets the step continue
+
+#### Scenario: An ask that a different client answered
+
+- **GIVEN** a docked ask of a step
+- **WHEN** a different client answers it, and the next poll does not list it
+- **THEN** the TUI removes the ask from the queue

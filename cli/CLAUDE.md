@@ -97,7 +97,7 @@ until the user says differently.
 
 **An option must never change the effect class of a command, from read to write
 or from write to read.** Make it a new subcommand with its own policy, not a flag.
-Write `refs refresh`, not `refs list --refresh`. This keeps `safeFlags` small, and
+Write `store refresh`, not `store ls --refresh`. This keeps `safeFlags` small, and
 it classifies each effect class independently.
 
 ## Error handling — neverthrow first
@@ -689,9 +689,9 @@ runtime, the SQLite database, and the package store work. The TUI and each
 `instance` command are clients of its HTTP API under `/api/v1`. The `local-server`
 spec is the contract.
 
-- **Run the dev server.** `bun run dev serve` runs the server of the dev channel in
-  the foreground, on `127.0.0.1:8436`. Ctrl+C stops it. If no server answers, an
-  `instance` command starts `inflexa serve --detach` in the background.
+- **Run the dev server.** `bun run dev server start` starts the server of the dev
+  channel in the background, on `127.0.0.1:8436`, and returns when it answers. If
+  no server answers, an `instance` command starts it the same way.
 - **Restart the server after a change.** A server runs the code that it loaded at
   its start. After you change code on the server side, run
   `bun run dev server stop`. The next `instance` command starts a server with the

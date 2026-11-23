@@ -50,6 +50,7 @@ function gatewayOf(pending: () => Promise<PendingAsk[]>): AskGateway {
         pending,
         pendingByAnalyses: never,
         scopeOf: never,
+        workflowOf: never,
         sweepExpired: () => Promise.resolve(0),
     };
 }
@@ -262,6 +263,18 @@ describe("GET /api/v1/attention", () => {
             ["orphan", true],
         ]);
         expect(body.asks[2]?.threadId).toBeNull();
+    });
+
+    test("an ask with no thread is the ask of a step, and it is not stale while a run of its analysis runs", async () => {
+        const a1 = seedAnalysis("trial");
+        const fixture = emptyFixture();
+        fixture.pending = [ask("step", a1, null)];
+        fixture.live = ["r1"];
+        fixture.progress = [progress("r1", a1, { threadId: "t1", planTitle: "Liver DE", doneSteps: 1, totalSteps: 3 })];
+
+        const body = await attentionOf(appOver(fixture).app);
+
+        expect(body.asks.map((item) => [item.askId, item.stale])).toEqual([["step", false]]);
     });
 
     test("an ask on a thread whose turn a recovery runs is not stale", async () => {

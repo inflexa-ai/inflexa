@@ -1427,7 +1427,6 @@ export function buildProgram(): Command {
             .option("--embeddings-url <url>", "api-key embeddings only: the embedding endpoint's base URL")
             .option("--embeddings-model <id>", "api-key embeddings only: the embedding model id")
             .option("--embeddings-gguf <path>", "Local embeddings only: path to your own GGUF model file instead of the built-in one")
-            .option("--refs <ids>", "Reference data to download: recommended|all|<comma-separated dataset ids>. The value is the download consent")
             .option(
                 "--sandbox",
                 "Start the three detached transfers (the two sandbox images and the package catalog). The flag is the multi-GB consent; nothing downloads without it",
@@ -1486,7 +1485,6 @@ export function buildProgram(): Command {
                     embeddingsUrl: options.embeddingsUrl,
                     embeddingsModel: options.embeddingsModel,
                     embeddingsGguf: options.embeddingsGguf,
-                    refs: options.refs,
                     sandbox: options.sandbox,
                     runtime: options.runtime,
                 },
@@ -1494,10 +1492,11 @@ export function buildProgram(): Command {
         },
     );
 
+    // The catalog reference store, for a person and a cloud job. Each command is `blocked` for an agent,
+    // because an agent gets reference data through the `download_ref` tool of the harness.
     const refs = cli.command("refs").description("Manage reference data mounted read-only in sandboxes at /mnt/refs");
+    const REFS_AGENT_REASON = "Agents download reference data with the download_ref tool; the `inflexa refs` commands are for the user.";
 
-    // Read-only: lstat walk vs the baked-in catalog constant (store.ts `inspectReferenceStore`).
-    // Both options are output-shaping (print upstream URLs; JSON vs prose).
     registerAction(
         refs
             .command("list")
@@ -1505,14 +1504,13 @@ export function buildProgram(): Command {
             .option("--urls", "Also print the exact upstream download URL of every file")
             .option("--json", "Emit a machine-readable JSON document instead of prose (artifact URLs always included; --urls has no effect)"),
         "standalone",
-        { kind: "auto", safeFlags: ["urls", "json"] },
+        { kind: "blocked", reason: REFS_AGENT_REASON },
         async (options: { urls?: boolean; json?: boolean }) => {
             const { runRefsList } = await import("../modules/refs/commands.ts");
             await runRefsList({ urls: options.urls ?? false, json: options.json ?? false });
         },
     );
 
-    // Stays `approval` (not `auto`): `download` fetches from upstream publishers and writes to disk.
     registerAction(
         refs
             .command("download")
@@ -1521,16 +1519,13 @@ export function buildProgram(): Command {
             .option("--yes", "Skip the download confirmation")
             .option("--force", "Re-fetch even when already installed — repairs damage and refreshes mutable upstreams"),
         "machine",
-        // A transfer: one catalog artifact reaches 2 GB, and the captured readout prints a line for each
-        // file that lands, so the whole of a large one is quiet. The downloader watches the bytes instead.
-        { kind: "approval", transfer: true },
+        { kind: "blocked", reason: REFS_AGENT_REASON },
         async (ids: string[], options: { yes?: boolean; force?: boolean }) => {
             const { runRefsDownload } = await import("../modules/refs/commands.ts");
             await runRefsDownload(ids, options);
         },
     );
 
-    // Read-only: hashes files against receipts without mutating disk (store.ts `verifyReferenceDatasets`).
     registerAction(
         refs
             .command("verify")
@@ -1538,18 +1533,22 @@ export function buildProgram(): Command {
             .argument("[ids...]", "Catalog dataset ids (all installed datasets when omitted)")
             .option("--json", "Emit a machine-readable JSON document instead of prose"),
         "standalone",
-        { kind: "auto", safeFlags: ["json"] },
+        { kind: "blocked", reason: REFS_AGENT_REASON },
         async (ids: string[], options: { json?: boolean }) => {
             const { runRefsVerify } = await import("../modules/refs/commands.ts");
             await runRefsVerify(ids, { json: options.json ?? false });
         },
     );
 
-    // Read-only: prints the store path (commands.ts).
-    registerAction(refs.command("path").description("Print the public host reference-store path"), "standalone", { kind: "auto", safeFlags: [] }, async () => {
-        const { runRefsPath } = await import("../modules/refs/commands.ts");
-        runRefsPath();
-    });
+    registerAction(
+        refs.command("path").description("Print the public host reference-store path"),
+        "standalone",
+        { kind: "blocked", reason: REFS_AGENT_REASON },
+        async () => {
+            const { runRefsPath } = await import("../modules/refs/commands.ts");
+            runRefsPath();
+        },
+    );
 
     // The sandbox images: the one runtime image and the derived provisioner
     // image. No variant exists, and no foreground pull exists anywhere — `pull`

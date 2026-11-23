@@ -280,7 +280,7 @@ The server check SHALL run inside the action, not in a `preAction` hook. The dry
 
 #### Scenario: A machine or standalone command runs with no server
 
-- **WHEN** `inflexa store ls`, `inflexa sandbox status`, `inflexa refs list`, or `inflexa prov verify-file <path>` runs while no server runs
+- **WHEN** `inflexa store ls`, `inflexa sandbox status`, or `inflexa prov verify-file <path>` runs while no server runs
 - **THEN** the command runs, and no server starts
 
 #### Scenario: A machine option skips the check for one run

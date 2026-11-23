@@ -2353,7 +2353,7 @@ A raise MUST keep the later of the stored time and the new time, thus a raise ne
 
 The lists MUST hold these items:
 
-- `asks`: each pending ask of the ledger, the oldest first. An item carries `askId`, `analysisId`, `analysisName`, `threadId`, `title`, `command`, `createdAt`, and `stale`. `stale` is `true` when no turn runs on the thread of the ask, by the rule of the running turn of a thread. An ask with no thread is stale.
+- `asks`: each pending ask of the ledger, the oldest first. An item carries `askId`, `analysisId`, `analysisName`, `threadId`, `title`, `command`, `createdAt`, and `stale`. `stale` is `true` when no turn runs on the thread of the ask, by the rule of the running turn of a thread. An ask with no thread is the ask of a sandbox step, and it is stale when no run of its analysis runs.
 - `activeRuns`: each run with a live workflow, by the liveness rule of the busy gate, the newest start first. An item carries `runId`, `analysisId`, `analysisName`, `threadId`, `planTitle`, `doneSteps`, `totalSteps`, and `startedAt`. `planTitle` and `threadId` are `null` when the run has none. A run whose progress read gives a terminal status ended between the two reads, and the list MUST leave it out.
 - `unseenRuns`: each run that has no seen mark, among the newest 200 terminal runs that ended at or after the seen baseline, the newest end first. An unseen run that is older than these 200 runs is absent. An item carries `runId`, `analysisId`, `analysisName`, `status`, and `completedAt`.
 - `recentThreads`: the newest live conversation threads, the newest update first. An item carries the fields of a thread on the wire and `analysisName`.
@@ -2393,7 +2393,7 @@ The SQLite reads are the read of the seen baseline, the read of the seen marks o
 
 #### Scenario: An ask with no thread is stale
 
-- **GIVEN** an open ask whose `threadId` is `null`
+- **GIVEN** an open ask whose `threadId` is `null`, and no run of its analysis runs
 - **WHEN** a client reads the attention lists
 - **THEN** the item of the ask has `stale` `true`
 
@@ -2437,6 +2437,12 @@ The SQLite reads are the read of the seen baseline, the read of the seen marks o
 - **GIVEN** 12 live conversation threads over three analyses
 - **WHEN** a client sends `GET /api/v1/attention` with no `limit`
 - **THEN** `recentThreads` holds the 10 newest
+
+#### Scenario: The ask of a step whose run runs
+
+- **GIVEN** an open ask whose `threadId` is `null`, and a run of its analysis that runs
+- **WHEN** a client reads the attention lists
+- **THEN** the item of the ask has `stale` `false`
 
 ### Requirement: A person marks a terminal run as seen
 

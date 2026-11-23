@@ -1,16 +1,11 @@
 import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import {
-    REFERENCE_DATA_CATALOG_VERSION,
-    REFERENCE_INSTALL_RECEIPT_VERSION,
-    UnknownReferenceDatasetError,
-    referenceReceiptContentDigest,
-    type ReferenceDataCatalog,
-} from "@inflexa-ai/harness";
-import { err, ok, type Result } from "neverthrow";
+import { REFERENCE_DATA_CATALOG_VERSION, UnknownReferenceDatasetError, type ReferenceDataCatalog } from "../catalog.ts";
+import { REFERENCE_INSTALL_RECEIPT_VERSION, referenceReceiptContentDigest } from "../receipt.ts";
+import { err, ok } from "neverthrow";
 import { z } from "zod";
 
 // Side-effect import: the command actions render byte counts through Number.prototype.formatBytes,
@@ -18,7 +13,7 @@ import { z } from "zod";
 import "../../../extensions/index.ts";
 import { env } from "../../../lib/env.ts";
 import { collapseWhitespace } from "../../../lib/text.ts";
-import { fakeFetch, respondWith, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
+import { respondWith, fetchInputUrl } from "../../../test_support/fake_fetch.ts";
 import { assertTestSandbox } from "../../../test_support/sandbox.ts";
 import {
     ON_DEMAND_REFERENCE_NOTE,
@@ -34,20 +29,12 @@ import {
     referencePickerModel,
     referenceSelectionDisclosure,
     renderPlanCaveat,
-    resolveReferenceSelection,
-    runReferenceSetup,
     runRefsList,
     runRefsVerify,
     type ReferenceProgressSink,
     type ReferenceProgressSnapshot,
 } from "../commands.ts";
-import {
-    inspectReferenceStore,
-    referenceStorePaths,
-    type ReferenceCatalogSource,
-    type ReferenceProvisionError,
-    type ReferenceStoreInspection,
-} from "../store.ts";
+import { inspectReferenceStore, referenceStorePaths, type ReferenceCatalogSource } from "../store.ts";
 import { parsedJson } from "../../../test_support/json.ts";
 import { awaitOk } from "../../../test_support/result.ts";
 import { errorOf } from "../../../lib/cause.ts";
@@ -144,33 +131,39 @@ afterEach(() => {
 describe("reference command policy", () => {
     test("headless downloads require ids and explicit consent before mutation", async () => {
         assertTestSandbox(env.refsDir);
-        const noIds = await downloadReferences({ ids: [], interactive: false, source: singleFileSource });
+        const noIds = await downloadReferences({ root: env.refsDir, ids: [], interactive: false, source: singleFileSource });
         expect(noIds.isErr()).toBe(true);
-        const noConsent = await downloadReferences({ ids: ["demo"], interactive: false, source: singleFileSource });
+        const noConsent = await downloadReferences({ root: env.refsDir, ids: ["demo"], interactive: false, source: singleFileSource });
         expect(noConsent._unsafeUnwrapErr().message).toBe("Downloading 1 file of upstream-determined size requires explicit consent; re-run with --yes.");
         expect(await Bun.file(env.refsDir).exists()).toBe(false);
     });
 
     test("every artifact is quoted as upstream-determined rather than given an invented size", async () => {
-        const oneFile = await downloadReferences({ ids: ["demo"], interactive: false, source: source(catalog([MUTABLE_ARTIFACT])) });
+        const oneFile = await downloadReferences({ root: env.refsDir, ids: ["demo"], interactive: false, source: source(catalog([MUTABLE_ARTIFACT])) });
         expect(oneFile._unsafeUnwrapErr().message).toBe("Downloading 1 file of upstream-determined size requires explicit consent; re-run with --yes.");
 
-        const twoFiles = await downloadReferences({ ids: ["demo"], interactive: false, source: source(catalog([FILE_ARTIFACT, MUTABLE_ARTIFACT])) });
+        const twoFiles = await downloadReferences({
+            root: env.refsDir,
+            ids: ["demo"],
+            interactive: false,
+            source: source(catalog([FILE_ARTIFACT, MUTABLE_ARTIFACT])),
+        });
         expect(twoFiles._unsafeUnwrapErr().message).toBe("Downloading 2 files of upstream-determined size requires explicit consent; re-run with --yes.");
     });
 
     test("--force turns an intact install back into a file to fetch; without it there is nothing to do", async () => {
         seedIntactInstall();
-        const intact = await downloadReferences({ ids: ["demo"], interactive: false, source: singleFileSource });
+        const intact = await downloadReferences({ root: env.refsDir, ids: ["demo"], interactive: false, source: singleFileSource });
         expect(intact._unsafeUnwrapErr().message).toBe("Downloading 0 files of upstream-determined size requires explicit consent; re-run with --yes.");
 
-        const forced = await downloadReferences({ ids: ["demo"], interactive: false, force: true, source: singleFileSource });
+        const forced = await downloadReferences({ root: env.refsDir, ids: ["demo"], interactive: false, force: true, source: singleFileSource });
         expect(forced._unsafeUnwrapErr().message).toBe("Downloading 1 file of upstream-determined size requires explicit consent; re-run with --yes.");
     });
 
     test("a declined interactive download activates nothing", async () => {
         const questions: string[] = [];
         const result = await downloadReferences({
+            root: env.refsDir,
             ids: ["demo"],
             interactive: true,
             source: singleFileSource,
@@ -190,6 +183,7 @@ describe("reference command policy", () => {
         const questions: string[] = [];
         await awaitOk(
             downloadReferences({
+                root: env.refsDir,
                 ids: ["demo"],
                 interactive: true,
                 source: singleFileSource,
@@ -209,6 +203,7 @@ describe("reference command policy", () => {
         const questions: string[] = [];
         await awaitOk(
             downloadReferences({
+                root: env.refsDir,
                 ids: ["demo"],
                 interactive: true,
                 source: source(catalog([FILE_ARTIFACT, MUTABLE_ARTIFACT])),
@@ -231,6 +226,7 @@ describe("reference command policy", () => {
         // is about to be rejected — and the message is one scripts match on.
         let asked = 0;
         const result = await downloadReferences({
+            root: env.refsDir,
             ids: ["demo"],
             interactive: false,
             source: singleFileSource,
@@ -241,122 +237,6 @@ describe("reference command policy", () => {
         });
         expect(result._unsafeUnwrapErr().message).toBe("Downloading 1 file of upstream-determined size requires explicit consent; re-run with --yes.");
         expect(asked).toBe(0);
-    });
-
-    test("headless setup creates the public/user namespace but downloads nothing without selection", async () => {
-        assertTestSandbox(env.refsDir);
-        const result = await runReferenceSetup({ interactive: false });
-        expect(result.isOk()).toBe(true);
-        expect(statSync(`${env.refsDir}/user`).isDirectory()).toBe(true);
-        expect(await Bun.file(`${env.refsDir}/managed`).exists()).toBe(false);
-    });
-
-    test("batch setup without an answer fetches nothing at all", async () => {
-        assertTestSandbox(env.refsDir);
-        // The fixture's only dataset is recommended and missing, so a batch run once installed it off
-        // the consent flag alone. A batch flag is a mode, not a request: an unanswered question now
-        // downloads nothing, and the store path plus the explicit command are what it leaves behind.
-        const escaped: string[] = [];
-        const restore = sealGlobalFetch(escaped);
-        try {
-            const result = await runReferenceSetup({ interactive: false, source: singleFileSource });
-            expect(result.isOk()).toBe(true);
-        } finally {
-            restore();
-        }
-        expect(escaped).toEqual([]);
-        expect(await Bun.file(`${env.refsDir}/managed`).exists()).toBe(false);
-    });
-
-    test("an answered selection is the consent, with no separate flag, on a terminal or without one", async () => {
-        for (const interactive of [false, true]) {
-            assertTestSandbox(env.refsDir);
-            rmSync(env.refsDir, { recursive: true, force: true });
-            const result = await runReferenceSetup({
-                interactive,
-                selection: { ids: ["demo"] },
-                source: singleFileSource,
-                // Nothing else is supplied: no consent flag, and no confirmation seam — a prompt on
-                // either path would hang this test, which is the assertion.
-                fetch: respondWith("alpha", { headers: { "content-length": "5" } }),
-            });
-            expect(result.isOk()).toBe(true);
-            const inspection = (await inspectReferenceStore(env.refsDir, singleFileSource.catalog))._unsafeUnwrap();
-            expect(inspection.datasets[0]?.state).toBe("installed");
-        }
-    });
-
-    test("an explicit selected setup failure is returned visibly through the shared handler", async () => {
-        const result = await runReferenceSetup({ interactive: false, selection: { ids: ["unknown"] } });
-        expect(result._unsafeUnwrapErr().type).toBe("unknown_dataset");
-        expect(await Bun.file(`${env.refsDir}/managed`).exists()).toBe(false);
-    });
-});
-
-describe("reference selection presets", () => {
-    test("a preset resolves against the offered set, so an intact install is never re-fetched", async () => {
-        seedIntactInstall();
-        // `demo` is seeded intact; `beta` (recommended) and `gamma` (optional) are still missing.
-        const fixture = pickerCatalog(["demo", "beta"], ["demo", "beta", "gamma"]);
-        const inspection = (await inspectReferenceStore(env.refsDir, fixture))._unsafeUnwrap();
-        expect(inspection.datasets.find((item) => item.dataset.id === "demo")?.state).toBe("installed");
-
-        let inspections = 0;
-        const inspect = (): Promise<Result<ReferenceStoreInspection, ReferenceProvisionError>> => {
-            inspections += 1;
-            return Promise.resolve(ok(inspection));
-        };
-
-        expect((await resolveReferenceSelection({ preset: "recommended" }, fixture, inspect))._unsafeUnwrap()).toEqual(["beta"]);
-        expect((await resolveReferenceSelection({ preset: "all" }, fixture, inspect))._unsafeUnwrap()).toEqual(["beta", "gamma"]);
-        expect(inspections).toBe(2);
-        // An explicitly named id is a request for that dataset to be present, so install state does
-        // not filter it — the installer nets an intact one out to nothing on its own. It is also the
-        // reason the store reading is a thunk: an id answer never reads the store at all.
-        expect((await resolveReferenceSelection({ ids: ["demo"] }, fixture, inspect))._unsafeUnwrap()).toEqual(["demo"]);
-        expect(inspections).toBe(2);
-    });
-
-    test("a catalog id spelled like a preset word is a loud authoring error on every resolve", async () => {
-        const fixture = pickerCatalog([], ["all", "beta"]);
-        const inspection = (await inspectReferenceStore(env.refsDir, fixture))._unsafeUnwrap();
-        const inspect = (): Promise<Result<ReferenceStoreInspection, ReferenceProvisionError>> => Promise.resolve(ok(inspection));
-
-        const collided = (await resolveReferenceSelection({ preset: "all" }, fixture, inspect))._unsafeUnwrapErr();
-        expect(collided.type).toBe("preset_collision");
-        expect(collided).toMatchObject({ presets: ["all"] });
-        expect(collided.message).toContain("--refs all");
-        expect(collided.message).toContain("Rename the dataset");
-        // The ambiguity lives in the catalog, so an answer that happened to spell ids is no evidence
-        // the vocabulary is sound — resolving one must not quietly pick a winner either way.
-        expect((await resolveReferenceSelection({ ids: ["beta"] }, fixture, inspect))._unsafeUnwrapErr().type).toBe("preset_collision");
-    });
-
-    test("a batch preset answer installs the offered set without any consent flag", async () => {
-        assertTestSandbox(env.refsDir);
-        const result = await runReferenceSetup({
-            interactive: false,
-            selection: { preset: "recommended" },
-            source: singleFileSource,
-            fetch: respondWith("alpha", { headers: { "content-length": "5" } }),
-        });
-        expect(result.isOk()).toBe(true);
-        const inspection = (await inspectReferenceStore(env.refsDir, singleFileSource.catalog))._unsafeUnwrap();
-        expect(inspection.datasets[0]?.state).toBe("installed");
-    });
-
-    test("a preset with nothing left to offer resolves to an empty plan and touches no publisher", async () => {
-        seedIntactInstall();
-        const escaped: string[] = [];
-        const restore = sealGlobalFetch(escaped);
-        try {
-            // Every offered dataset is already intact, so there is no plan to size — not even a HEAD.
-            const result = await runReferenceSetup({ interactive: false, selection: { preset: "all" }, source: singleFileSource });
-            expect(result.isOk()).toBe(true);
-        } finally {
-            restore();
-        }
-        expect(escaped).toEqual([]);
     });
 });
 
@@ -620,9 +500,9 @@ describe("reference selection picker", () => {
         const prose = collapseWhitespace(ON_DEMAND_REFERENCE_NOTE);
         // The command keeps its own unwrapped line in every layout, so this one is asserted verbatim.
         expect(ON_DEMAND_REFERENCE_NOTE).toContain("  inflexa refs download <id>");
-        // The agent route is only honest because `refs download` is registered `approval`, so the
-        // agent proposes the command and the user approves it — the note must promise exactly that.
-        expect(prose).toContain("asks you to approve the download");
+        // The agent route is the `download_ref` tool of the harness, not this command, so the note
+        // promises a download in chat and names no command for the agent.
+        expect(prose).toContain("downloads it for the analysis");
         // It frames the choice instead of consoling an empty one, so it must read as guidance offered
         // before the fact rather than as a reply to a decision already taken.
         expect(prose).toContain("taking none now is a real choice");
@@ -675,7 +555,7 @@ describe("reference selection picker", () => {
         expect(referenceNoteFloats(80)).toBe(false);
     });
 
-    test("setup offers only what is missing, so an intact dataset is outside every bulk key", async () => {
+    test("the picker offers only what is missing, so an intact dataset is outside every bulk key", async () => {
         seedIntactInstall();
         const fixture = singleFileSource.catalog;
         const inspection = (await inspectReferenceStore(env.refsDir, fixture))._unsafeUnwrap();
@@ -856,7 +736,9 @@ describe("progress readout teardown", () => {
         let thrown: unknown;
         const { stdout } = await captureConsole(async () => {
             try {
-                await awaitOk(downloadReferences({ ids: ["demo"], yes: true, interactive: false, source: explodingSource, fetch: declaring(64) }));
+                await awaitOk(
+                    downloadReferences({ root: env.refsDir, ids: ["demo"], yes: true, interactive: false, source: explodingSource, fetch: declaring(64) }),
+                );
             } catch (cause) {
                 thrown = cause;
             }
@@ -997,70 +879,5 @@ describe("transfer rate", () => {
         expect(snapshots[snapshots.length - 1]?.line).toBe("1/2 files · 3.0 MB");
 
         readout.finish();
-    });
-});
-
-/**
- * Replace the global fetch with one that records and refuses, returning the restore. Any call that
- * lands here is a call that would have left the machine, which is the whole assertion.
- */
-function sealGlobalFetch(escaped: string[]): () => void {
-    const real = globalThis.fetch;
-    globalThis.fetch = fakeFetch((input, init) => {
-        escaped.push(`${init?.method ?? "GET"} ${fetchInputUrl(input)}`);
-        return Promise.reject(new Error("a sealed setup must never reach the global fetch"));
-    });
-    return () => {
-        globalThis.fetch = real;
-    };
-}
-
-describe("reference setup seams", () => {
-    test("a consented setup can be sealed off the network entirely", async () => {
-        // Regression: `ReferenceSetupOptions` carried a catalog seam but no fetch seam, so this exact
-        // call reached the real internet twice — a HEAD from the pre-consent size sweep and a GET from
-        // the transfer — with no way for a caller to prevent it.
-        const escaped: string[] = [];
-        const restore = sealGlobalFetch(escaped);
-        const seen: string[] = [];
-        try {
-            await awaitOk(
-                runReferenceSetup({
-                    interactive: false,
-                    selection: { ids: ["demo"] },
-                    source: singleFileSource,
-                    fetch: (input, init) => {
-                        seen.push(`${init?.method ?? "GET"} ${fetchInputUrl(input)}`);
-                        return Promise.resolve(new Response("alpha", { headers: { "content-length": "5" } }));
-                    },
-                }),
-            );
-        } finally {
-            restore();
-        }
-
-        expect(escaped).toEqual([]);
-        // Both network users are seamed: the sweep's HEAD and the installer's GET.
-        expect(seen).toEqual(["HEAD https://upstream.test/file", "GET https://upstream.test/file"]);
-    });
-
-    test("the seam reaches the interactive path too, where the sweep runs before consent", async () => {
-        const escaped: string[] = [];
-        const restore = sealGlobalFetch(escaped);
-        try {
-            // `--refs` supplied, so no picker opens; the answer is the consent, so the sweep runs and
-            // the transfer follows — the interactive shape of the same two calls.
-            await awaitOk(
-                runReferenceSetup({
-                    interactive: true,
-                    selection: { ids: ["demo"] },
-                    source: singleFileSource,
-                    fetch: respondWith("alpha", { headers: { "content-length": "5" } }),
-                }),
-            );
-        } finally {
-            restore();
-        }
-        expect(escaped).toEqual([]);
     });
 });

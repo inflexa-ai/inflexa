@@ -119,11 +119,12 @@ function opts(profile: DataProfileState | null, runs: RunSummary[], ready: () =>
     };
 }
 
-/** The reads of a tick beside the ledger, for a case about the ledger: a server that answers, and an open thread and paused work that the case does not read. */
-const LEDGER_ONLY: Pick<WatchOpts, "checkServer" | "pollThread" | "pollPaused"> = {
+/** The reads of a tick beside the ledger, for a case about the ledger: a server that answers, and an open thread, paused work, and asks that the case does not read. */
+const LEDGER_ONLY: Pick<WatchOpts, "checkServer" | "pollThread" | "pollPaused" | "pollAsks"> = {
     checkServer: () => Promise.resolve(true),
     pollThread: async () => {},
     pollPaused: async () => {},
+    pollAsks: async () => {},
 };
 
 /** The options of a case about the ledger: {@link LEDGER_ONLY} fills the reads that it omits. */
@@ -1066,6 +1067,58 @@ describe("watchSidebarData — a tick reads what a different client changes", ()
         });
         try {
             expect(reads).toEqual([["A", "T"]]);
+        } finally {
+            dispose();
+        }
+    });
+
+    test("a tick reads the pending asks of the analysis", async () => {
+        const reads: string[] = [];
+        const ws = buildWorkspace({ analysis: buildAnalysis({ id: "A" }), sessionId: null });
+        const poll = mountPoll(ws, {
+            pollAsks: (analysisId) => {
+                reads.push(analysisId);
+                return Promise.resolve();
+            },
+        });
+        try {
+            await poll.tick();
+            expect(reads).toEqual(["A"]);
+        } finally {
+            poll.dispose();
+        }
+    });
+
+    test("a tick whose server does not answer reads no asks", async () => {
+        let askReads = 0;
+        const poll = mountPoll(buildWorkspace({ analysis: buildAnalysis({ id: "A" }), sessionId: "T" }), {
+            checkServer: () => Promise.resolve(false),
+            pollAsks: () => {
+                askReads += 1;
+                return Promise.resolve();
+            },
+        });
+        try {
+            await poll.tick();
+            expect(askReads).toBe(0);
+        } finally {
+            poll.dispose();
+        }
+    });
+
+    test("the open of an analysis reads its pending asks at the ready edge, not one tick later", () => {
+        bootReady();
+        const reads: string[] = [];
+        const dispose = mountWatch(buildWorkspace({ analysis: buildAnalysis({ id: "A" }), sessionId: null }), {
+            refresh: async () => {},
+            arm: () => () => {},
+            pollAsks: (analysisId) => {
+                reads.push(analysisId);
+                return Promise.resolve();
+            },
+        });
+        try {
+            expect(reads).toEqual(["A"]);
         } finally {
             dispose();
         }

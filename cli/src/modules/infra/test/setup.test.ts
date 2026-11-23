@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Writable } from "node:stream";
 
-import { REFERENCE_DATA_CATALOG, type SandboxExecutor } from "@inflexa-ai/harness";
+import type { SandboxExecutor } from "@inflexa-ai/harness";
 import pkg from "../../../../package.json";
 import { ok, err } from "neverthrow";
 import { z } from "zod";
@@ -56,8 +56,6 @@ import * as compose from "../compose.ts";
 import * as embeddingSetup from "../../embedding/setup.ts";
 import * as transfersModule from "../../libs/transfers.ts";
 import * as storeDownloadModule from "../../libs/store_download.ts";
-import * as refsCommands from "../../refs/commands.ts";
-import * as refsStore from "../../refs/store.ts";
 import { detectedMachine, writeAgentModel, type ResolvedModelConnection } from "../../harness/config.ts";
 import * as harnessConfig from "../../harness/config.ts";
 import { __resetModelCacheForTest, type ModelAccess } from "../../proxy/models.ts";
@@ -85,19 +83,6 @@ import { describeCause } from "../../../lib/cause.ts";
 function snapshot(overrides: Partial<ProviderEnvSnapshot> = {}): ProviderEnvSnapshot {
     return { anthropicApiKeySet: false, anthropicBaseURL: undefined, openaiApiKeySet: false, openaiBaseURL: undefined, ...overrides };
 }
-
-/**
- * Two ids the reference catalog really declares, and one it cannot. Read off the LIVE catalog rather
- * than hardcoded, because setup now resolves an answered `--refs` id list against that catalog BEFORE
- * anything mutates: a hardcoded id that a catalog revision renames would fail these runs
- * upfront and report the wrong defect. The non-`null` assertions are safe because the catalog schema
- * requires a non-empty dataset list, and a catalog with fewer than two datasets would fail its own
- * validation long before this file loads.
- */
-const CATALOG_ID = present(REFERENCE_DATA_CATALOG.datasets[0]).id;
-const OTHER_CATALOG_ID = present(REFERENCE_DATA_CATALOG.datasets[1]).id;
-/** Shaped like a plausible typo of a real id, which is exactly the mistake the upfront check exists to catch. */
-const UNKNOWN_CATALOG_ID = "gtex-typo";
 
 /** Write `value` as the config file of the sandbox, with its folder, which a test that runs first may not have. */
 function seedConfig(value: Record<string, unknown>): void {
@@ -1219,9 +1204,6 @@ describe("setup() — an answered embedding mode runs ahead of the runtime gate"
         spies.push(embedSpy);
         spies.push(spyOn(container, "firstReadyRuntime").mockImplementation(() => Promise.resolve(ok(container.runtimes.docker))));
         spies.push(spyOn(container, "resolveSandboxExecutor").mockImplementation(() => Promise.resolve(ok(VM_EXECUTOR))));
-        // Stub the reference-data step so the full non-interactive flow reaches (and skips) the in-flow
-        // embedding site without doing real reference provisioning.
-        spies.push(spyOn(refsCommands, "runReferenceSetup").mockImplementation(() => Promise.resolve(ok(undefined))));
 
         // postgres:false skips the compose/engine block (which would spawn a real runtime); the flow still
         // runs past the in-flow embedding site so its guard is exercised.
@@ -1570,7 +1552,7 @@ describe("selectDefaultModel", () => {
 
 // The batch orchestrator, end to end through `setup()`. Everything that would touch a container
 // engine, the network, or a real model download is a seam: `firstReadyRuntime`/`ensureReady` (the
-// runtime gate), `runEmbeddingSetup`, `runReferenceSetup`, `sandboxPull`, the compose writer, and
+// runtime gate), `runEmbeddingSetup`, `sandboxPull`, the compose writer, and
 // `globalThis.fetch` for the validation probes. What is deliberately NOT stubbed is the writing —
 // every assertion below reads the REAL sandboxed `config.json` back, because "the answers changed
 // where values come from, never where they go" is the property under test.
@@ -1579,7 +1561,6 @@ describe("setup() — batch orchestration", () => {
     const spies: { mockRestore: () => void }[] = [];
     let firstReady: ReturnType<typeof spyOn<typeof container, "firstReadyRuntime">>;
     let embedStep: ReturnType<typeof spyOn<typeof embeddingSetup, "runEmbeddingSetup">>;
-    let refsStep: ReturnType<typeof spyOn<typeof refsCommands, "runReferenceSetup">>;
     let engine: ReturnType<typeof spyOn<typeof container, "engineCapacity">>;
 
     /** Serve per-route responses keyed by URL suffix; an unmapped route 404s (mirrors probeCredentialSource's own tests). */
@@ -1705,10 +1686,9 @@ describe("setup() — batch orchestration", () => {
         firstReady = spyOn(container, "firstReadyRuntime").mockImplementation(() => Promise.resolve(ok(container.runtimes.docker)));
         spies.push(spyOn(container, "resolveSandboxExecutor").mockImplementation(() => Promise.resolve(ok(VM_EXECUTOR))));
         embedStep = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(() => Promise.resolve(ok(undefined)));
-        refsStep = spyOn(refsCommands, "runReferenceSetup").mockImplementation(() => Promise.resolve(ok(undefined)));
         // The real read runs `docker info`. No answer keeps the figures of the host, the same as an engine that does not answer.
         engine = spyOn(container, "engineCapacity").mockImplementation(() => Promise.resolve(undefined));
-        spies.push(firstReady, embedStep, refsStep, engine);
+        spies.push(firstReady, embedStep, engine);
     });
 
     afterEach(() => {
@@ -1742,13 +1722,10 @@ describe("setup() — batch orchestration", () => {
         expect(models()).toBeUndefined();
         // The embedding step ran with NO mode answer, which leaves the configured backend unchanged.
         expect(present(embedStep.mock.calls[0])[1]?.mode).toBeUndefined();
-        // No reference selection was named, so nothing is downloaded — the value IS the consent.
-        expect(present(refsStep.mock.calls[0])[0].selection).toBeUndefined();
-        expect(present(refsStep.mock.calls[0])[0].interactive).toBe(false);
         // The sandbox image is never pulled implicitly; the hint names the explicit command instead.
         expect(output).toContain("inflexa sandbox pull");
         // Pre-staging: no credential in the auth dir is a NOTICE plus a successful run —
-        // the remaining steps still ran (refs above) and the exit code stays 0.
+        // the remaining steps still ran (embeddings above) and the exit code stays 0.
         expect(output).toContain("first `inflexa` launch");
     });
 
@@ -1825,7 +1802,6 @@ describe("setup() — batch orchestration", () => {
         // The three earliest mutators are all downstream of the resolver, and none of them ran.
         expect(embedStep).not.toHaveBeenCalled();
         expect(firstReady).not.toHaveBeenCalled();
-        expect(refsStep).not.toHaveBeenCalled();
     });
 
     test("an ambiguous credential-source probe fails the run and persists nothing", async () => {
@@ -1924,7 +1900,6 @@ describe("setup() — batch orchestration", () => {
         expect(second).toBe(first);
         // Each run drives each step exactly once — the pre-gate/in-flow embedding guard holds across runs.
         expect(embedStep).toHaveBeenCalledTimes(2);
-        expect(refsStep).toHaveBeenCalledTimes(2);
     });
 
     test("a POSTGRES-PROVISIONING run converges byte-identically, proxy config and minted key included", async () => {
@@ -1959,68 +1934,6 @@ describe("setup() — batch orchestration", () => {
         // Sanity on WHAT converged: an empty document would satisfy the comparisons just as well.
         expect(readConfig().postgres).toEqual({ password: "s3cret", port: 6000 });
         expect(persistedBudget(readConfig().harness)).toBeDefined();
-    });
-
-    // An answered `--refs` id list is resolved against the OFFERED catalog immediately after
-    // answer resolution — before the embedding pre-gate, the runtime pin, the proxy config, and the
-    // download. Before this, a typo'd id surfaced at download time, second-to-last step, on a machine
-    // that had already been provisioned.
-    describe("reference ids validate before any mutation", () => {
-        test("an unknown id fails naming both spellings and the id, with nothing mutated", async () => {
-            const errors = await runCapturingStderr(batch({ refs: `${CATALOG_ID},${UNKNOWN_CATALOG_ID}` }));
-
-            expect(process.exitCode).toBe(1);
-            expect(errors).toContain("`--refs` / `refs`");
-            expect(errors).toContain(UNKNOWN_CATALOG_ID);
-            // The valid sibling is not reported — only what the operator has to fix.
-            expect(errors).not.toContain(`\`${CATALOG_ID}\``);
-            // No config write, no container command, no download: every mutator sits downstream of this.
-            expect(existsSync(env.configPath)).toBe(false);
-            expect(existsSync(env.cliproxyConfigPath)).toBe(false);
-            expect(embedStep).not.toHaveBeenCalled();
-            expect(firstReady).not.toHaveBeenCalled();
-            expect(refsStep).not.toHaveBeenCalled();
-        });
-
-        test("an already-installed id is a valid answer — the second run of the same command passes", async () => {
-            // The offered catalog EXCLUDES what is installed, so resolving against it alone would make
-            // `--refs <id>` fail on the very datasets its own first run installed. Stubbing the store
-            // inspection is how a "second run" is expressed without a multi-gigabyte download.
-            spies.push(
-                spyOn(refsStore, "inspectReferenceStore").mockImplementation(() =>
-                    Promise.resolve(
-                        ok({
-                            exists: true,
-                            datasets: REFERENCE_DATA_CATALOG.datasets.map((dataset) => ({
-                                dataset,
-                                state: dataset.id === CATALOG_ID ? ("installed" as const) : ("missing" as const),
-                            })),
-                            userContent: [],
-                        }),
-                    ),
-                ),
-            );
-
-            await runSetup(batch({ refs: CATALOG_ID }));
-
-            expect(process.exitCode).toBe(0);
-            expect(present(refsStep.mock.calls[0])[0].selection).toEqual({ ids: [CATALOG_ID] });
-        });
-
-        test("a valid id list lets the run continue — the answered transfers still start", async () => {
-            const imageStart = spyOn(transfersModule, "startImageTransfer").mockImplementation(() => ok({ type: "started" as const, pid: 4242 }));
-            const catalogStart = spyOn(storeDownloadModule, "startCatalogTransfer").mockImplementation(() =>
-                Promise.resolve(ok({ type: "started" as const, pid: 4243 })),
-            );
-            spies.push(imageStart, catalogStart);
-
-            await runSetup(batch({ refs: `${CATALOG_ID},${OTHER_CATALOG_ID}`, sandbox: true }));
-
-            expect(process.exitCode).toBe(0);
-            expect(present(refsStep.mock.calls[0])[0].selection).toEqual({ ids: [CATALOG_ID, OTHER_CATALOG_ID] });
-            expect(imageStart.mock.calls.map((call) => call[0])).toEqual(["runtime_image", "provisioner_image"]);
-            expect(catalogStart).toHaveBeenCalledTimes(1);
-        });
     });
 
     test("a mode-carrying flag superseding the file's leaves prints the note naming each dropped key", async () => {
@@ -2121,7 +2034,7 @@ describe("setup() — batch orchestration", () => {
             expect(readConfig().dataDir).toBe(join(scratch, "inflexa"));
             expect(output).toContain("inflexa server stop");
             expect(output).not.toContain("Setup complete");
-            expect(refsStep).not.toHaveBeenCalled();
+            expect(embedStep).not.toHaveBeenCalled();
         });
     });
 
@@ -2532,7 +2445,6 @@ describe("setup() — batch orchestration", () => {
                 agents: models.agents,
                 budget: persistedBudget(config.harness),
                 embedding: embedStep.mock.calls[0]?.[1],
-                refs: refsStep.mock.calls[0]?.[0].selection,
                 /** Which transfer children the sandbox answer started: the two image kinds, and whether the catalog start ran. */
                 sandbox: { images: imageStart.mock.calls.map((call) => call[0]), catalog: catalogStart.mock.calls.length > 0 },
                 /** The connection handed to the compose writer — the run's own resolution, whatever was persisted. */
@@ -2740,15 +2652,6 @@ describe("setup() — batch orchestration", () => {
                     expect(run.embedding?.gguf).toBe("/models/custom.gguf");
                 },
             },
-            refs: {
-                // Real catalog ids: the orchestrator now resolves an answered id list against the offered
-                // catalog BEFORE anything mutates, so an invented id would fail this run
-                // upfront rather than reaching the step whose consumption is under test.
-                file: `refs:\n  - ${CATALOG_ID}\n  - ${OTHER_CATALOG_ID}\n`,
-                effect: (run) => {
-                    expect(run.refs).toEqual({ ids: [CATALOG_ID, OTHER_CATALOG_ID] });
-                },
-            },
             sandbox: {
                 flags: { sandbox: true },
                 effect: (run) => {
@@ -2857,20 +2760,20 @@ describe("setup() — batch orchestration", () => {
         });
 
         test("a failed step records its own name and the version that wrote it", async () => {
-            refsStep.mockImplementation(() => Promise.resolve(err({ type: "download_failed" as const, message: "the mirror refused" })));
+            embedStep.mockImplementation(() => Promise.resolve(err({ type: "acquire_failed" as const, message: "the mirror refused" })));
 
             const output = await runSetup(batch({}));
 
             expect(process.exitCode).toBe(1);
-            expect(parsedJson(readFileSync(env.setupStatePath, "utf8"), z.json())).toEqual({ step: "refs", version: pkg.version });
+            expect(parsedJson(readFileSync(env.setupStatePath, "utf8"), z.json())).toEqual({ step: "embeddings", version: pkg.version });
             // The step that failed is named back to the operator, because the record is only useful if
             // they know a re-run will act on it.
-            expect(output).toContain('continue from the "refs" step');
+            expect(output).toContain('continue from the "embeddings" step');
         });
 
         test("a record from another binary version is ignored, and the completing run deletes it", async () => {
             mkdirSync(dirname(env.setupStatePath), { recursive: true });
-            writeFileSync(env.setupStatePath, JSON.stringify({ step: "refs", version: "0.0.0-not-this-build" }));
+            writeFileSync(env.setupStatePath, JSON.stringify({ step: "embeddings", version: "0.0.0-not-this-build" }));
 
             await runSetup(batch({}));
 
@@ -2938,10 +2841,10 @@ describe("setup() — batch orchestration", () => {
             return messages.some((message) => message.includes(fragment));
         }
 
-        test("a `refs` checkpoint resolves the earlier steps in silence and still asks the refs step", async () => {
+        test("an `embeddings` checkpoint resolves the earlier steps in silence and still asks the embeddings step", async () => {
             // Stand in for what the failed run persisted, so a silenced Postgres step has a value to resolve.
             writeConfig({ ...readConfig(), postgres: { user: "fleet" } })._unsafeUnwrap();
-            checkpointAt("refs");
+            checkpointAt("embeddings");
 
             await runSetup(interactiveRun);
 
@@ -2953,7 +2856,7 @@ describe("setup() — batch orchestration", () => {
             expect(asked(prompts, "Port")).toBe(false);
             expect(asked(prompts, "Download the sandbox images")).toBe(false);
             // The checkpoint step itself still asks — a continue starts AT the step that failed.
-            expect(present(refsStep.mock.calls.at(-1))[0].interactive).toBe(true);
+            expect(present(embedStep.mock.calls.at(-1))[0]).toBe(true);
             // A silenced step resolves what the failed run persisted, and writes nothing new.
             expect(readConfig().postgres).toEqual({ user: "fleet" });
             // The completed run cleared the record.
@@ -2961,7 +2864,7 @@ describe("setup() — batch orchestration", () => {
         });
 
         test("start again asks every question, and the record is gone either way", async () => {
-            checkpointAt("refs");
+            checkpointAt("embeddings");
             continueChoice = "restart";
 
             await runSetup(interactiveRun);

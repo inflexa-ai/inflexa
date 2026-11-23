@@ -76,22 +76,21 @@ Analyses run inside the one runtime image, `sandbox-base`. It carries the langua
 
 ## Reference data
 
-`inflexa refs path` prints the public reference store (normally `~/.local/share/inflexa/refs`). When that directory exists, it is mounted read-only in sandboxes at `/mnt/refs`; sandboxed analyses remain offline and cannot download into it themselves.
+The reference store is a folder on the host. Its default path is `~/.local/share/inflexa/refs`. Each sandbox mounts the store read-only at `/mnt/refs` when the folder exists.
+
+To put the store on a different disk, set `refs.dir` in `config.json`, for example `"refs": { "dir": "/Volumes/lab-drive/refs" }`. The value is an absolute path, or a path that starts with `~/`. If the value is a different relative path, the server does not boot.
+
+An agent downloads a missing reference with the `download_ref` tool. The tool writes into the store, and it makes the folder at the first download. A download from a host that is not on the auto-approve list asks the user first. To add hosts to that list, set `refs.autoApproveHosts`, for example `"refs": { "autoApproveHosts": ["data.mylab.org"] }`. An entry also matches each subdomain of the host.
+
+You can put your own reference files in the store. Agents find them with the `list_available_refs` tool.
+
+The `inflexa refs` commands manage the datasets of the reference-data catalog of the CLI. A person or a cloud job runs them. An agent cannot run them, because an agent uses the `download_ref` tool.
 
 | Command | Does |
 |-|-|
-| `inflexa refs list` | List the harness catalog with versions, sizes, integrity class, source/license links, and local state |
-| `inflexa refs download [ids...]` | Download from the upstream publishers, verify, and atomically activate selected datasets |
-| `inflexa refs verify [ids...]` | Hash active managed files and report missing or modified content |
-| `inflexa refs path` | Print the host path without creating it |
+| `inflexa refs list` | List the catalog datasets with their sources, licenses, and local state |
+| `inflexa refs download [ids...]` | Download the selected datasets from their upstream publishers, then make them active |
+| `inflexa refs verify [ids...]` | Compare the installed files with the checksums recorded at install |
+| `inflexa refs path` | Print the path of the store, and do not make the folder |
 
-**Every dataset is fetched straight from the third party that publishes it — NCBI, Reactome, WikiPathways, Zenodo, GTEx, CellTypist. This project mirrors, re-hosts, and redistributes nothing**, so there is no endpoint to configure and the licence you accept is the upstream's.
-
-That upstream decides what integrity we can honestly promise, and `refs list` tells you which you get:
-
-- **pinned** — the upstream publishes immutable, versioned bytes, so the catalog carries their size and SHA-256. A download is verified against the catalog *before* it is activated; a mismatch fails the install and changes nothing on disk.
-- **unpinned** — the upstream rebuilds the same URL in place (NCBI regenerates `gene_info` daily; Reactome overwrites `current` and deletes the prior release), so no checked-in digest could survive. Integrity is trust-on-first-use: the installer records the bytes it actually received, and `refs verify` proves they have not changed *since you installed them*. This is a weaker guarantee, and it is labelled as one.
-
-`refs download --force` re-fetches even when a dataset is already installed: it repairs a damaged install and is how you refresh an `unpinned` dataset once its upstream has moved on.
-
-The CLI owns `managed/` and `.inflexa/` below the store. Put arbitrary reference files under `user/`; the installer never adopts, verifies, overwrites, or deletes that content, and sandbox discovery sees it dynamically. Nothing in the sandbox image points a library at the store — agents call `list-available-refs` and pass the returned absolute paths explicitly. If a useful dataset is missing, custom files work immediately, and a PR adding its upstream URL, provenance, and licensing to the harness catalog makes it an opt-in setup choice for everyone.
+Each command uses the store that `refs.dir` sets. If `refs.dir` is a relative path, the command stops with an error.

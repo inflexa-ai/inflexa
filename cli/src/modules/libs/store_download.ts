@@ -10,9 +10,8 @@
  *
  * The layers are zstd-compressed tars: one for each track plus one base layer with the catalog farm
  * and the dependency graph. Extraction of every layer into one staged root reassembles the
- * `/mnt/libs` tree exactly, with the symlinks kept verbatim. The activation obeys the receipt
- * pattern of the reference store (`modules/refs/store.ts`): stage, rename, then write the receipt
- * last. Thus a crash before the receipt reads back as incomplete, and the next run repairs it.
+ * `/mnt/libs` tree exactly, with the symlinks kept verbatim. The activation stages, renames, then
+ * writes the receipt last. Thus a crash before the receipt reads back as incomplete, and the next run repairs it.
  *
  * The catalog farm arrives as a TEMPLATE and never as an active environment. No pointer selects a
  * farm at the store level, because each sandbox mounts the farm of its own analysis. The catalog

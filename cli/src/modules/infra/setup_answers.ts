@@ -37,26 +37,6 @@ import { messageOf } from "../../lib/cause.ts";
 
 // --- the answer model ------------------------------------------------------
 
-/** The reference-data preset words an answer may carry in place of an explicit id list. */
-export const REFS_PRESETS = ["recommended", "all"] as const;
-
-/** A reference-data preset word — `recommended` (the catalog's recommended datasets) or `all` (everything offered). */
-export type RefsPreset = (typeof REFS_PRESETS)[number];
-
-/**
- * The preset `value` names, in its canonical spelling — or `undefined` when it is a catalog dataset id.
- *
- * Matched case-INSENSITIVELY, and this is the only place in the refs answer that folds case. A preset is
- * command VOCABULARY: a word this CLI defines, so `--refs ALL` is the same instruction as `--refs all`, and
- * answering a correctly-spelled word with "unknown dataset id" is a dead end the author cannot debug. A
- * dataset id is an IDENTIFIER the catalog owns and is compared exactly — folding one would silently rewrite
- * what the author named into an id that may or may not exist.
- */
-export function refsPresetOf(value: string): RefsPreset | undefined {
-    const word = value.toLowerCase();
-    return REFS_PRESETS.find((preset) => preset === word);
-}
-
 /**
  * The OAuth account kinds a `provider` answer names in CLIPROXY mode — the vocabulary of the accounts the
  * proxy can log into, disjoint in meaning (though overlapping in spelling) from the open vendor slug the
@@ -213,18 +193,6 @@ export const setupAnswersSchema = z.strictObject({
             gguf: trimmedAnswer("must not be empty").optional(),
         })
         .optional(),
-    /** A preset word or an explicit dataset-id list. The value IS the download consent; absence downloads nothing. */
-    refs: z
-        .preprocess(
-            // A scalar `refs:` can only ever be a preset attempt — ids are spelled as a list — so canonicalizing
-            // a recognized preset word is the whole normalization (`refsPresetOf` owns why case folds here and
-            // nowhere else). Anything unrecognized passes through untouched and fails the union below.
-            (value) => (typeof value === "string" ? (refsPresetOf(value) ?? value) : value),
-            z.union([z.enum(REFS_PRESETS), z.array(z.string().min(1)).min(1, { error: "must list at least one dataset id" })], {
-                error: "must be a preset (`recommended` or `all`) or a non-empty list of dataset ids",
-            }),
-        )
-        .optional(),
     /** The one consent for the three transfers: the two images and the catalog. The answer IS the multi-GB consent. */
     sandbox: z.boolean().optional(),
     /** Pins the container runtime as a hard gate — given-but-dead is an error, never a silent fallback. */
@@ -276,10 +244,10 @@ export function describeSetupAnswersError(error: SetupAnswersError): string {
 
 /**
  * The BLOCKS of the answers document — the top-level keys whose value is a mapping of further questions,
- * as opposed to the top-level leaves (`refs`, `sandbox`, `runtime`) that carry a value of their own.
+ * as opposed to the top-level leaves (`sandbox`, `runtime`) that carry a value of their own.
  *
  * Derived from the schema rather than listed, so a new block joins by its schema declaration alone. The
- * array guard is what keeps `refs` out: a sequence is a VALUE, not a mapping of questions.
+ * array guard keeps a future list answer out: a sequence is a VALUE, not a mapping of questions.
  */
 type AnswerBlock = {
     [K in keyof SetupAnswers]-?: NonNullable<SetupAnswers[K]> extends readonly unknown[] ? never : NonNullable<SetupAnswers[K]> extends object ? K : never;
@@ -379,7 +347,6 @@ const ANSWER_QUESTIONS = {
     "embedding.baseURL": { flag: "--embeddings-url", at: "leaf", block: "embedding", leaf: "baseURL" },
     "embedding.model": { flag: "--embeddings-model", at: "leaf", block: "embedding", leaf: "model" },
     "embedding.gguf": { flag: "--embeddings-gguf", at: "leaf", block: "embedding", leaf: "gguf" },
-    refs: { flag: "--refs", at: "top", leaf: "refs" },
     sandbox: { flag: "--sandbox", at: "top", leaf: "sandbox" },
     runtime: { flag: "--runtime", at: "top", leaf: "runtime" },
 } as const satisfies { readonly [K in SchemaAnswerKey | AuthFieldKey]: AnswerQuestion<K> };
@@ -449,9 +416,9 @@ const DOCUMENT_LOCATOR = "the answers document itself";
  * Name whatever a zod issue points at, in both spellings wherever a spelling exists: the question itself,
  * else its nearest mapped ancestor, else the raw path.
  *
- * The ancestor fallback is what keeps an ARRAY ELEMENT reportable — `refs.0` can never be an answer key of
- * its own, so without it the one question the author can actually edit (`--refs` / `refs`) goes unnamed.
- * The raw path rides along so a long list still says which element.
+ * The ancestor fallback is what keeps a path below a question reportable: such a path can never be an
+ * answer key of its own, so without it the one question the author can actually edit goes unnamed. The raw
+ * path rides along so it still says which element.
  */
 function spellPath(path: readonly PropertyKey[]): string {
     if (path.length === 0) return DOCUMENT_LOCATOR;
@@ -516,7 +483,7 @@ function parseAnswers(document: unknown, path: string | undefined): Result<Setup
 // --- the file front-end ----------------------------------------------------
 
 /** The one message for every shape of "this file answers nothing", so the three detections read as one rule. */
-const EMPTY_FILE_PROBLEM = "the file is empty — it must be a YAML mapping of setup answers (e.g. `connection:`, `postgres:`, `refs:`).";
+const EMPTY_FILE_PROBLEM = "the file is empty — it must be a YAML mapping of setup answers (e.g. `connection:`, `postgres:`, `sandbox:`).";
 
 /**
  * Whether an answer set answers no QUESTION, which is what {@link EMPTY_FILE_PROBLEM} reports.
@@ -525,13 +492,10 @@ const EMPTY_FILE_PROBLEM = "the file is empty — it must be a YAML mapping of s
  * presence test on the top level alone reads it as answered and provisions every default in silence —
  * exactly the outcome the explicit-`{}` check exists to prevent, one nesting level down. So a block counts
  * only for the leaves inside it.
- *
- * `refs` is the one answer that is itself a container without being a block; its schema already rejects an
- * empty list, so an array reaching here always names something and is counted whole.
  */
 function answersNothing(answers: SetupAnswers): boolean {
     return Object.values(answers).every((answer) => {
-        if (typeof answer === "string" || typeof answer === "boolean" || Array.isArray(answer)) return false;
+        if (typeof answer === "string" || typeof answer === "boolean") return false;
         return Object.values(answer).every((leaf) => leaf === undefined);
     });
 }
@@ -607,8 +571,7 @@ function recordScalar(scalars: Map<string, string>, path: string, raw: string): 
  *   the duplicate half of the scan; the inner duplicate is invisible. The scalar half descends exactly one
  *   level (see {@link recordScalar}), which is as deep as any numeric answer sits.
  * - **Block-sequence items.** A `- ` line, and everything indented under it, is skipped entirely — the
- *   answers schema's only list is `refs` (a list of scalars), so descending would add parser complexity for
- *   no reachable duplicate.
+ *   answers schema has no list, so descending would add parser complexity for no reachable duplicate.
  * - **Keys containing `:`.** A quoted key (`"a:b": 1`) does not match the entry pattern and is skipped.
  * - **Quoted scalars spanning lines.** Block scalars (`|`/`>`) are skipped by header, but a plain or quoted
  *   multi-line value whose continuation lines happen to read as `key: value` IS scanned — twice-repeated
@@ -813,8 +776,6 @@ export type SetupAnswerFlags = {
     readonly embeddingsModel?: string;
     /** `--embeddings-gguf <path>`: a user-owned local GGUF. */
     readonly embeddingsGguf?: string;
-    /** `--refs recommended|all|<id,…>`. */
-    readonly refs?: string;
     /** `--sandbox` — a bare flag; the answer is the one consent for the three transfers. */
     readonly sandbox?: boolean;
     /** `--runtime docker|podman`. */
@@ -842,30 +803,6 @@ function wholeNumber(raw: string | undefined, key: AnswerKey, problems: string[]
         return undefined;
     }
     return Number(text);
-}
-
-/**
- * A `--refs` value is a preset word OR a comma-separated id list. The preset check comes first and applies
- * only to a lone token, so `--refs recommended` is the preset while `--refs a,b` is an id list (a list
- * that CONTAINS a preset word is rejected in validation — the words are reserved).
- *
- * Ids are never touched beyond trimming and deduplication: whether one exists is the refs module's question,
- * asked where the catalog is already loaded. Pulling that catalog in here would make this layer know the
- * reference data it exists to stay ignorant of.
- */
-function refsFromFlag(raw: string | undefined): RefsPreset | string[] | undefined {
-    if (raw === undefined) return undefined;
-    const tokens = [
-        ...new Set(
-            raw
-                .split(",")
-                .map((token) => token.trim())
-                .filter(Boolean),
-        ),
-    ];
-    const [only] = tokens;
-    const preset = tokens.length === 1 && only !== undefined ? refsPresetOf(only) : undefined;
-    return preset ?? tokens;
 }
 
 /**
@@ -941,7 +878,6 @@ export function answersFromFlags(flags: SetupAnswerFlags): Result<SetupAnswers, 
             model: flags.embeddingsModel,
             gguf: flags.embeddingsGguf,
         }),
-        refs: refsFromFlag(flags.refs),
         sandbox: flags.sandbox,
         runtime: flags.runtime,
     };
@@ -1240,21 +1176,6 @@ export function resolveSetupAnswers(
         problems.push(
             `${answerSpelling("postgres.port")} ${port} is a reserved channel default (${reservedPostgresPorts.join(", ")}) that setup never persists — one channel's stack would collide with the other's. Pick another port.`,
         );
-    }
-
-    // The preset words are reserved: inside an id list they would read as catalog ids, so a run asking for
-    // `--refs recommended,foo` is ambiguous rather than additive. Whether the remaining ids exist is the
-    // refs module's question — it owns the catalog; this layer never loads it.
-    if (Array.isArray(answers.refs)) {
-        // Reserved by the same case-insensitive reading that makes `--refs ALL` the preset, and reported in
-        // the author's own spelling: a word recognized as vocabulary in one position cannot be an ordinary
-        // id in the other, or the rule has a case-shaped hole that surfaces as an unknown-dataset error.
-        const reserved = answers.refs.filter((id) => refsPresetOf(id) !== undefined);
-        if (reserved.length > 0) {
-            problems.push(
-                `${answerSpelling("refs")} — ${reserved.join(", ")} ${reserved.length === 1 ? "is a reserved preset word" : "are reserved preset words"}; pass one alone (\`--refs recommended\`) rather than inside a list of dataset ids.`,
-            );
-        }
     }
 
     validateEmbedding(answers, batch, context.embeddingApiKey ?? resolveEmbeddingApiKey, problems);

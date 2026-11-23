@@ -35,7 +35,6 @@ describe("inflexa help & usage (e2e)", () => {
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("Usage: inflexa");
         expect(result.stdout).toContain("project");
-        expect(result.stdout).toContain("refs");
         expect(result.stdout).toContain("reference data mounted read-only in sandboxes at /mnt/refs");
         // Assert the DESCRIPTION, not the bare name: "status" is a substring of `sandbox status` and of
         // several option blurbs, so a containment check on the word alone passes even when the command
@@ -66,6 +65,7 @@ describe("inflexa help & usage (e2e)", () => {
         expect(result.exitCode).toBe(0);
         expect(result.stdout).toContain("Paths:");
         expect(result.stdout).toContain("Environment:");
+        expect(result.stdout).toContain("The `refs.dir` config key moves it");
     });
 
     test("each command refuses a relative data root, and names the variable", () => {
@@ -76,9 +76,9 @@ describe("inflexa help & usage (e2e)", () => {
     });
 
     test("help <command> prints the help of that command", () => {
-        const result = runCli(["help", "refs"]);
+        const result = runCli(["help", "geo"]);
         expect(result.exitCode).toBe(0);
-        expect(result.stdout).toContain("Usage: inflexa refs");
+        expect(result.stdout).toContain("Usage: inflexa geo");
     });
 
     test("refs path prints the exact public path without creating it", async () => {

@@ -19,7 +19,7 @@ import {
     type ServerSettings,
     type SettingsPatch,
 } from "../../api/machine.ts";
-import { AGENT_EFFORTS, readConfig, readConfigForWrite, resolvePostgresConfig, writeConfig, type Config, type ConfigError } from "../../lib/config.ts";
+import { AGENT_EFFORTS, readConfig, readConfigForWrite, resolvePostgresConfig, resolveRefsDir, writeConfig, type Config, type ConfigError } from "../../lib/config.ts";
 import { runtimeIds } from "../../lib/container.ts";
 import { listAnalysisInputs } from "../../db/primary_query.ts";
 import { env, isReservedPostgresPort } from "../../lib/env.ts";
@@ -275,8 +275,18 @@ async function folderForTarget(c: Context<ServerEnv>, requested: OpenFolderBody)
             return ok(env.dataDir);
         case "logs_dir":
             return ok(env.logDir);
-        case "reference_store":
-            return ensureStoreFolder(c, env.refsDir);
+        case "reference_store": {
+            const refsDir = resolveRefsDir();
+            if (refsDir.isErr())
+                return err(
+                    apiError(
+                        c,
+                        "conflict",
+                        `The \`refs.dir\` path "${refsDir.error.value}" in config.json is relative. The path must be absolute, or start with \`~/\`.`,
+                    ),
+                );
+            return ensureStoreFolder(c, refsDir.value);
+        }
         case "package_store":
             return ensureStoreFolder(c, env.packageStoreDir);
         case "output_dir":

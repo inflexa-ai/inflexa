@@ -126,6 +126,7 @@ function fakeGateway(pending: PendingAsk[], outcome: AnswerOutcome = "applied"):
         pending: () => Promise.resolve(pending),
         pendingByAnalyses: () => Promise.reject(new Error("the routes never list the asks of other analyses")),
         scopeOf: () => Promise.reject(new Error("the routes never read the scope of an ask")),
+        workflowOf: () => Promise.reject(new Error("the routes never read the workflow of an ask")),
         sweepExpired: () => Promise.resolve(0),
     };
 }

@@ -5,10 +5,12 @@ The non-interactive setup contract: the `SetupAnswers` mechanism through which `
 (batch mode) and `--config` (the YAML answers file) resolve every interactive decision of the setup
 flow — the resolution precedence, strict file parsing, upfront whole-set validation, batch defaults,
 validation probes, and idempotency. Created by archiving change non-interactive-setup.
+
 ## Requirements
+
 ### Requirement: One answers mechanism resolves every setup question
 
-Setup SHALL define a single answers schema (`SetupAnswers`) covering every interactive decision point of the setup flow — connection mode, direct-connection facts, credential source, model, Postgres fields, resource share, embedding backend and its values, reference selection, sandbox variant, and runtime. Two front-ends populate it: value flags and the `--config` YAML file, resolved per question with the fixed precedence:
+Setup SHALL define a single answers schema (`SetupAnswers`) covering every interactive decision point of the setup flow — connection mode, direct-connection facts, credential source, model, Postgres fields, resource share, embedding backend and its values, sandbox variant, and runtime. Two front-ends populate it: value flags and the `--config` YAML file, resolved per question with the fixed precedence:
 
 ```
 flag  >  config-file value  >  interactive prompt (TTY, not --yes, and not before the checkpoint)  >  default-or-error (--yes, non-TTY, or a step before the checkpoint)
@@ -44,55 +46,6 @@ When a MODE-CARRYING flag (`--connection`, `--embeddings`) moves a block's mode 
 
 - **WHEN** `setup --yes --embeddings off --embeddings-url https://gw.corp/v1` runs (both answers from flags)
 - **THEN** setup fails upfront naming the mismatch, exactly as an all-file mismatch does
-
-### Requirement: `--yes` never prompts and validates the whole answer set before mutating
-
-Under `--yes`, setup SHALL never prompt — on a TTY or off it. The complete answer set SHALL be validated BEFORE any mutation (config writes, container work, downloads): flag parse errors, config-file schema violations, unknown reference ids (checked against the offered catalog, with already-installed ids valid), URL-shaped answers that do not parse as URLs with a scheme, reserved Postgres ports, contextually-required-but-absent answers, and mode-mismatched answers the resolved modes cannot consume (a direct-only `--base-url` under cliproxy, an `--embeddings-gguf` with api-key embeddings — no answer is ever silently ignored) all fail here, and each error SHALL name both spellings of the answer (the flag and the file key). Validation SHALL report every problem it found in ONE pass — flag-level parse problems and schema-level problems together — so a fleet author fixes the file once, not once per problem class. The two front-ends SHALL accept the same value grammar: a numeric literal the flag front-end rejects (hex, exponent, any non-plain-decimal form) SHALL be rejected from the file too, naming both spellings. Unanswered questions resolve to their defaults: connection `cliproxy`; Postgres per-field defaults (persisting nothing); resource allowance the resolved default (unpersisted); embedding mode unchanged; reference downloads none; sandbox image skipped; model unanswered means Auto in cliproxy mode and an upfront error in direct mode.
-
-#### Scenario: Bare `setup --yes` provisions defaults only
-
-- **WHEN** `inflexa setup --yes` runs with no other answers
-- **THEN** the cliproxy stack is provisioned with all-default Postgres, no model pin is written, no reference data or sandbox image is downloaded, and the embedding mode is left unchanged
-
-#### Scenario: Missing required answers fail before any mutation
-
-- **WHEN** `inflexa setup --yes --connection direct` runs without `--base-url`
-- **THEN** setup exits non-zero naming `--base-url` / `connection.baseURL`, and no config write, container command, or download has happened
-
-#### Scenario: `--yes` on a TTY does not prompt
-
-- **WHEN** `inflexa setup --yes` runs on an interactive terminal
-- **THEN** no prompt is shown for any question (the deliberate break from the earlier refs-consent-only meaning of `--yes`)
-
-#### Scenario: A mode-mismatched answer is rejected
-
-- **WHEN** `inflexa setup --yes --base-url https://gw.corp/v1` runs with the connection resolving to cliproxy
-- **THEN** setup fails upfront naming the conflict (a direct-only answer under cliproxy) instead of silently ignoring the answer
-
-#### Scenario: An unknown reference id fails before any mutation
-
-- **WHEN** `inflexa setup --yes --refs collectri,gtex-typo` runs and `gtex-typo` matches nothing in the offered catalog
-- **THEN** setup exits non-zero naming `--refs` / `refs` and the unknown id, and no config write, container command, or download has happened
-
-#### Scenario: An already-installed reference id is a valid answer
-
-- **WHEN** `setup --yes --refs <id>` runs a second time after the first run installed `<id>`
-- **THEN** upfront validation passes (the id resolves to nothing left to install) and the run completes idempotently
-
-#### Scenario: A base URL answer must be a parseable URL
-
-- **WHEN** `setup --yes --connection direct --base-url gw.corp --provider anthropic --model m --no-validate` runs (no scheme on the URL)
-- **THEN** setup fails upfront naming `--base-url` / `connection.baseURL` and requiring a URL with a scheme, before anything is written
-
-#### Scenario: File and flags accept the same numeric grammar
-
-- **WHEN** the config file carries `postgres: {port: 0x1F5B}`
-- **THEN** setup fails upfront naming `--postgres-port` / `postgres.port` with the same whole-number rule the flag enforces, instead of accepting the YAML-resolved 8027
-
-#### Scenario: All problems are reported in one pass
-
-- **WHEN** a run supplies a malformed `--postgres-port` and an invalid `--sandbox` value together
-- **THEN** the single failure names both problems, not just the first
 
 ### Requirement: `--config` is a strict YAML answers file
 
@@ -245,7 +198,7 @@ two figures. When Enter cuts a figure, setup says so before the question.
 
 ### Requirement: Batch setup is idempotent
 
-Re-running batch setup with the same answers SHALL converge to the same final state without destructive or duplicate work: an existing proxy config is left untouched, the compose file is regenerated, images and datasets already present are not re-fetched, the vector extension install is a no-op, and persist-only-explicit config writes rebuild to the same content.
+Re-running batch setup with the same answers SHALL converge to the same final state without destructive or duplicate work: an existing proxy config is left untouched, the compose file is regenerated, images already present are not re-fetched, the vector extension install is a no-op, and persist-only-explicit config writes rebuild to the same content.
 
 #### Scenario: A second identical run changes nothing
 
@@ -288,7 +241,7 @@ A failed record write MUST warn, and it MUST NOT change the outcome of the run. 
 
 #### Scenario: A late failure records its step
 
-- **WHEN** setup fails at the reference-data step
+- **WHEN** setup fails at the embedding step
 - **THEN** the record names that step and the version of the binary, and the run names the step back to the operator
 
 #### Scenario: A complete run leaves no record
@@ -304,13 +257,13 @@ A failed record write MUST warn, and it MUST NOT change the outcome of the run. 
 
 #### Scenario: A continue silences the steps before it
 
-- **GIVEN** a record naming the reference-data step
+- **GIVEN** a record naming the embedding step
 - **WHEN** an interactive setup runs and the operator chooses to continue
-- **THEN** the connection and Postgres questions are not asked, their persisted values are resolved, and the reference-data step still asks
+- **THEN** the connection and Postgres questions are not asked, their persisted values are resolved, and the embedding step still asks
 
 #### Scenario: Start again asks everything
 
-- **GIVEN** a record naming the reference-data step
+- **GIVEN** a record naming the embedding step
 - **WHEN** an interactive setup runs and the operator chooses to start again
 - **THEN** every question is asked, and a complete run deletes the record
 
@@ -349,3 +302,42 @@ only warns, and writes no `dataDir`.
 - **GIVEN** the default root with 1 GiB free
 - **WHEN** `setup --yes` runs
 - **THEN** setup warns about the free space, writes no `dataDir`, and completes
+
+### Requirement: `--yes` never prompts and validates the whole answer set before any change
+
+Under `--yes`, setup SHALL never prompt — on a TTY or off it. The complete answer set SHALL be validated BEFORE any mutation (config writes, container work, downloads): flag parse errors, config-file schema violations, URL-shaped answers that do not parse as URLs with a scheme, reserved Postgres ports, contextually-required-but-absent answers, and mode-mismatched answers the resolved modes cannot consume (a direct-only `--base-url` under cliproxy, an `--embeddings-gguf` with api-key embeddings — no answer is ever silently ignored) all fail here, and each error SHALL name both spellings of the answer (the flag and the file key). Validation SHALL report every problem it found in ONE pass — flag-level parse problems and schema-level problems together — so a fleet author fixes the file once, not once per problem class. The two front-ends SHALL accept the same value grammar: a numeric literal the flag front-end rejects (hex, exponent, any non-plain-decimal form) SHALL be rejected from the file too, naming both spellings. Unanswered questions resolve to their defaults: connection `cliproxy`; Postgres per-field defaults (persisting nothing); resource allowance the resolved default (unpersisted); embedding mode unchanged; sandbox image skipped; model unanswered means Auto in cliproxy mode and an upfront error in direct mode.
+
+#### Scenario: Bare `setup --yes` provisions defaults only
+
+- **WHEN** `inflexa setup --yes` runs with no other answers
+- **THEN** the cliproxy stack is provisioned with all-default Postgres, no model pin is written, no sandbox image is downloaded, and the embedding mode is left unchanged
+
+#### Scenario: Missing required answers fail before any mutation
+
+- **WHEN** `inflexa setup --yes --connection direct` runs without `--base-url`
+- **THEN** setup exits non-zero naming `--base-url` / `connection.baseURL`, and no config write, container command, or download has happened
+
+#### Scenario: `--yes` on a TTY does not prompt
+
+- **WHEN** `inflexa setup --yes` runs on an interactive terminal
+- **THEN** no prompt is shown for any question (the deliberate break from the earlier consent-only meaning of `--yes`)
+
+#### Scenario: A mode-mismatched answer is rejected
+
+- **WHEN** `inflexa setup --yes --base-url https://gw.corp/v1` runs with the connection resolving to cliproxy
+- **THEN** setup fails upfront naming the conflict (a direct-only answer under cliproxy) instead of silently ignoring the answer
+
+#### Scenario: A base URL answer must be a parseable URL
+
+- **WHEN** `setup --yes --connection direct --base-url gw.corp --provider anthropic --model m --no-validate` runs (no scheme on the URL)
+- **THEN** setup fails upfront naming `--base-url` / `connection.baseURL` and requiring a URL with a scheme, before anything is written
+
+#### Scenario: File and flags accept the same numeric grammar
+
+- **WHEN** the config file carries `postgres: {port: 0x1F5B}`
+- **THEN** setup fails upfront naming `--postgres-port` / `postgres.port` with the same whole-number rule the flag enforces, instead of accepting the YAML-resolved 8027
+
+#### Scenario: All problems are reported in one pass
+
+- **WHEN** a run supplies a malformed `--postgres-port` and an invalid `--sandbox` value together
+- **THEN** the single failure names both problems, not just the first
