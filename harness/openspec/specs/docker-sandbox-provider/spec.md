@@ -242,44 +242,70 @@ of how one backend addresses a volume, not of the container contract.
 - **THEN** the container has a read-only bind at `/mnt/libs` and a read-only farm bind at the farm container path
 - **AND** the sandbox env injects the lib-store path variables from the mount plan
 
-### Requirement: Declared host-preserved bind ownership loosens the step write tree
+### Requirement: The executor fact selects the workload user
 
-`CreateSandboxClientConfig` SHALL carry an optional
-`engineBindOwnership: "host-preserved"`, by which the embedder states an
-engine fact: the engine's bind mounts expose honest host file ownership to the
-container (podman machine's virtiofs and native Linux binds present the
-embedder user's real uid and modes; Docker Desktop's file-sharing layer masks
-the mismatch, which is why default modes suffice there and the field stays
-unset). When set, the client SHALL `chmod` the pre-created step write tree —
-the work directory of the step, or the declared write tail — world-writable after
-creating it, so the uid-1000 sandbox workload can write through such mounts.
-The field names the fact, not the remediation: how the client compensates is
-harness-owned and MAY change without changing the config surface. The mode
-SHALL be applied with an explicit `chmod`, not `mkdir`'s mode option (which
-the process umask masks), and SHALL be applied on replay when the directories
-already exist. When unset, pre-creation SHALL keep today's default modes. The
-loosening is scoped to the step write tree only: read-only mounts (analysis
-tree, lib/ref stores) rely on standard world-read and SHALL NOT be relabeled
-or re-moded.
+`CreateSandboxClientConfig` MUST carry an optional `executor`, by which the
+embedder states an engine fact. The fact tells how the engine maps the ids of a
+container onto the host files. The embedder detects it on the machine that runs
+the engine, the executor. The harness MUST NOT read the ids of its own process
+for it, because a remote executor runs on a different machine.
 
-#### Scenario: World-writable step tree under a podman connection
+The fact has these kinds, and one rule in the harness selects the workload user
+and the access to the step tree from each kind:
 
-- **GIVEN** `engineBindOwnership: "host-preserved"`
-- **WHEN** `createSandbox` pre-creates the step tree
-- **THEN** the work directory of the step is world-writable
-- **AND** a workload write from uid 1000 through the read-write bind succeeds
+| Kind | Engine | Workload user | Container settings | Step tree |
+| --- | --- | --- | --- | --- |
+| absent, or `vm` with `bindOwnership: "masked"` | Docker Desktop, OrbStack | uid 1000 | none | default modes |
+| `vm` with `bindOwnership: "host-preserved"` | A Podman machine | uid 1000 | none | world-writable |
+| `rootful` | Rootful Docker or rootful Podman on Linux | the host user of the fact, with its supplementary groups | `SANDBOX_UID`, `SANDBOX_GID`, `SANDBOX_GROUPS` in the env | default modes |
+| `rootless-podman` | Rootless Podman on Linux | uid 1000, which `keep-id` maps onto the host user | `UsernsMode: keep-id:uid=1000,gid=1000`, the annotation `run.oci.keep_original_groups=1`, and `SANDBOX_KEEP_GROUPS=1` in the env | default modes |
 
-#### Scenario: Replayed pre-creation still applies the mode
+These rules also apply:
 
-- **GIVEN** `engineBindOwnership: "host-preserved"` and a step tree left by a prior attempt with default modes
-- **WHEN** `createSandbox` runs again for the same step
-- **THEN** the existing directories are re-moded world-writable rather than skipped
+- A `rootful` fact with uid 0 MUST keep uid 1000, because sandbox-server
+  refuses root under the egress firewall. Then the step tree is world-writable.
+- When the fact reports SELinux, `HostConfig.SecurityOpt` MUST add
+  `label=disable`. The backend MUST NOT relabel a host file with `:z` or `:Z`.
+- The identity env MUST come after the extra env of the spec. Thus a spec
+  cannot change the workload user.
+- The Podman compat API takes `GroupAdd` as a list of group names. Thus the
+  groups go through the OCI annotation that `--group-add keep-groups` makes in
+  the Podman CLI. Only crun reads the annotation.
 
-#### Scenario: Default modes when unset
+A world-writable step tree is the work directory of the step, or the declared
+write tail, and the records directory of the lease. The client MUST apply the
+mode with an explicit `chmod` after `mkdir`, because the process umask masks the
+mode option of `mkdir`. The client MUST also apply it on replay, when the
+directories exist already. The read-only mounts keep their modes.
 
-- **GIVEN** no `engineBindOwnership`
-- **WHEN** `createSandbox` pre-creates the step tree
-- **THEN** directory modes are the process default, unchanged from today
+The K8s backend starts the pod as uid 1000, and the fact does not apply to it.
+
+#### Scenario: A rootful engine drops to the host user
+
+- **GIVEN** a `rootful` fact for uid 1234, gid 1234, and the groups 1234 and 3000, with SELinux
+- **WHEN** `createSandbox` makes the container
+- **THEN** the env holds `SANDBOX_UID=1234`, `SANDBOX_GID=1234`, and `SANDBOX_GROUPS=1234,3000`
+- **AND** `SecurityOpt` holds `no-new-privileges` and `label=disable`
+- **AND** the step tree keeps the modes that the host gave it
+
+#### Scenario: Rootless Podman maps the host user onto uid 1000
+
+- **GIVEN** a `rootless-podman` fact
+- **WHEN** `createSandbox` makes the container
+- **THEN** `UsernsMode` is `keep-id:uid=1000,gid=1000`
+- **AND** `HostConfig.Annotations` holds `run.oci.keep_original_groups=1`, and the env holds `SANDBOX_KEEP_GROUPS=1`
+
+#### Scenario: A Podman machine opens the step tree
+
+- **GIVEN** a `vm` fact with `bindOwnership: "host-preserved"`
+- **WHEN** `createSandbox` pre-creates the step tree, also on a replay
+- **THEN** the work directory of the step and the records directory are world-writable
+
+#### Scenario: No fact keeps the image user
+
+- **GIVEN** no `executor`
+- **WHEN** `createSandbox` makes the container
+- **THEN** the env holds no `SANDBOX_UID` and no `SANDBOX_KEEP_GROUPS`, and the step tree keeps the process default modes
 
 ### Requirement: Dynamic port mapping for host connectivity
 
@@ -452,8 +478,8 @@ entrypoint:
 - `SETPCAP` clears the bounding set.
 
 The entrypoint MUST drop each of them before the workload runs. Thus the
-capability sets of the workload are empty. The workload runs as uid 1000 with
-`no-new-privileges`.
+capability sets of the workload are empty. The workload runs as the user that
+the executor fact selects, with `no-new-privileges`.
 
 #### Scenario: Each container gets the egress firewall
 

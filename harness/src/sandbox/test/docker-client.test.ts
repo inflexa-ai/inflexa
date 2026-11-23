@@ -72,6 +72,8 @@ type CreatedContainer = {
     capDrop?: string[];
     capAdd?: string[];
     securityOpt?: string[];
+    usernsMode?: string;
+    annotations?: Record<string, string>;
     portBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>>;
     memory?: number;
     memorySwap?: number;
@@ -90,6 +92,8 @@ type CreateOpts = {
         CapDrop?: string[];
         CapAdd?: string[];
         SecurityOpt?: string[];
+        UsernsMode?: string;
+        Annotations?: Record<string, string>;
         PortBindings?: Record<string, Array<{ HostIp?: string; HostPort?: string }>>;
         Memory?: number;
         MemorySwap?: number;
@@ -183,6 +187,8 @@ function stubDocker(): {
                 capDrop: opts.HostConfig?.CapDrop,
                 capAdd: opts.HostConfig?.CapAdd,
                 securityOpt: opts.HostConfig?.SecurityOpt,
+                usernsMode: opts.HostConfig?.UsernsMode,
+                annotations: opts.HostConfig?.Annotations,
                 portBindings: opts.HostConfig?.PortBindings,
                 memory: opts.HostConfig?.Memory,
                 memorySwap: opts.HostConfig?.MemorySwap,
@@ -240,6 +246,11 @@ describe("docker createSandbox — confinement", () => {
         // The sandbox never dials out, thus it gets no address to dial.
         expect(env.CORTEX_BASE_URL).toBeUndefined();
         expect(env.SANDBOX_TRANSPORT).toBeUndefined();
+        // No executor fact: the entrypoint drops to the image user.
+        expect(env.SANDBOX_UID).toBeUndefined();
+        expect(env.SANDBOX_KEEP_GROUPS).toBeUndefined();
+        expect(sandbox.usernsMode).toBeUndefined();
+        expect(sandbox.annotations).toBeUndefined();
     });
 
     test("the exec port is published to loopback only, and no gateway or network is created", async () => {
@@ -487,6 +498,58 @@ describe("docker createSandbox — confinement", () => {
     });
 });
 
+describe("docker createSandbox — the workload user from the executor fact", () => {
+    const opsWith = (docker: DockerEngine, executor: Parameters<typeof createDockerSandboxOps>[0]["executor"]) =>
+        createDockerSandboxOps({
+            image: "sandbox-base:latest",
+            resolveWorkspaceRoot: (id) => Promise.resolve(join("/sessions", id)),
+            farmSource,
+            executor,
+            docker,
+            fetch: okFetch,
+        });
+
+    test("a rootful engine with SELinux: the env names the host user and its groups, and the label separation is off", async () => {
+        const { docker, created } = stubDocker();
+        const ops = opsWith(docker, { kind: "rootful", user: { uid: 1234, gid: 1235, groups: [1235, 3000] }, selinux: true });
+
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
+
+        const sandbox = sandboxOfCreated(created);
+        const env = envMapOf(sandbox);
+        expect(env.SANDBOX_UID).toBe("1234");
+        expect(env.SANDBOX_GID).toBe("1235");
+        expect(env.SANDBOX_GROUPS).toBe("1235,3000");
+        expect(sandbox.securityOpt).toEqual(["no-new-privileges", "label=disable"]);
+        // The drop happens in the entrypoint: the container still starts as root.
+        expect(sandbox.user).toBe("0:0");
+        expect(sandbox.usernsMode).toBeUndefined();
+        expect(sandbox.annotations).toBeUndefined();
+    });
+
+    test("the extra env of a spec cannot change the workload user", async () => {
+        const { docker, created } = stubDocker();
+        const ops = opsWith(docker, { kind: "rootful", user: { uid: 1234, gid: 1234, groups: [] }, selinux: false });
+
+        (await ops.createSandbox(...splitSpawn({ ...META, extraEnv: { SANDBOX_UID: "0" } }), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
+
+        expect(envMapOf(sandboxOfCreated(created)).SANDBOX_UID).toBe("1234");
+    });
+
+    test("rootless Podman: keep-id onto the image user, and the groups kept through the OCI annotation", async () => {
+        const { docker, created } = stubDocker();
+        const ops = opsWith(docker, { kind: "rootless-podman", selinux: false });
+
+        (await ops.createSandbox(...splitSpawn(META), keyedSandboxIdentity("run-1", "lease#1"), {}))._unsafeUnwrap();
+
+        const sandbox = sandboxOfCreated(created);
+        expect(sandbox.usernsMode).toBe("keep-id:uid=1000,gid=1000");
+        expect(sandbox.annotations).toEqual({ "run.oci.keep_original_groups": "1" });
+        expect(envMapOf(sandbox).SANDBOX_KEEP_GROUPS).toBe("1");
+        expect(envMapOf(sandbox).SANDBOX_UID).toBeUndefined();
+        expect(sandbox.securityOpt).toEqual(["no-new-privileges"]);
+    });
+});
 describe("docker createSandbox — the label set", () => {
     function labelledOps() {
         const { docker, created } = stubDocker();

@@ -332,7 +332,8 @@ lease reads them at its start. Each exec gets its own `TMPDIR`. There is no
 boundary:
 
 - On Docker, the exec port is published on `127.0.0.1` only. The root
-  entrypoint installs an egress-deny firewall, and then it drops to uid 1000.
+  entrypoint installs an egress-deny firewall, and then it drops to the
+  workload user that the executor fact selects.
 - On K8s, a NetworkPolicy admits only Cortex to the sandbox port, and it denies
   each egress of the sandbox.
 

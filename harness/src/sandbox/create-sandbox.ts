@@ -30,6 +30,7 @@ import { createK8sSandboxOps } from "./k8s-client.js";
 import { mountCoordsOf, sandboxWriteTail, type MountPlanCoords } from "./mount-plan.js";
 import { SandboxFailure, type SandboxError } from "./sandbox-error.js";
 import type { FarmSource, ResolveSandboxLabels, SandboxLabels, SandboxLiveness, SandboxRef, SandboxSpec, ToolchainSource } from "./types.js";
+import { workloadIdentityOf, type SandboxExecutor } from "./workload-identity.js";
 
 /**
  * Narrow config slice the sandbox factory reads off `Env` — the backend
@@ -104,18 +105,13 @@ export type CreateSandboxClientConfig = {
      */
     engineSocketPath?: string;
     /**
-     * Docker: the engine's bind mounts expose honest host file ownership to
-     * the container — podman machine's virtiofs and native Linux binds present
-     * the embedder user's real uid and modes, which the uid-1000 sandbox
-     * workload cannot write; Docker Desktop's file-sharing layer masks that
-     * mismatch, so it stays unset there. When set, the client loosens each
-     * step's pre-created write tree so workload writes land. The field names
-     * the engine fact rather than the remediation, so how the harness
-     * compensates can evolve without changing the embedder surface; a
-     * single-valued union (not a boolean) so future ownership classes extend
-     * it without a breaking change.
+     * Docker: how the engine maps the ids of a container onto the host files,
+     * detected by the embedder on the machine that runs the engine. The field
+     * names the engine fact rather than the remediation: the harness selects the
+     * workload user and the step-tree access from it (`workload-identity.ts`).
+     * Absent is a VM engine whose file sharing masks the owner.
      */
-    engineBindOwnership?: "host-preserved";
+    executor?: SandboxExecutor;
     /** K8s: PVC claim backing the session PVC the workspace roots live under. */
     sessionPvc?: string;
     /**
@@ -173,9 +169,9 @@ export type CreateSandboxClientConfig = {
  * as one directory. `sandboxWriteTail` decides which, so the directory the host
  * makes and the directory the sandbox mounts are the same one.
  *
- * `stepTreeAccess: "world-writable"` chmods the directory so the
- * uid-1000 sandbox workload can write them through engines that honor host bind
- * ownership. The chmod is explicit, not `mkdir`'s `mode` option: the process
+ * `stepTreeAccess: "world-writable"` chmods the directory so a workload
+ * user that does not own it can write it through an engine that shows the host
+ * owner. The chmod is explicit, not `mkdir`'s `mode` option: the process
  * umask masks `mkdir`'s mode, and on replay the dirs already exist so `mkdir`
  * would not touch them either way. Scoped to the write tree — the
  * read-only mount sources are never re-moded. Exported for tests.
@@ -244,6 +240,11 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
      */
     const failing = (e: SandboxError): SandboxFailure => new SandboxFailure(e);
 
+    // The config states an engine fact; which access to the step tree that fact
+    // demands is harness-owned and chosen here, not by the embedder. K8s starts
+    // the pod as the image user and has no executor fact.
+    const stepTreeAccess = backend === "docker" ? workloadIdentityOf(config.executor).stepTreeAccess : undefined;
+
     const ops =
         backend === "k8s"
             ? createK8sSandboxOps({
@@ -273,6 +274,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                   refStorePath: config.refStorePath,
                   platform: config.platform,
                   engineSocketPath: config.engineSocketPath,
+                  executor: config.executor,
                   logger: config.logger,
               });
 
@@ -313,13 +315,7 @@ export function createSandboxClient(config: CreateSandboxClientConfig): SandboxC
                 sandboxId: identity.sandboxId,
                 cause,
             });
-        // The config states an engine fact (binds preserve host ownership);
-        // which remediation that fact demands — today, a world-writable step
-        // write tree — is harness-owned and chosen here, not by the embedder.
-        const treeDeps = {
-            resolveWorkspaceRoot: config.resolveWorkspaceRoot,
-            stepTreeAccess: config.engineBindOwnership === "host-preserved" ? ("world-writable" as const) : undefined,
-        };
+        const treeDeps = { resolveWorkspaceRoot: config.resolveWorkspaceRoot, stepTreeAccess };
         const coords = mountCoordsOf(session, spec);
         const precreated = await ResultAsync.fromPromise(
             Promise.all([precreateStepTree(treeDeps, coords), precreateRecordDir(treeDeps, coords)]),
