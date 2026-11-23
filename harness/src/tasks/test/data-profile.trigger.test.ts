@@ -438,7 +438,11 @@ describe("triggerDataProfile — a refused authorization", () => {
 
         expect(
             (
-                await triggerDataProfile(refusingDeps(false), { auth: makeLocalAuth(), analysisId: "a-refused", inputSummary: summaryOf([stagedInput("file-aaa")]) })
+                await triggerDataProfile(refusingDeps(false), {
+                    auth: makeLocalAuth(),
+                    analysisId: "a-refused",
+                    inputSummary: summaryOf([stagedInput("file-aaa")]),
+                })
             )._unsafeUnwrap(),
         ).toBe("started");
 
@@ -582,7 +586,11 @@ describe("triggerDataProfile: the person of the profile", () => {
             workflow: async () => {},
         };
 
-        const result = await triggerDataProfile(refusing, { auth: makeLocalAuth(), analysisId: "a-person-refused", inputSummary: summaryOf([stagedInput("file-aaa")]) });
+        const result = await triggerDataProfile(refusing, {
+            auth: makeLocalAuth(),
+            analysisId: "a-person-refused",
+            inputSummary: summaryOf([stagedInput("file-aaa")]),
+        });
 
         expect(result._unsafeUnwrap()).toBe("restarted");
         expect(await userAfterDispatch("a-person-refused", null)).toBeNull();
@@ -651,7 +659,9 @@ describe("runDataProfile — the outcome of the dispatch", () => {
                 },
             };
 
-            const failure = (await runDataProfile(refusing, { auth: makeLocalAuth(), analysisId, inputSummary: summaryOf([stagedInput("file-aaa")]) }))._unsafeUnwrapErr();
+            const failure = (
+                await runDataProfile(refusing, { auth: makeLocalAuth(), analysisId, inputSummary: summaryOf([stagedInput("file-aaa")]) })
+            )._unsafeUnwrapErr();
 
             expect(failure).toEqual({ type: "refused", reason: "no_funds", suspend });
             expect(await rawStatus(pool, analysisId)).toBe("failed");
@@ -669,7 +679,11 @@ describe("runDataProfile — the outcome of the dispatch", () => {
         await claimFailedRow("a-run-start-failed");
 
         const failure = (
-            await runDataProfile(tripwireDeps(pool), { auth: makeLocalAuth(), analysisId: "a-run-start-failed", inputSummary: summaryOf([stagedInput("file-aaa")]) })
+            await runDataProfile(tripwireDeps(pool), {
+                auth: makeLocalAuth(),
+                analysisId: "a-run-start-failed",
+                inputSummary: summaryOf([stagedInput("file-aaa")]),
+            })
         )._unsafeUnwrapErr();
 
         expect(failure.type).toBe("start_failed");

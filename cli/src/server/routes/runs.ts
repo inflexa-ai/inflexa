@@ -89,7 +89,7 @@ import { unknownRecordSchema } from "../../lib/json_record.ts";
 import { getLogger } from "../../lib/log.ts";
 import { noteAnalysisActivity } from "../../modules/analysis/activity.ts";
 import { noteDataProfileState } from "../../modules/harness/agent_switch.ts";
-import { ensureProfileAtParity, forceReprofile, type ProfileParityOutcome } from "../../modules/harness/profile_trigger.ts";
+import { ensureProfileAtParity, forceReprofile } from "../../modules/harness/profile_trigger.ts";
 import type { HarnessRuntime } from "../../modules/harness/runtime.ts";
 import { buildChatSession } from "../../modules/harness/turn.ts";
 import { analysisFarmPath, catalogFarmPath, composeFullFarm, describeFarmCompositionError } from "../../modules/libs/composition.ts";
@@ -167,9 +167,9 @@ export type RunRoutesOpts<R extends PoolRuntime = HarnessRuntime> = {
     /** Cancel the run and its children, and converge the ledgers. Rejects with {@link UnknownRunError} for an unknown run. */
     readonly cancelRun: (runtime: R, runId: string, session: AgentSession) => Promise<CancelRunResult>;
     /** The parity drive of a chat open. */
-    readonly ensureParity: (runtime: R, analysis: Analysis) => Promise<ProfileParityOutcome>;
+    readonly ensureParity: (runtime: R, analysis: Analysis) => Promise<ProfileOutcome>;
     /** The deliberate re-profile. */
-    readonly forceReprofile: (runtime: R, analysis: Analysis) => Promise<ProfileParityOutcome>;
+    readonly forceReprofile: (runtime: R, analysis: Analysis) => Promise<ProfileOutcome>;
     /** Approve a stored plan and start its run with no model call. Each outcome rides the `Result`. */
     readonly approvePlan: (runtime: R, input: ApprovePlanInput) => ResultAsync<PlanApproval, ApprovePlanRefusal>;
     /** The image, the store, and the farm verdict for a sandbox of the analysis. */
@@ -570,8 +570,8 @@ function loadAnalysis(analysisId: string): Result<Analysis | null, LocalDbError>
 }
 
 /** Run one profile drive behind the profile work of the analysis, and give its outcome. A drive that throws is the error. */
-async function queuedDrive(analysisId: string, drive: () => Promise<ProfileParityOutcome>): Promise<Result<ProfileOutcome, unknown>> {
-    const holder: { outcome?: ProfileParityOutcome } = {};
+async function queuedDrive(analysisId: string, drive: () => Promise<ProfileOutcome>): Promise<Result<ProfileOutcome, unknown>> {
+    const holder: { outcome?: ProfileOutcome } = {};
     const ran = await ResultAsync.fromPromise(
         serializeProfileWork(analysisId, async () => {
             holder.outcome = await drive();

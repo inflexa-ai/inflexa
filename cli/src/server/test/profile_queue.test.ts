@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import type { ProfileParityOutcome } from "../../modules/harness/profile_trigger.ts";
+import type { ProfileOutcome } from "../../api/runs.ts";
 import { asStr256 } from "../../lib/types.ts";
 import type { Analysis } from "../../types/analysis.ts";
 import type { StampedEvent } from "../../types/events.ts";
@@ -99,7 +99,7 @@ describe("watchInputDrift", () => {
         const stop = watchInputDrift({
             runtime: () => runtime,
             analysis: (id) => analysisOf(id),
-            reprofile: (_runtime, analysis): Promise<ProfileParityOutcome> => {
+            reprofile: (_runtime, analysis): Promise<ProfileOutcome> => {
                 reprofiled.push(analysis.id);
                 return Promise.resolve({ kind: "triggered", restarted: true, materialized: true });
             },
