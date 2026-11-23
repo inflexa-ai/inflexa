@@ -119,6 +119,38 @@ function liveTransfer(transfers: readonly TransferReport[], kind: TransferKind):
     return transfers.some((report) => report.kind === kind && report.live);
 }
 
+/** A catalog transfer in its `unpacking` phase merges into the store root, thus no sandbox can start under it. */
+function mergesIntoStore(report: TransferReport): boolean {
+    return report.kind === "catalog" && report.live && report.row?.phase === "unpacking";
+}
+
+function storeComplete(content: StoreContentState): boolean {
+    return content === "installed" || content === "local";
+}
+
+/**
+ * The live transfers that hold a profile now, by the rule of {@link sandboxRefusal}: a catalog transfer that
+ * merges into the store, an image pull over an absent image, and a catalog transfer over an incomplete store. The
+ * TUI holds a profile drive only for these. The read inspects the image and the store only for a live transfer
+ * that needs it, thus a poll with no transfer reads nothing.
+ */
+export async function transfersHoldingSandbox(
+    transfers: readonly TransferReport[],
+    opts: SandboxReadinessOpts = DEFAULT_SANDBOX_READINESS_OPTS,
+): Promise<TransferKind[]> {
+    const live = transfers.filter((report) => report.live && !mergesIntoStore(report));
+    const image = live.some((report) => report.kind === "runtime_image") ? await opts.imageReadiness(configuredSandboxImage()) : undefined;
+    const store = live.some((report) => report.kind === "catalog") ? await opts.inspectStoreContent(env.packageStoreDir) : undefined;
+    return transfers
+        .filter(
+            (report) =>
+                mergesIntoStore(report) ||
+                (report.live && report.kind === "runtime_image" && image?.state === "absent") ||
+                (report.live && report.kind === "catalog" && store !== undefined && !storeComplete(store)),
+        )
+        .map((report) => report.kind);
+}
+
 /**
  * Why a profile of the analysis cannot start a sandbox now, or `null` when it can. Each profile drive of the
  * server asks this first: the chat open, the deliberate re-profile, and the re-profile after an input change.
@@ -137,7 +169,7 @@ export async function sandboxRefusal(analysisId: string, opts: SandboxGateOpts =
     // through to the checks.
     if (opts.inputCount(analysisId).unwrapOr(null) === 0) return null;
     const transfers = opts.transfers();
-    if (transfers.some((report) => report.kind === "catalog" && report.live && report.row?.phase === "unpacking")) return TRANSFER_IN_FLIGHT;
+    if (transfers.some(mergesIntoStore)) return TRANSFER_IN_FLIGHT;
     const machine = await opts.readiness(analysisId);
     const farmFailure = opts.readFarmFailure(analysisId)?.reason ?? null;
     return machineRefusal({ ...machine, farm: { ...machine.farm, failure: farmFailure } }, transfers);
@@ -167,7 +199,7 @@ function machineRefusal(machine: Omit<SandboxReadiness, "inputCount">, transfers
     }
 
     const content = machine.store;
-    if (content !== "installed" && content !== "local") {
+    if (!storeComplete(content)) {
         if (liveTransfer(transfers, "catalog")) return TRANSFER_IN_FLIGHT;
         const catalog = transfers.find((report) => report.kind === "catalog")?.state;
         const reason =

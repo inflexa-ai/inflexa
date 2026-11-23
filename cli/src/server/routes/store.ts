@@ -29,7 +29,8 @@ import {
     type StoreFlightReport,
 } from "../../modules/libs/store_flight.ts";
 import { readTransferReports, startImageTransfer, type TransferReport, type TransferStart, type TransferStartError } from "../../modules/libs/transfers.ts";
-import { TRANSFER_KINDS } from "../../types/store.ts";
+import { TRANSFER_KINDS, type TransferKind } from "../../types/store.ts";
+import { transfersHoldingSandbox } from "../sandbox_gate.ts";
 import { apiError, internalError, readBody, type ServerEnv } from "../http.ts";
 
 /** The work behind the store routes. Production passes {@link DEFAULT_STORE_ROUTE_OPTS}; a test replaces the parts that spawn or start a container. */
@@ -42,6 +43,8 @@ export type StoreRouteOpts = {
     readonly startCatalog: (params: { readonly storeRoot: string; readonly update: boolean }) => Promise<Result<CatalogTransferStart, StoreDownloadError>>;
     /** The silent debris pass after a failed record is deleted. */
     readonly collectDebris: (storeRoot: string) => Promise<Result<DebrisSweepOutcome, StoreActionError>>;
+    /** The live transfers that hold a profile. Real: {@link transfersHoldingSandbox}, which can inspect the image in the engine. */
+    readonly holdsSandbox: (transfers: readonly TransferReport[]) => Promise<TransferKind[]>;
 };
 
 /** The production {@link StoreRouteOpts}. */
@@ -51,6 +54,7 @@ export const DEFAULT_STORE_ROUTE_OPTS: StoreRouteOpts = {
     startImage: startImageTransfer,
     startCatalog: (params) => startCatalogTransfer(params),
     collectDebris: (storeRoot) => collectStoreDebris(storeRoot),
+    holdsSandbox: (transfers) => transfersHoldingSandbox(transfers),
 };
 
 const startTransferBody = z.object({
@@ -73,9 +77,11 @@ export function storeRoutes(opts: StoreRouteOpts = DEFAULT_STORE_ROUTE_OPTS): Ho
 
     // `readStoreFlights` deletes the live rows of a dead holder during the read, the same sweep as each
     // other reader of the flights.
-    routes.get("/store", (c) => {
+    routes.get("/store", async (c) => {
+        const transfers = readTransferReports();
         const body: StoreState = {
-            transfers: readTransferReports().map(toTransferReportView),
+            transfers: transfers.map(toTransferReportView),
+            holdsSandbox: await opts.holdsSandbox(transfers),
             flights: readStoreFlights().map(toStoreFlightView),
             pendingAdds: listPendingStoreAdds().unwrapOr([]).map(toPendingAddView),
         };

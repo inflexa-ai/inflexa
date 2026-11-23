@@ -117,6 +117,23 @@ describe("GET /api/v1/store", () => {
     });
 });
 
+describe("GET /api/v1/store — the transfers that hold a sandbox", () => {
+    test("gives the transfers that the sandbox gate names, from the transfers of the read", async () => {
+        const seen: string[][] = [];
+        const { opts } = stubbed(tempStore(), {
+            holdsSandbox: (transfers) => {
+                seen.push(transfers.map((report) => report.kind));
+                return Promise.resolve(["catalog"]);
+            },
+        });
+
+        const store = z.looseObject({ holdsSandbox: z.array(z.string()) }).parse(await jsonBody(storeRoutes(opts).request("/store")));
+
+        expect(store.holdsSandbox).toEqual(["catalog"]);
+        expect(seen).toEqual([["runtime_image", "provisioner_image", "catalog"]]);
+    });
+});
+
 describe("POST /api/v1/store/transfers", () => {
     test("`images` starts the two image kinds; `catalog` reports why no child was necessary", async () => {
         const started: string[] = [];

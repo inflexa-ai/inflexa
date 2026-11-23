@@ -122,7 +122,10 @@ say that it was. A failed pull leaves the present image untouched.
 
 While a transfer runs, the app MUST stay open: the chat, the planner, and
 the read surfaces work. In the TUI, a profile drive MUST wait while a
-transfer is live, with one notice that names what it waits for. Then the
+transfer holds a sandbox, with one notice that names what it waits for.
+The server names these transfers in `holdsSandbox` of `GET /api/v1/store`,
+by the rule of its sandbox gate, per `local-server`. A catalog update over
+a complete store does not hold a drive. Then the
 drive goes to the local server, which decides if a sandbox can start, per
 `local-server`. A terminal transfer state that leaves the machine unable
 to serve a sandbox MUST refuse the drive and name the retry command.
@@ -146,6 +149,12 @@ a consent.
 - **GIVEN** a profile drive of the TUI that waits for a live image transfer
 - **WHEN** the transfer ends
 - **THEN** the TUI sends the drive to the server, and it shows the outcome that the server gives
+
+#### Scenario: A catalog update does not hold a drive
+
+- **GIVEN** a live catalog transfer in its `download` phase, a complete store, and a sandbox image in the engine
+- **WHEN** the TUI starts a profile drive
+- **THEN** the TUI sends the drive to the server at once, with no notice of a wait
 
 ### Requirement: The unpacking of the catalog runs under a watch
 

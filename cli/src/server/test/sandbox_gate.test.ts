@@ -18,6 +18,7 @@ import {
     readMachineSandboxReadiness,
     readSandboxReadiness,
     sandboxRefusal,
+    transfersHoldingSandbox,
     type SandboxGateOpts,
     type SandboxReadinessOpts,
 } from "../sandbox_gate.ts";
@@ -166,6 +167,41 @@ describe("sandboxRefusal", () => {
     test("a refusal for a catalog transfer that unpacks does not take the record", async () => {
         const gate = opts({ transfers: () => [report("catalog", "running", true, null, "unpacking")], readFarmFailure: unexpected("readFarmFailure") });
         expect(await sandboxRefusal("a1", gate)).toContain("`inflexa sandbox status`");
+    });
+});
+
+describe("transfersHoldingSandbox", () => {
+    /** Readiness reads that a test sets, and that record each read. */
+    function reads(image: "present" | "absent", store: "installed" | "incomplete", seen: string[] = []): SandboxReadinessOpts {
+        return {
+            imageReadiness: (name) => {
+                seen.push("image");
+                return Promise.resolve({ state: image, image: name });
+            },
+            inspectStoreContent: () => {
+                seen.push("store");
+                return Promise.resolve(store);
+            },
+        };
+    }
+
+    test("gives the same transfers that the gate refuses for", async () => {
+        const unpacking = report("catalog", "running", true, null, "unpacking");
+        const downloading = report("catalog", "running", true, null, "download");
+        const pulling = report("runtime_image", "running", true);
+
+        expect(await transfersHoldingSandbox([unpacking], reads("present", "installed"))).toEqual(["catalog"]);
+        expect(await transfersHoldingSandbox([downloading, pulling], reads("present", "installed"))).toEqual([]);
+        expect(await transfersHoldingSandbox([downloading], reads("present", "incomplete"))).toEqual(["catalog"]);
+        expect(await transfersHoldingSandbox([pulling], reads("absent", "installed"))).toEqual(["runtime_image"]);
+        expect(await transfersHoldingSandbox([report("provisioner_image", "running", true)], reads("absent", "incomplete"))).toEqual([]);
+    });
+
+    test("reads the machine only for a live transfer", async () => {
+        const seen: string[] = [];
+
+        expect(await transfersHoldingSandbox([report("catalog", "installed", false)], reads("absent", "incomplete", seen))).toEqual([]);
+        expect(seen).toEqual([]);
     });
 });
 

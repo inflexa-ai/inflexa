@@ -65,6 +65,8 @@ export type PendingAddView = {
  */
 export type StoreState = {
     transfers: TransferReportView[];
+    /** The live transfers that hold a profile now, by the rule of the sandbox gate of the server. The TUI waits only for these. */
+    holdsSandbox: TransferKind[];
     flights: StoreFlightView[];
     pendingAdds: PendingAddView[];
 };
