@@ -68,6 +68,13 @@ describe("inflexa help & usage (e2e)", () => {
         expect(result.stdout).toContain("Environment:");
     });
 
+    test("each command refuses a relative data root, and names the variable", () => {
+        const result = runCli(["help", "env"], { env: { INFLEXA_DATA_DIR: "scratch/inflexa" } });
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('INFLEXA_DATA_DIR is "scratch/inflexa", which is not an absolute path.');
+        expect(result.stdout).not.toContain("Paths:");
+    });
+
     test("help <command> prints the help of that command", () => {
         const result = runCli(["help", "refs"]);
         expect(result.exitCode).toBe(0);

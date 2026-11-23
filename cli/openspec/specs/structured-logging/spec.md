@@ -13,7 +13,7 @@ The system SHALL write all runtime logs as structured NDJSON via a single Pino r
 - **THEN** the record is appended as one JSON line to the log file and nothing is written to the terminal
 
 #### Scenario: First run creates the log directory
-- **WHEN** the CLI starts on a machine where `<data>/inflexa/logs/` does not exist
+- **WHEN** the CLI starts on a machine where `<data root>/logs/` does not exist
 - **THEN** the directory is created and logging proceeds without error
 
 ### Requirement: Module-scoped child loggers

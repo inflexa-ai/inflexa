@@ -37,7 +37,7 @@ The server MUST read the input paths and the anchor markers off the event loop, 
 
 ### Requirement: The discovery file names the running server
 
-After the bind, the server MUST write the discovery file `<data root>/server.json`, or `server.dev.json` for a dev build. The file MUST hold the pid, the port, the bearer token, the package version, the API version, the start time, the build channel, the machine id, the host name, and the start token of the process. The server MUST write it with mode 0600, through a temporary file and a rename, so that a reader never sees a part of the file. At its exit, the server MUST remove the file only when the file names its own pid.
+After the bind, the server MUST write the discovery file `<default data root>/server.json`, or `server.dev.json` for a dev build. The default data root is `inflexa` under the data home of the platform. `INFLEXA_DATA_DIR` and `dataDir` do not move the file, because the port of the server is per machine: each client must find the one server, whatever its data root. The file MUST hold the pid, the port, the bearer token, the package version, the API version, the start time, the build channel, the machine id, the host name, and the start token of the process. The server MUST write it with mode 0600, through a temporary file and a rename, so that a reader never sees a part of the file. At its exit, the server MUST remove the file only when the file names its own pid.
 
 A client MUST read the file again at each request. Thus a client that outlives a restart of the server sends the new token.
 
@@ -262,7 +262,7 @@ A server whose `apiVersion` differs from the API version of the client, and that
 
 A server whose output is not a terminal MUST write each step of its boot as plain lines: one line at the start of the step, and one line for its outcome. A spinner frame in the log would be one more line for each frame.
 
-The server log is `<data root>/logs/server.log`, or `server.dev.log` for a dev build. A detached server MUST measure its log each minute. At 10 MiB, it MUST copy the log to one old file, `<log>.1`, and then truncate the log. A rename is not permitted, because the server keeps the descriptor that it got at its start. `--detach` MUST also do this step before it starts the child.
+The server log is `<default data root>/logs/server.log`, or `server.dev.log` for a dev build. A detached server MUST measure its log each minute. At 10 MiB, it MUST copy the log to one old file, `<log>.1`, and then truncate the log. A rename is not permitted, because the server keeps the descriptor that it got at its start. `--detach` MUST also do this step before it starts the child.
 
 #### Scenario: The background server outlives its terminal
 

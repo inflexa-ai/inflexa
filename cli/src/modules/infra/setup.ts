@@ -1,7 +1,7 @@
-import { readdir, readFile, realpath, statfs } from "node:fs/promises";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { opendir, readdir, readFile, realpath, stat, statfs } from "node:fs/promises";
+import { mkdirSync, readFileSync, rmSync, writeFileSync, type StatsFs } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Writable } from "node:stream";
 
 import pkg from "../../../package.json";
@@ -166,6 +166,14 @@ const LINUX_NETWORK_FILESYSTEMS: ReadonlyMap<number, string> = new Map([
     [0xfe534d42, "SMB"],
     [0x0bd00bd0, "Lustre"],
     [0x47504653, "GPFS"],
+    [0x00c36400, "CephFS"],
+    [0x19830326, "BeeGFS"],
+    [0x5346414f, "AFS"],
+    [0x6b414653, "AFS"],
+    [0x01021997, "9p"],
+    // FUSE also carries local filesystems (ntfs-3g), but sshfs, s3fs, and the gateways of most cluster filesystems
+    // are FUSE too, and a warning that is wrong for a local FUSE disk costs less than silence on a network one.
+    [0x65735546, "FUSE"],
 ]);
 
 /**
@@ -175,6 +183,8 @@ const LINUX_NETWORK_FILESYSTEMS: ReadonlyMap<number, string> = new Map([
 const MACOS_NETWORK_FILESYSTEMS: ReadonlyMap<string, string> = new Map([
     ["nfs", "NFS"],
     ["smbfs", "SMB"],
+    ["afpfs", "AFP"],
+    ["webdav", "WebDAV"],
 ]);
 
 /** The network filesystem that a Linux `statfs` type names, or `null` for a local or unknown one. */
@@ -208,46 +218,89 @@ export type DataRootFacts = {
     readonly networkFilesystem: string | null;
     /** True when the default root holds data and a different root is active. */
     readonly earlierData: boolean;
+    /** True when the reads did not end in {@link DataRootProbeOpts.timeoutMs}. Each other fact is then unknown. */
+    readonly timedOut: boolean;
 };
 
+/** How setup reads the filesystem of the data root. A test replaces the bound or the `statfs` call. */
+export type DataRootProbeOpts = {
+    /** The bound of all the reads together. A hung network mount blocks a read for ever, and setup must continue. */
+    readonly timeoutMs: number;
+    readonly statfs: (path: string) => Promise<StatsFs>;
+};
+
+export const DEFAULT_DATA_ROOT_PROBE_OPTS: DataRootProbeOpts = { timeoutMs: 3000, statfs: (path) => statfs(path) };
+
 /** The nearest folder of `path` that exists: the root itself after the first run, an ancestor before it. */
-function nearestExistingFolder(path: string): string {
+async function nearestExistingFolder(path: string): Promise<string> {
     let current = path;
-    while (!existsSync(current) && dirname(current) !== current) current = dirname(current);
+    while (dirname(current) !== current && (await ResultAsync.fromPromise(stat(current), (cause) => cause)).isErr()) current = dirname(current);
     return current;
 }
 
+/** `path` with its symbolic links resolved, or the resolved spelling of `path` when it does not exist. */
+async function canonicalFolder(path: string): Promise<string> {
+    return (await ResultAsync.fromPromise(realpath(path), (cause) => cause)).unwrapOr(resolve(path));
+}
+
 /** The type name of the filesystem that holds `path`, from the platform source that names it, or `null`. */
-async function networkFilesystemOf(path: string, type: number): Promise<string | null> {
+async function networkFilesystemOf(path: string, type: number, timeoutMs: number): Promise<string | null> {
     if (process.platform === "linux") return networkFilesystemOfType(type);
     if (process.platform !== "darwin") return null;
-    const real = await ResultAsync.fromPromise(realpath(path), (cause) => cause);
-    const run = Result.fromThrowable(
-        () => Bun.spawnSync(["/sbin/mount"]),
+    const spawned = Result.fromThrowable(
+        () => Bun.spawn(["/sbin/mount"], { stdout: "pipe", stderr: "ignore", timeout: timeoutMs }),
         (cause) => cause,
     )();
-    if (real.isErr() || run.isErr() || run.value.exitCode !== 0) return null;
-    return networkFilesystemInMountTable(run.value.stdout.toString(), real.value);
+    if (spawned.isErr()) return null;
+    const table = await ResultAsync.fromPromise(new Response(spawned.value.stdout).text(), (cause) => cause);
+    if (table.isErr() || (await spawned.value.exited) !== 0) return null;
+    return networkFilesystemInMountTable(table.value, await canonicalFolder(path));
+}
+
+/**
+ * True when the default root holds an entry and is not the active root. The check reads one entry, not the whole
+ * folder, and it compares the real paths, thus a trailing slash or a symbolic link is not a second root.
+ */
+async function defaultRootHoldsData(root: DataRoot): Promise<boolean> {
+    if (resolve(root.path) === resolve(root.defaultPath)) return false;
+    if ((await canonicalFolder(root.path)) === (await canonicalFolder(root.defaultPath))) return false;
+    const folder = await ResultAsync.fromPromise(opendir(root.defaultPath), (cause) => cause);
+    if (folder.isErr()) return false;
+    const first = await ResultAsync.fromPromise(folder.value.read(), (cause) => cause);
+    const closed = await ResultAsync.fromPromise(folder.value.close(), (cause) => cause);
+    // A failed close of a read-only handle loses nothing: the answer comes from the read.
+    closed.unwrapOr(undefined);
+    return first.isOk() && first.value !== null;
 }
 
 /** Read the {@link DataRootFacts} of `root`. Each read that fails gives "unknown", because setup continues without it. */
-export async function inspectDataRoot(root: DataRoot): Promise<DataRootFacts> {
-    const existing = nearestExistingFolder(root.path);
-    const stats = await ResultAsync.fromPromise(statfs(existing), (cause) => cause);
-    const freeBytes = stats.isOk() ? stats.value.bavail * stats.value.bsize : null;
-    const networkFilesystem = stats.isOk() ? await networkFilesystemOf(existing, stats.value.type) : null;
-    const earlier = root.path === root.defaultPath ? null : await ResultAsync.fromPromise(readdir(root.defaultPath), (cause) => cause);
-    return { freeBytes, networkFilesystem, earlierData: earlier !== null && earlier.isOk() && earlier.value.length > 0 };
+export async function inspectDataRoot(root: DataRoot, opts: DataRootProbeOpts = DEFAULT_DATA_ROOT_PROBE_OPTS): Promise<DataRootFacts> {
+    async function probe(): Promise<DataRootFacts> {
+        const existing = await nearestExistingFolder(root.path);
+        const stats = await ResultAsync.fromPromise(opts.statfs(existing), (cause) => cause);
+        const freeBytes = stats.isOk() ? stats.value.bavail * stats.value.bsize : null;
+        const networkFilesystem = stats.isOk() ? await networkFilesystemOf(existing, stats.value.type, opts.timeoutMs) : null;
+        return { freeBytes, networkFilesystem, earlierData: await defaultRootHoldsData(root), timedOut: false };
+    }
+    const timedOut: DataRootFacts = { freeBytes: null, networkFilesystem: null, earlierData: false, timedOut: true };
+    // The losing read stays pending on its thread. Setup ends with an exit, thus the read cannot hold the process.
+    return Promise.race([probe(), Promise.sleep(opts.timeoutMs).then(() => timedOut)]);
 }
 
 /** The lines that setup shows for the data root, with the level of each. */
-export function dataRootNotes(root: DataRoot, facts: DataRootFacts): { level: "info" | "warn"; text: string }[] {
+export function dataRootNotes(
+    root: DataRoot,
+    facts: DataRootFacts,
+    opts: DataRootProbeOpts = DEFAULT_DATA_ROOT_PROBE_OPTS,
+): { level: "info" | "warn"; text: string }[] {
     const origin = root.source === "env" ? "from INFLEXA_DATA_DIR" : root.source === "config" ? `from "dataDir" in ${env.configPath}` : "the default";
     const free = facts.freeBytes === null ? "free space unknown" : `${formatIecBytes(facts.freeBytes)} free`;
     const notes: { level: "info" | "warn"; text: string }[] = [{ level: "info", text: `Data root: ${root.path} (${origin}, ${free}).` }];
-    if (root.ignored !== null) {
-        const named = root.ignored.source === "env" ? "INFLEXA_DATA_DIR" : `"dataDir" in ${env.configPath}`;
-        notes.push({ level: "warn", text: `${named} is "${root.ignored.value}", which is not an absolute path. Inflexa ignores it.` });
+    if (facts.timedOut) {
+        notes.push({
+            level: "warn",
+            text: `The filesystem of the data root did not answer in ${opts.timeoutMs / 1000} s. A network filesystem that hangs is a frequent cause: move the data root to a local disk.`,
+        });
     }
     if (facts.networkFilesystem !== null) {
         notes.push({

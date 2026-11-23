@@ -126,9 +126,7 @@ const configSchema = z.object({
     keybinds: z.record(z.string(), z.string()).optional(),
     // How long (ms) a half-typed leader sequence stays pending before it is abandoned.
     leaderTimeout: z.number().int().positive().catch(2000).default(2000),
-    // The data root (see `dataRoot` in lib/env.ts, its only reader). env.ts reads this key from the raw file at import,
-    // because it cannot import this module. The key is declared here only so that a write of the config keeps it:
-    // zod strips each undeclared key.
+    // Declared so that a write keeps it: lib/env.ts reads it from the raw file (see `dataRoot` there).
     dataDir: z.string().optional().catch(undefined),
     // Postgres substrate for the embedded harness. Optional — every field falls back
     // per-field to the defaults in modules/infra/postgres_types.ts. Always provisions a local

@@ -144,7 +144,7 @@ export type RuntimeUnavailableDetails = {
 export type ServerChannel = "development" | "production";
 
 /**
- * The discovery file of a running server (`<dataDir>/inflexa/server.json`, `server.dev.json` in the dev
+ * The discovery file of a running server (`<default data root>/server.json`, `server.dev.json` in the dev
  * channel). The server writes it with mode 0600 after it binds its port, and removes it at its stop. A client
  * reads it to find the server and its bearer token.
  */

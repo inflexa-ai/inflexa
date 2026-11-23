@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { availableParallelism, cpus, homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
+import { Result } from "neverthrow";
 import { z } from "zod";
 
 import { isAsciiDigits } from "./text.ts";
@@ -186,31 +187,62 @@ export type DataRootSource = "env" | "config" | "default";
 
 /** The resolved data root of Inflexa, with its origin. See {@link resolveDataRoot}. */
 export type DataRoot = {
-    /** The absolute data root. Each data path of {@link env} is under it. */
+    /** The absolute data root. Each data path of {@link env} is under it. The default root when {@link DataRoot.error} is set. */
     readonly path: string;
     readonly source: DataRootSource;
-    /** `<data home>/inflexa`: the root when nothing names a different one. Setup reads it to find data that an earlier root holds. */
+    /**
+     * `<data home>/inflexa`: the root when nothing names a different one. It also holds the files that each process of
+     * the user must find whatever its root: the discovery file, the server log, and the locks.
+     */
     readonly defaultPath: string;
-    /** A value that named the root but was not absolute, thus ignored. `null` when no value was ignored. */
-    readonly ignored: { readonly source: Exclude<DataRootSource, "default">; readonly value: string } | null;
+    /** Why the setting that names the root is refused, or `null`. The entry point prints it and runs no command. */
+    readonly error: string | null;
+};
+
+/** The inputs of {@link resolveDataRoot}, which {@link dataRoot} reads from the process at import. */
+export type DataRootInputs = {
+    readonly envValue: string | undefined;
+    readonly configValue: string | undefined;
+    readonly defaultPath: string;
+    readonly home: string;
+    readonly platform: NodeJS.Platform;
+    /** The config file, which an error about the `dataDir` key names. */
+    readonly configPath: string;
 };
 
 /**
- * The data root from the variable, the config value, and the default, in that order. A relative value is ignored for
- * the same reason as a relative `XDG_DATA_HOME`: a client and the detached server have different working folders. An
- * empty value counts as unset. Pure, thus a test can drive it: {@link dataRoot} freezes the real inputs at import.
+ * The data root from the variable, the config value, and the default, in that order. The first value that is not empty
+ * decides: a bad value is an error, never a fall back to the next source, because a silent fall back puts the data on
+ * the disk that the user tried to leave. A leading `~` is the home folder, because no shell expands it in a JSON file.
+ * A relative value is an error for the same reason as a relative `XDG_DATA_HOME` is ignored: a client and the detached
+ * server have different working folders.
+ *
+ * Windows refuses a custom root. The container engine keeps the Postgres data of Windows in a named volume, not in the
+ * root (see `postgresDataLocation` in modules/infra/compose.ts), thus a second root on Windows pairs its database with
+ * the Postgres data of the first. The hosts that need a different root (an NFS home, an HPC login node) are not Windows.
  */
-export function resolveDataRoot(envValue: string | undefined, configValue: string | undefined, defaultPath: string): DataRoot {
-    let ignored: DataRoot["ignored"] = null;
+export function resolveDataRoot(inputs: DataRootInputs): DataRoot {
+    const { defaultPath } = inputs;
     for (const [source, value] of [
-        ["env", envValue],
-        ["config", configValue],
+        ["env", inputs.envValue],
+        ["config", inputs.configValue],
     ] as const) {
         if (!value) continue;
-        if (isAbsolute(value)) return { path: value, source, defaultPath, ignored };
-        ignored ??= { source, value };
+        const setting = source === "env" ? dataRootVar : `The "${dataRootConfigKey}" key of ${inputs.configPath}`;
+        const remedy = source === "env" ? "unset it" : "remove the key";
+        const refused = (error: string): DataRoot => ({ path: defaultPath, source, defaultPath, error });
+        if (inputs.platform === "win32")
+            return refused(
+                `Windows does not support a custom data root: the container engine keeps the Postgres data in a named volume, not in the data root. ${setting} is "${value}". To use the default root, ${remedy}.`,
+            );
+        const expanded = value === "~" ? inputs.home : value.startsWith("~/") ? join(inputs.home, value.slice(2)) : value;
+        if (!isAbsolute(expanded))
+            return refused(
+                `${setting} is "${value}", which is not an absolute path. Set it to an absolute path, for example /scratch/$USER/inflexa, or ${remedy}.`,
+            );
+        return { path: expanded, source, defaultPath, error: null };
     }
-    return { path: defaultPath, source: "default", defaultPath, ignored };
+    return { path: defaultPath, source: "default", defaultPath, error: null };
 }
 
 function configDir(): string {
@@ -228,14 +260,13 @@ const configDataRootSchema = z.object({ [dataRootConfigKey]: z.string().optional
  * malformed file names no root, the same as a missing key.
  */
 function configuredDataRoot(configPath: string): string | undefined {
-    try {
+    return Result.fromThrowable(
         // oxlint-disable-next-line eslint-js/no-restricted-syntax -- a script or a test can import this module before src/extensions installs `JSON.parseWith`; the schema parses the value
-        const parsed = configDataRootSchema.safeParse(JSON.parse(readFileSync(configPath, "utf8")));
-        return parsed.success ? parsed.data[dataRootConfigKey] : undefined;
-    } catch {
-        // TODO(slop): neverthrow — module evaluation has no error channel, and each fault means "no value".
-        return undefined;
-    }
+        () => configDataRootSchema.safeParse(JSON.parse(readFileSync(configPath, "utf8"))),
+        () => undefined,
+    )()
+        .map((parsed) => (parsed.success ? parsed.data[dataRootConfigKey] : undefined))
+        .unwrapOr(undefined);
 }
 
 /**
@@ -425,11 +456,15 @@ export type StackPaths = {
 };
 
 /**
- * Channel-aware stack paths under the data root. Dev derives sibling names so a dev stack never shares a mount
- * source or compose file with an installed production stack (see {@link StackPorts} for the collision surface).
- * Production names are byte-identical to their pre-change form.
+ * Channel-aware stack paths. Dev derives sibling names so a dev stack never shares a mount source or compose file with
+ * an installed production stack (see {@link StackPorts} for the collision surface). Production names are
+ * byte-identical to their pre-change form.
+ *
+ * The files of the server are under `fixedRoot`, the default data root, and each other path is under `root`. The port
+ * of the server is per machine, but the root is per process: a client of a different root must still find the
+ * discovery file and the log of the one server.
  */
-export function stackPaths(root: string, channel: string | undefined): StackPaths {
+export function stackPaths(root: string, fixedRoot: string, channel: string | undefined): StackPaths {
     const dev = isDevelopmentBuild(channel);
     const proxyDir = dev ? "cliproxy-dev" : "cliproxy";
     const postgresDir = dev ? "postgres-dev" : "postgres";
@@ -445,8 +480,8 @@ export function stackPaths(root: string, channel: string | undefined): StackPath
         searxngSettingsPath: join(root, searxngDir, "settings.yml"),
         composeFilePath: join(root, composeFile),
         setupStatePath: join(root, setupStateFile),
-        serverFilePath: join(root, serverFile),
-        serverLogPath: join(root, "logs", serverLogFile),
+        serverFilePath: join(fixedRoot, serverFile),
+        serverLogPath: join(fixedRoot, "logs", serverLogFile),
     };
 }
 
@@ -455,14 +490,23 @@ const configPath = join(configDir(), "inflexa", "config.json");
 
 /**
  * The data root of this process, resolved ONCE at import from {@link dataRootVar}, the config file, and the platform
- * data home. Each data path of {@link env} derives from it, thus no path can stay behind when the root moves.
- * Setup reads the source and the ignored value to report them.
+ * data home. Each data path of {@link env} derives from it, thus no path can stay behind when the root moves. The entry
+ * point refuses each command when {@link DataRoot.error} is set, and setup reads the source to report it.
  */
-export const dataRoot: DataRoot = Object.freeze(resolveDataRoot(process.env[dataRootVar], configuredDataRoot(configPath), join(dataDir(), "inflexa")));
+export const dataRoot: DataRoot = Object.freeze(
+    resolveDataRoot({
+        envValue: process.env[dataRootVar],
+        configValue: configuredDataRoot(configPath),
+        defaultPath: join(dataDir(), "inflexa"),
+        home: homedir(),
+        platform: process.platform,
+        configPath,
+    }),
+);
 
 // The stack's ports and paths, each derived ONCE from the baked channel for the frozen env below.
 const stack = stackPorts(bakedEnv.buildChannel);
-const stackDirs = stackPaths(dataRoot.path, bakedEnv.buildChannel);
+const stackDirs = stackPaths(dataRoot.path, dataRoot.defaultPath, bakedEnv.buildChannel);
 
 export const env = Object.freeze({
     /** The data root of Inflexa (see {@link dataRoot}): the database, the logs, the package store, and the server files are in it. */
@@ -478,7 +522,7 @@ export const env = Object.freeze({
      */
     refsDir: join(dataRoot.path, "refs"),
     /**
-     * Host package-store root: `<dataDir>/inflexa/package-store`. The ONE location, a CLI-owned path,
+     * Host package-store root: `<data root>/package-store`. The ONE location, a CLI-owned path,
      * the peer of `refsDir`, with no config key and no user override. The store commands make the store
      * here and the catalog download installs it here, so the writers and the reader cannot disagree.
      * The harness bind-mounts this root read-only at the sandbox's `/mnt/libs` for every sandbox,
@@ -486,7 +530,7 @@ export const env = Object.freeze({
      */
     packageStoreDir: join(dataRoot.path, "package-store"),
     /**
-     * Materialized skills/templates content: `<dataDir>/inflexa/content/<contentHash>/{skills,templates}`.
+     * Materialized skills/templates content: `<data root>/content/<contentHash>/{skills,templates}`.
      * A peer of `refsDir`/`modelDir` — a runtime asset tree, not config — but sourced from the binary's
      * OWN embedded archive rather than a network download (see modules/harness/content.ts). The
      * `<contentHash>` segment (see {@link env.contentHash}) makes a new binary version extract a fresh
@@ -495,12 +539,15 @@ export const env = Object.freeze({
      */
     contentDir: join(dataRoot.path, "content"),
     /**
-     * Advisory instance locks: `<dataDir>/inflexa/locks/<key>.lock`, keyed by an analysis id (one
+     * Advisory instance locks: `<default root>/locks/<key>.lock`, keyed by an analysis id (one
      * inflexa process may have an analysis open at a time) or a fixed sentinel for the embedded harness
      * runtime (one DBOS engine per machine). The lock files coordinate that across instances.
      * See src/lib/lock.ts.
+     *
+     * Under the default root, not the data root: two processes with different roots share the machine, its ports,
+     * and its containers, thus they must see the same locks.
      */
-    locksDir: join(dataRoot.path, "locks"),
+    locksDir: join(dataRoot.defaultPath, "locks"),
     /** The last copy of each custom agent and skill that an import with `--replace` overwrote. An import of the copy restores it. */
     replacedDir: join(dataRoot.path, "replaced"),
     /**
@@ -514,7 +561,7 @@ export const env = Object.freeze({
      */
     updateStatePath: join(dataRoot.path, "update-state.json"),
     /**
-     * Local embedding model storage: `<dataDir>/inflexa/models/`. The GGUF for
+     * Local embedding model storage: `<data root>/models/`. The GGUF for
      * `bge-small-en-v1.5` (q8_0, 384-dim) is downloaded here on `inflexa setup --embeddings`
      * opt-in. See src/modules/embedding/setup.ts.
      */
@@ -522,7 +569,7 @@ export const env = Object.freeze({
     /** The local embedding GGUF path — `<modelDir>/bge-small-en-v1.5-q8_0.gguf`. */
     embeddingModelPath: join(dataRoot.path, "models", "bge-small-en-v1.5-q8_0.gguf"),
     /**
-     * Local embedding sidecar runtime: `<dataDir>/inflexa/llama-server/`. The pinned `llama.cpp`
+     * Local embedding sidecar runtime: `<data root>/llama-server/`. The pinned `llama.cpp`
      * release (the `llama-server` binary + its shared libraries) is materialized into a tag-named
      * subdirectory here on `inflexa setup --embeddings local` opt-in — extracted from a build-time
      * embedded asset in the compiled binary, downloaded from source. See
@@ -800,7 +847,7 @@ export const envDoc: Readonly<
         description: "skills/templates extracted from the binary on first run, keyed by content hash",
         baseVar: dataRootVar,
     },
-    locksDir: { kind: "path", label: "locks", description: "advisory per-analysis instance locks", baseVar: dataRootVar },
+    locksDir: { kind: "path", label: "locks", description: "advisory per-analysis instance locks", baseVar: dataVar },
     replacedDir: {
         kind: "path",
         label: "replaced",
@@ -863,7 +910,7 @@ export const envDoc: Readonly<
         kind: "path",
         label: "server log",
         description: "output of the background local server; it rotates at 10 MiB and keeps one old file (.1)",
-        baseVar: dataRootVar,
+        baseVar: dataVar,
     },
     configPath: { kind: "path", label: "config", description: "settings (telemetry consent)", baseVar: configVar },
     authPath: { kind: "path", label: "auth", description: "Auth0 session tokens, created by `inflexa auth login`", baseVar: configVar },

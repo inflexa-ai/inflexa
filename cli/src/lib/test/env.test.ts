@@ -143,36 +143,38 @@ describe("stackPorts", () => {
 
 describe("stackPaths", () => {
     const root = "/data/inflexa";
+    // The default root, which holds the files that find the one server whatever the root of a process.
+    const fixed = "/home/u/.local/share/inflexa";
 
     test("production paths are byte-identical to their historical form", () => {
-        expect(stackPaths(root, "production")).toEqual({
+        expect(stackPaths(root, fixed, "production")).toEqual({
             cliproxyConfigPath: join(root, "cliproxy", "config.yaml"),
             cliproxyAuthDir: join(root, "cliproxy", "auth"),
             postgresDataDir: join(root, "postgres"),
             searxngSettingsPath: join(root, "searxng", "settings.yml"),
             composeFilePath: join(root, "docker-compose.yml"),
             setupStatePath: join(root, "setup-state.json"),
-            serverFilePath: join(root, "server.json"),
-            serverLogPath: join(root, "logs", "server.log"),
+            serverFilePath: join(fixed, "server.json"),
+            serverLogPath: join(fixed, "logs", "server.log"),
         });
     });
 
     test("dev paths are the sibling variants (cliproxy-dev/, postgres-dev/, searxng-dev/, docker-compose.dev.yml)", () => {
-        expect(stackPaths(root, undefined)).toEqual({
+        expect(stackPaths(root, fixed, undefined)).toEqual({
             cliproxyConfigPath: join(root, "cliproxy-dev", "config.yaml"),
             cliproxyAuthDir: join(root, "cliproxy-dev", "auth"),
             postgresDataDir: join(root, "postgres-dev"),
             searxngSettingsPath: join(root, "searxng-dev", "settings.yml"),
             composeFilePath: join(root, "docker-compose.dev.yml"),
             setupStatePath: join(root, "setup-state.dev.json"),
-            serverFilePath: join(root, "server.dev.json"),
-            serverLogPath: join(root, "logs", "server.dev.log"),
+            serverFilePath: join(fixed, "server.dev.json"),
+            serverLogPath: join(fixed, "logs", "server.dev.log"),
         });
     });
 
     test("no stack path is shared across channels — the whole mount/compose surface is disjoint", () => {
-        const prod = Object.values(stackPaths(root, "production"));
-        const dev = Object.values(stackPaths(root, "development"));
+        const prod = Object.values(stackPaths(root, fixed, "production"));
+        const dev = Object.values(stackPaths(root, fixed, "development"));
         // Every prod path is absent from the dev set (and vice versa), and each path of the union is distinct:
         // a single shared entry would re-open a collision (shared PGDATA, one build rewriting the other's
         // compose file, a dev failure that redirects the wizard of an installed binary, or — worst — a
@@ -375,11 +377,15 @@ describe("reference-data paths", () => {
 
 const resolvedPathsSchema = z.object({
     env: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
-    dataRoot: z.object({ path: z.string(), source: z.string(), defaultPath: z.string() }),
+    dataRoot: z.object({ path: z.string(), source: z.string(), defaultPath: z.string(), error: z.string().nullable() }),
 });
 
 describe("the base folders of the data and the configuration", () => {
-    type ResolvedPaths = { env: Record<string, string | number | boolean>; dataRoot: { path: string; source: string; defaultPath: string }; home: string };
+    type ResolvedPaths = {
+        env: Record<string, string | number | boolean>;
+        dataRoot: { path: string; source: string; defaultPath: string; error: string | null };
+        home: string;
+    };
 
     // env.ts reads the variables and the config file at import, thus a child process imports it with the inputs under test.
     function resolvedPaths(vars: Record<string, string>, configText?: string): ResolvedPaths {
@@ -408,13 +414,13 @@ describe("the base folders of the data and the configuration", () => {
         }
     }
 
-    /** Each `env` path that lives in the data root: the documented data paths, the root itself, and the discovery file. */
+    /** Each `env` path that lives in the data root: the documented data paths and the root itself. */
     function dataPaths(paths: ResolvedPaths): string[] {
         const documented = keysOf(envDoc).filter((key) => {
             const doc = envDoc[key];
             return doc.kind === "path" && doc.baseVar === "INFLEXA_DATA_DIR";
         });
-        const keys: string[] = [...documented, "dataDir", "serverFilePath"];
+        const keys: string[] = [...documented, "dataDir"];
         return keys.map((key) => String(paths.env[key]));
     }
 
@@ -428,7 +434,7 @@ describe("the base folders of the data and the configuration", () => {
         const paths = resolvedPaths({ XDG_DATA_HOME: "/srv/data", XDG_CONFIG_HOME: "/srv/config" });
         expect(paths.env.dataDir).toBe("/srv/data/inflexa");
         expect(paths.env.configPath).toBe("/srv/config/inflexa/config.json");
-        expect(paths.dataRoot).toEqual({ path: "/srv/data/inflexa", source: "default", defaultPath: "/srv/data/inflexa" });
+        expect(paths.dataRoot).toEqual({ path: "/srv/data/inflexa", source: "default", defaultPath: "/srv/data/inflexa", error: null });
     });
 
     test.skipIf(process.platform === "win32")("INFLEXA_DATA_DIR moves each data path, and the config stays under the config home", () => {
@@ -440,6 +446,17 @@ describe("the base folders of the data and the configuration", () => {
         expect(paths.env.configPath).toBe(join(paths.home, ".config", "inflexa", "config.json"));
         expect(paths.env.authPath).toBe(join(paths.home, ".config", "inflexa", "auth.json"));
     });
+
+    test.skipIf(process.platform === "win32")(
+        "the discovery file, the server log, and the locks stay in the default root, so each client finds the one server",
+        () => {
+            const paths = resolvedPaths({ INFLEXA_DATA_DIR: "/scratch/u/inflexa" });
+            const fixed = join(paths.home, ".local", "share", "inflexa");
+            expect(paths.env.serverFilePath).toBe(join(fixed, "server.dev.json"));
+            expect(paths.env.serverLogPath).toBe(join(fixed, "logs", "server.dev.log"));
+            expect(paths.env.locksDir).toBe(join(fixed, "locks"));
+        },
+    );
 
     test.skipIf(process.platform === "win32")("the dataDir key of the config file moves each data path", () => {
         const paths = resolvedPaths({}, JSON.stringify({ telemetry: false, dataDir: "/data/u/inflexa" }));
@@ -461,31 +478,47 @@ describe("the base folders of the data and the configuration", () => {
 });
 
 describe("resolveDataRoot", () => {
-    const fallback = "/home/u/.local/share/inflexa";
+    const defaultPath = "/home/u/.local/share/inflexa";
+    const base = {
+        envValue: undefined,
+        configValue: undefined,
+        defaultPath,
+        home: "/home/u",
+        platform: "linux",
+        configPath: "/home/u/.config/inflexa/config.json",
+    } as const;
 
     test("the variable wins over the config value, and the config value wins over the default", () => {
-        expect(resolveDataRoot("/a", "/b", fallback)).toEqual({ path: "/a", source: "env", defaultPath: fallback, ignored: null });
-        expect(resolveDataRoot(undefined, "/b", fallback)).toEqual({ path: "/b", source: "config", defaultPath: fallback, ignored: null });
-        expect(resolveDataRoot(undefined, undefined, fallback)).toEqual({ path: fallback, source: "default", defaultPath: fallback, ignored: null });
+        expect(resolveDataRoot({ ...base, envValue: "/a", configValue: "/b" })).toEqual({ path: "/a", source: "env", defaultPath, error: null });
+        expect(resolveDataRoot({ ...base, configValue: "/b" })).toEqual({ path: "/b", source: "config", defaultPath, error: null });
+        expect(resolveDataRoot(base)).toEqual({ path: defaultPath, source: "default", defaultPath, error: null });
     });
 
     test("an empty value counts as unset", () => {
-        expect(resolveDataRoot("", "", fallback)).toEqual({ path: fallback, source: "default", defaultPath: fallback, ignored: null });
+        expect(resolveDataRoot({ ...base, envValue: "", configValue: "" })).toEqual({ path: defaultPath, source: "default", defaultPath, error: null });
     });
 
-    test("a relative value is ignored and reported, and the next source decides", () => {
-        expect(resolveDataRoot("scratch/inflexa", "/b", fallback)).toEqual({
-            path: "/b",
-            source: "config",
-            defaultPath: fallback,
-            ignored: { source: "env", value: "scratch/inflexa" },
+    test("a leading ~ is the home folder", () => {
+        expect(resolveDataRoot({ ...base, configValue: "~/inflexa" }).path).toBe("/home/u/inflexa");
+        expect(resolveDataRoot({ ...base, envValue: "~" }).path).toBe("/home/u");
+    });
+
+    test("a relative value is an error that names the variable or the key, and the next source does not decide", () => {
+        expect(resolveDataRoot({ ...base, envValue: "scratch/inflexa", configValue: "/b" })).toEqual({
+            path: defaultPath,
+            source: "env",
+            defaultPath,
+            error: 'INFLEXA_DATA_DIR is "scratch/inflexa", which is not an absolute path. Set it to an absolute path, for example /scratch/$USER/inflexa, or unset it.',
         });
-        expect(resolveDataRoot(undefined, "~/inflexa", fallback)).toEqual({
-            path: fallback,
-            source: "default",
-            defaultPath: fallback,
-            ignored: { source: "config", value: "~/inflexa" },
-        });
+        expect(resolveDataRoot({ ...base, configValue: "~other/inflexa" }).error).toBe(
+            'The "dataDir" key of /home/u/.config/inflexa/config.json is "~other/inflexa", which is not an absolute path. Set it to an absolute path, for example /scratch/$USER/inflexa, or remove the key.',
+        );
+    });
+
+    test("Windows refuses a custom root, because the Postgres data is in a named volume and not in the root", () => {
+        const root = resolveDataRoot({ ...base, platform: "win32", envValue: "D:\\inflexa", defaultPath: "C:\\Users\\u\\AppData\\Local\\inflexa" });
+        expect(root.error).toStartWith("Windows does not support a custom data root: the container engine keeps the Postgres data in a named volume");
+        expect(resolveDataRoot({ ...base, platform: "win32" }).error).toBeNull();
     });
 });
 

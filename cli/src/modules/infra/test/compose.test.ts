@@ -747,3 +747,60 @@ describe("composeMissingMessage", () => {
         expect(composeMissingMessage(container.runtimes.podman, () => null)).toContain("podman-compose");
     });
 });
+
+// The data root is per process, but the container names and the compose project are per machine. A second root
+// must not recreate the Postgres container under a server that uses it.
+describe("composeUp and the Postgres of a different data root", () => {
+    const spies: Array<{ mockRestore: () => void }> = [];
+    afterEach(() => {
+        for (const spy of spies.splice(0)) spy.mockRestore();
+    });
+
+    /** Script `container inspect` with `inspect`, and record each `compose` call. */
+    function stubEngine(inspect: { code: number; stdout: string }): string[][] {
+        const composeCalls: string[][] = [];
+        spies.push(
+            spyOn(container, "capture").mockImplementation((_rt, args) => {
+                if (args[0] === "container" && args[1] === "inspect") return Promise.resolve({ ...inspect, stderr: "" });
+                composeCalls.push(args);
+                return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+            }),
+        );
+        return composeCalls;
+    }
+
+    function mounts(source: string): string {
+        return JSON.stringify([
+            { Type: "bind", Source: "/elsewhere/searxng/settings.yml", Destination: "/etc/searxng/settings.yml" },
+            { Type: "bind", Source: source, Destination: "/var/lib/postgresql" },
+        ]);
+    }
+
+    test("a running Postgres with the data of a different root stops the compose, and the message says how to stop it", async () => {
+        const calls = stubEngine({ code: 0, stdout: `true ${mounts("/old/inflexa/postgres-dev")}\n` });
+        const error = (await compose.composeUp(runtimes.docker, "direct"))._unsafeUnwrapErr();
+        expect(error.type).toBe("data_root_conflict");
+        expect(error.message).toBe(
+            `The running ${compose.POSTGRES_CONTAINER_NAME} keeps its data in /old/inflexa/postgres-dev, but this data root puts it in ${env.postgresDataDir}. ` +
+                "Stop the server and the stack of the other root first: run `inflexa server stop`, then `INFLEXA_DATA_DIR=/old/inflexa inflexa down`. Then run the command again.",
+        );
+        expect(calls).toEqual([]);
+    });
+
+    test("a running Postgres with the data of this root composes", async () => {
+        const calls = stubEngine({ code: 0, stdout: `true ${mounts(env.postgresDataDir)}\n` });
+        await awaitOk(compose.composeUp(runtimes.docker, "direct"));
+        expect(calls.some((args) => args.includes("up"))).toBe(true);
+    });
+
+    test("a stopped Postgres of a different root, or no Postgres at all, composes", async () => {
+        const stopped = stubEngine({ code: 0, stdout: `false ${mounts("/old/inflexa/postgres-dev")}\n` });
+        await awaitOk(compose.composeUp(runtimes.docker, "direct"));
+        expect(stopped.some((args) => args.includes("up"))).toBe(true);
+        for (const spy of spies.splice(0)) spy.mockRestore();
+
+        const absent = stubEngine({ code: 1, stdout: "" });
+        await awaitOk(compose.composeUp(runtimes.docker, "direct"));
+        expect(absent.some((args) => args.includes("up"))).toBe(true);
+    });
+});
