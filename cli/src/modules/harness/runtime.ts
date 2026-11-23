@@ -1419,7 +1419,7 @@ async function bootHarnessRuntimeOnce(
                 workflows,
                 // The one backend client of the runtime. The harness builds its sandbox module over it: the leases,
                 // the lease workflow, and the reconciler.
-                sandbox: { client: sandboxClient },
+                sandbox: { client: sandboxClient, idlePeriodMs: env.sandboxIdlePeriodMs },
                 resourcePolicy,
                 usageRecorder,
                 resolveReportPageAsset: assetsDir ? makeReportPageAssetLookup(assetsDir) : undefined,

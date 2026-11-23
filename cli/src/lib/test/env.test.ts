@@ -20,6 +20,7 @@ import {
     providerApiKeyVar,
     resolveEmbeddingApiKey,
     resolveModelApiKey,
+    sandboxIdlePeriodMs,
     serverChildEnv,
     serverFsPoolSize,
     stackPaths,
@@ -41,6 +42,20 @@ describe("isDevelopmentBuild", () => {
     test("any other channel → development build", () => {
         expect(isDevelopmentBuild("development")).toBe(true);
         expect(isDevelopmentBuild("beta")).toBe(true);
+    });
+});
+
+describe("sandboxIdlePeriodMs", () => {
+    test("a development build takes a positive whole number of milliseconds", () => {
+        expect(sandboxIdlePeriodMs("development", "30000")).toBe(30_000);
+    });
+
+    test("a production build ignores the variable", () => {
+        expect(sandboxIdlePeriodMs("production", "30000")).toBeUndefined();
+    });
+
+    test("an absent, empty, negative, zero, or fractional value gives the default", () => {
+        for (const raw of [undefined, "", "-5", "0", "1.5", "soon"]) expect(sandboxIdlePeriodMs("development", raw)).toBeUndefined();
     });
 
     test("unset channel (bun run dev) → development build", () => {
