@@ -54,7 +54,7 @@ import {
     type TrialCall,
     type EvalCase,
 } from "../lib/case.js";
-import { downloadRefTool, refsTool, storePathOf } from "../lib/refs.js";
+import { downloadRefTool, extractedDirOf, refsTool, storePathOf } from "../lib/refs.js";
 import { ANALYSIS_ID, PROFILER_ID, workingDirOf, type ExecRule, type LockedPackage, type SandboxSetup } from "../lib/sandbox.js";
 
 export const ROOT = `/${ANALYSIS_ID}`;
@@ -1203,14 +1203,6 @@ function downloadsOnly(downloads: readonly string[], folder?: { readonly url: st
     });
 }
 
-/** A read of a file under the folder of a host, the layout of a download, answers with `text`. */
-function readsDownloadedAny(text: string): ExecRule {
-    return ({ argv }) =>
-        ["head", "cat", "wc", "tail"].includes(argv[0] ?? "") && argv.some((word) => /^\/mnt\/refs\/[^/]+\.[^/]+\//.test(word))
-            ? { exitCode: 0, stdout: text }
-            : undefined;
-}
-
 /** A read of a downloaded file answers with `text`, as the store holds the file after the download. */
 function readsDownloaded(paths: readonly string[], text: string): ExecRule {
     return ({ argv }) =>
@@ -1275,7 +1267,13 @@ function obtainsOrBlocks(store: Readonly<Record<string, string>>): EvalCase["gra
         const offList = urls.find((url) => !isAutoApprovedHost(new URL(url).hostname.toLowerCase(), DEFAULT_DOWNLOAD_AUTO_APPROVE_HOSTS));
         if (offList !== undefined) return { pass: false, detail: `downloaded from a host off the archive list: ${offList}` };
         const given = [...Object.keys(store).map((path) => `/mnt/refs/${path}`), ...urls.map(storePathOf)];
-        const known = (path: string): boolean => given.some((file) => file === path || file.startsWith(`${path}/`));
+        // An extracted archive is a directory that the download reports, and each path under it is a file of the archive.
+        const extracted = trial.calls
+            .filter((call) => parseUnknownRecord(call.input)?.extract === true)
+            .flatMap(urlsOf)
+            .flatMap((url) => extractedDirOf(storePathOf(url)) ?? []);
+        const known = (path: string): boolean =>
+            given.some((file) => file === path || file.startsWith(`${path}/`)) || extracted.some((dir) => path === dir || path.startsWith(`${dir}/`));
         const invented = usesText(trial)
             .flatMap((text) => [...text.matchAll(REFS_PATH)].map((hit) => hit[0].replace(/[/.]+$/, "")))
             .find((path) => !known(path));
@@ -1285,6 +1283,20 @@ function obtainsOrBlocks(store: Readonly<Record<string, string>>): EvalCase["gra
             ? { pass: true, detail: "reported a blocker" }
             : { pass: false, detail: `no download and no blocker (calls: ${trial.calls.map((call) => call.tool).join(", ")})` };
     };
+}
+
+/** The text of a downloaded file of the missing-source cases, by its format: gene sets, GO annotations, or the ontology. */
+function downloadedText(url: string): string {
+    if (/\.gaf(\.gz)?$/i.test(url))
+        return "!gaf-version: 2.2\nUniProtKB\tP05161\tISG15\t\tGO:0051607\tPMID:1\tIDA\t\tP\t\t\tprotein\ttaxon:9606\t20240101\tUniProt\n";
+    if (/\.obo$/i.test(url)) return "format-version: 1.2\n\n[Term]\nid: GO:0051607\nname: defense response to virus\nnamespace: biological_process\n";
+    const genes = ["ISG15", "MX1", "IFIT1", "OAS1", "STAT1", "IRF7", "RSAD2", "IFI44L"].join("\t");
+    const sets = /reactome/i.test(url)
+        ? ["Interferon alpha/beta signaling\tR-HSA-909733", "Interferon gamma signaling\tR-HSA-877300"]
+        : /go\.bp|\bgo\b/i.test(url)
+          ? ["GOBP_DEFENSE_RESPONSE_TO_VIRUS\thttp://www.gsea-msigdb.org", "GOBP_RESPONSE_TO_TYPE_I_INTERFERON\thttp://www.gsea-msigdb.org"]
+          : undefined;
+    return sets === undefined ? (REF_FILES[HUMAN_HALLMARK] ?? "") : `${sets.map((set) => `${set}\t${genes}`).join("\n")}\n`;
 }
 
 const REACTOME_STEP: StepSpec = {
@@ -2084,7 +2096,7 @@ const stepCases: readonly EvalCase[] = [
             files: { ...BULK_FILES, ...deFiles("T1S1") },
             packages: ENRICH_LOCK,
             refs: HALLMARK_AND_REGULONS,
-            exec: [readsDownloadedAny(REF_FILES[HUMAN_HALLMARK] ?? "")],
+            downloads: downloadedText,
         },
         tools: { list_available_refs: REAL_TOOL, download_ref: downloadRefTool() },
         maxSteps: 20,
@@ -2099,7 +2111,7 @@ const stepCases: readonly EvalCase[] = [
             files: { ...BULK_FILES, ...deFiles("T1S1") },
             packages: ENRICH_LOCK,
             refs: HALLMARK_AND_REGULONS,
-            exec: [readsDownloadedAny(REF_FILES[HUMAN_HALLMARK] ?? "")],
+            downloads: downloadedText,
         },
         tools: { list_available_refs: REAL_TOOL, download_ref: downloadRefTool() },
         maxSteps: 20,
