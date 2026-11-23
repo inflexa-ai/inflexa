@@ -6,6 +6,7 @@ import { err, ok, type Result } from "neverthrow";
 
 import {
     ContainerRuntimeError,
+    ensureReady,
     firstReadyRuntime,
     pullImageThroughEngine,
     resolveEngineApiSocket,
@@ -370,6 +371,35 @@ describe("pullImageThroughEngine", () => {
 
         expect(outcome.kind).toBe("failed");
         expect(outcome.kind === "failed" ? outcome.message : "").toContain("The pull stream of the engine broke");
+    });
+});
+
+describe("ensureReady", () => {
+    const dirs: string[] = [];
+    afterEach(() => {
+        for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+    });
+
+    /** Docker, with a binary whose `info` prints `stderr` and exits 1. */
+    function failingDocker(stderr: string): ContainerRuntime {
+        const dir = mkdtempSync(join(tmpdir(), "rt-"));
+        dirs.push(dir);
+        const bin = join(dir, "docker");
+        writeFileSync(bin, `#!/bin/sh\necho '${stderr}' >&2\nexit 1\n`);
+        chmodSync(bin, 0o755);
+        return { ...runtimes.docker, bin };
+    }
+
+    test("a socket that refuses this user names the docker group, not a stopped daemon", async () => {
+        const rt = failingDocker("permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock");
+        const message = (await ensureReady(rt))._unsafeUnwrapErr().message;
+        expect(message).toBe(runtimes.docker.deniedHint);
+        expect(message).toContain("`docker` group");
+    });
+
+    test("a daemon that does not answer gives the start hint", async () => {
+        const rt = failingDocker("Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?");
+        expect((await ensureReady(rt))._unsafeUnwrapErr().message).toBe(runtimes.docker.notReadyHint);
     });
 });
 

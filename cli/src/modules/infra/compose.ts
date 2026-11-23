@@ -537,3 +537,21 @@ export async function composeAvailable(rt: ContainerRuntime): Promise<boolean> {
     const { code } = await capture(rt, ["compose", "version"]);
     return code === 0;
 }
+
+/**
+ * Why `<runtime> compose` is missing, and the package that gives it.
+ *
+ * Only Compose v2 runs the generated file. The standalone `docker-compose` v1 refuses the top-level `name:`
+ * key, because its schema (1.29.2, the last release) does not allow it. The file needs that key: it fixes the
+ * project name, by which `up` and `down` find the stack. Thus a v1 binary on the PATH is named, but it is
+ * not used.
+ */
+export function composeMissingMessage(rt: ContainerRuntime, which: (bin: string) => string | null = Bun.which): string {
+    const install =
+        rt.id === "docker"
+            ? "Install the Docker Compose v2 plugin: the `docker-compose-plugin` package from the Docker repository, or `docker-compose-v2` on Ubuntu. " +
+              "Docker Desktop includes it. See https://docs.docker.com/compose/install/linux/"
+            : "Install `podman-compose`, or the Docker Compose v2 plugin (`docker-compose-plugin`), which `podman compose` runs.";
+    const v1 = which("docker-compose") === null ? "" : " The `docker-compose` v1 command is on the PATH, but Inflexa needs Compose v2.";
+    return `${rt.label} Compose (\`${rt.bin} compose\`) is not available.${v1}\n  ${install}\n  Then re-run.`;
+}
