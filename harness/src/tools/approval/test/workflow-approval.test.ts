@@ -26,6 +26,7 @@ const ANALYSIS = "analysis-step-ask";
 let rig: DbosTestRig;
 let provider: ChatProvider = scriptedModel([]).provider;
 let downloads = 0;
+let waitSeconds: number | "until-answered" = 60;
 
 const download = defineTool({
     id: "download",
@@ -57,7 +58,8 @@ const stepWorkflow = DBOS.registerWorkflow(
                     scope: { analysisId: ANALYSIS, userId: "user-1" },
                     stepPrefix: "test-step",
                     emitPart: (part) => DBOS.writeStream("events", part),
-                    waitSeconds: 60,
+                    waitSeconds,
+                    untilAnsweredWaitSeconds: 1,
                 }),
                 continuesAfterDenial: true,
             },
@@ -114,6 +116,29 @@ describe("the approval of a step workflow", () => {
             { id: askId, status: "pending" },
             { id: askId, status: "resolved", reply: "once" },
         ]);
+    });
+
+    it("waits past the end of each wait until an answer comes, when the ask waits until answered", async () => {
+        downloads = 0;
+        waitSeconds = "until-answered";
+        provider = scriptedModel([callTools(toolCall("d1", "download", {})), reply([text("Downloaded.")])]).provider;
+        const workflowId = `step-${rig.nextWorkflowId()}`;
+
+        try {
+            const handle = await DBOS.startWorkflow(stepWorkflow, { workflowID: workflowId })();
+            const askId = await pendingAskOf(workflowId);
+            // Two ends of a wait of one second pass with no answer, and the ask stays pending.
+            await Bun.sleep(2_500);
+            const { rows } = await rig.pool.query<{ status: string }>("SELECT status FROM cortex_asks WHERE id = $1", [askId]);
+            expect(rows).toEqual([{ status: "pending" }]);
+            expect(await sendAskAnswer(createAskGateway({ pool: rig.pool }), askId, { kind: "once" })).toBe("applied");
+            const ended = await handle.getResult();
+
+            expect(downloads).toBe(1);
+            expect(ended.finishReason).toBe("stop");
+        } finally {
+            waitSeconds = 60;
+        }
     });
 
     it("gives a rejected call a denied result, and the step agent makes its next request", async () => {

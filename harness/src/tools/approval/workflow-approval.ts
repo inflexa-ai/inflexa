@@ -14,8 +14,15 @@ import type { AskReply } from "./contract.js";
 import { askPartOf, type AskGateway, type AskScope } from "./gateway.js";
 import type { AnswerOutcome } from "./queries.js";
 
-/** A workflow waits half an hour for the answer of an ask, and then the ask expires. */
+/** A chat turn waits half an hour for the answer of an ask, and then the ask expires. */
 export const DEFAULT_ASK_WAIT_SECONDS = 30 * 60;
+
+/**
+ * One wait of an ask that waits until an answer comes, in seconds. The wait loops on it. A stop that the workflow does
+ * not see as a signal, for example the cancel of a run from a different process, leaves the `recv` behind, and that
+ * `recv` waits no longer than this.
+ */
+export const UNTIL_ANSWERED_WAIT_SECONDS = 60 * 60;
 
 const AskReplySchema = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("once") }),
@@ -38,7 +45,13 @@ export type WorkflowApprovalOpts = {
     readonly emitPart: (part: AskPart) => Promise<void>;
     /** A stop of the work: the wait ends, the ask is `aborted`, and the approver throws the reason. */
     readonly signal?: AbortSignal;
-    readonly waitSeconds: number;
+    /**
+     * How long the ask waits before it expires, or `until-answered`. A sandbox step waits until an answer comes: its
+     * machine goes away after the idle period of its lease, thus the wait costs no compute, and the person can be away.
+     */
+    readonly waitSeconds: number | "until-answered";
+    /** One wait of `until-answered`, in seconds. A test gives a short one. */
+    readonly untilAnsweredWaitSeconds?: number;
 };
 
 /** The approver of a loop that runs in the body of a workflow. */
@@ -54,17 +67,25 @@ export function workflowApproval(opts: WorkflowApprovalOpts): NonNullable<LoopOp
         }
         await emitPart(askPartOf(id, request, "pending"));
 
-        const received = DBOS.recv<unknown>(askTopic(id), opts.waitSeconds);
-        const answered =
+        const stopped =
             signal === undefined
-                ? await received
-                : await Promise.race([
-                      received,
-                      new Promise<"stopped">((resolve) => {
-                          if (signal.aborted) resolve("stopped");
-                          signal.addEventListener("abort", () => resolve("stopped"), { once: true });
-                      }),
-                  ]);
+                ? undefined
+                : new Promise<"stopped">((resolve) => {
+                      if (signal.aborted) resolve("stopped");
+                      signal.addEventListener("abort", () => resolve("stopped"), { once: true });
+                  });
+        const waitOnce = async (seconds: number): Promise<unknown> => {
+            const received = DBOS.recv<unknown>(askTopic(id), seconds);
+            return stopped === undefined ? await received : await Promise.race([received, stopped]);
+        };
+        let answered: unknown;
+        if (opts.waitSeconds === "until-answered") {
+            // `recv` gives null at the end of each wait with no message. Each wait is a checkpoint, thus a replay waits again for the same ask.
+            do answered = await waitOnce(opts.untilAnsweredWaitSeconds ?? UNTIL_ANSWERED_WAIT_SECONDS);
+            while (answered === null);
+        } else {
+            answered = await waitOnce(opts.waitSeconds);
+        }
         if (answered === "stopped") {
             await DBOS.runStep(() => gateway.abort(id), { name: `${opts.stepPrefix}.ask-abort` });
             await emitPart(askPartOf(id, request, "aborted"));

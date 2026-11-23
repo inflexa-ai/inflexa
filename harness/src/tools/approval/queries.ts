@@ -281,9 +281,21 @@ export function selectAskScope(querier: Querier, id: string): ResultAsync<AskSco
 export function sweepExpired(querier: Querier, expiredAt: string, olderThan: string): ResultAsync<number, DbError> {
     return tryMutation("asks.sweepExpired", async () => {
         const result = await querier.query({
+            // The ask of a sandbox step waits until an answer comes, and the cancel of its run aborts it, thus no sweep expires it.
             text: `UPDATE cortex_asks SET status = 'expired', resolved_at = $1
-              WHERE status = 'pending' AND created_at < $2`,
+              WHERE status = 'pending' AND created_at < $2 AND run_id IS NULL`,
             values: [expiredAt, olderThan],
+        });
+        return result.rowCount ?? 0;
+    });
+}
+
+/** Mark each `pending` ask of the steps of a run `aborted`. The cancel of the run ended the waits of its steps. */
+export function abortPendingAsksOfRun(querier: Querier, runId: string, resolvedAt: string): ResultAsync<number, DbError> {
+    return tryMutation("asks.abortPendingOfRun", async () => {
+        const result = await querier.query({
+            text: `UPDATE cortex_asks SET status = 'aborted', resolved_at = $2 WHERE run_id = $1 AND status = 'pending'`,
+            values: [runId, resolvedAt],
         });
         return result.rowCount ?? 0;
     });
