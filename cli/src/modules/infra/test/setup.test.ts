@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Writable } from "node:stream";
@@ -2940,19 +2940,25 @@ describe("describeLoginFailure", () => {
 });
 
 describe("the data root", () => {
-    const local = { freeBytes: 5 * 1024 ** 3, networkFilesystem: null, earlierData: false };
+    const local = { freeBytes: 5 * 1024 ** 3, networkFilesystem: null, earlierData: false, timedOut: false };
 
     function root(overrides: Partial<DataRoot>): DataRoot {
-        return { path: "/scratch/u/inflexa", source: "env", defaultPath: "/home/u/.local/share/inflexa", ignored: null, ...overrides };
+        return { path: "/scratch/u/inflexa", source: "env", defaultPath: "/home/u/.local/share/inflexa", error: null, ...overrides };
     }
 
-    test("a Linux statfs type names NFS, SMB, Lustre, and GPFS, and a local type names none", () => {
+    test("a Linux statfs type names each network filesystem, and a local type names none", () => {
         expect(networkFilesystemOfType(0x6969)).toBe("NFS");
         expect(networkFilesystemOfType(0xfe534d42)).toBe("SMB");
         // A 32-bit kernel gives the CIFS magic as a negative signed long.
         expect(networkFilesystemOfType(0xff534d42 | 0)).toBe("SMB");
         expect(networkFilesystemOfType(0x0bd00bd0)).toBe("Lustre");
         expect(networkFilesystemOfType(0x47504653)).toBe("GPFS");
+        expect(networkFilesystemOfType(0x00c36400)).toBe("CephFS");
+        expect(networkFilesystemOfType(0x19830326)).toBe("BeeGFS");
+        expect(networkFilesystemOfType(0x5346414f)).toBe("AFS");
+        expect(networkFilesystemOfType(0x6b414653)).toBe("AFS");
+        expect(networkFilesystemOfType(0x01021997)).toBe("9p");
+        expect(networkFilesystemOfType(0x65735546)).toBe("FUSE");
         expect(networkFilesystemOfType(0xef53)).toBeNull();
     });
 
@@ -2961,10 +2967,14 @@ describe("the data root", () => {
             "/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)",
             "server:/export/home on /Volumes/home (nfs, nodev, nosuid, mounted by u)",
             "//u@files/share on /Volumes/share (smbfs, nodev, nosuid, mounted by u)",
+            "afp_server on /Volumes/afp (afpfs, nodev, nosuid, mounted by u)",
+            "https://dav.example/ on /Volumes/dav (webdav, nodev, nosuid, mounted by u)",
             "/dev/disk5s1 on /Volumes/home/local (apfs, local, journaled)",
         ].join("\n");
         expect(networkFilesystemInMountTable(table, "/Volumes/home/u/inflexa")).toBe("NFS");
         expect(networkFilesystemInMountTable(table, "/Volumes/share")).toBe("SMB");
+        expect(networkFilesystemInMountTable(table, "/Volumes/afp/inflexa")).toBe("AFP");
+        expect(networkFilesystemInMountTable(table, "/Volumes/dav/inflexa")).toBe("WebDAV");
         expect(networkFilesystemInMountTable(table, "/Volumes/home/local/inflexa")).toBeNull();
         expect(networkFilesystemInMountTable(table, "/Volumes/homework")).toBeNull();
         expect(networkFilesystemInMountTable(table, "/Users/u/.local/share/inflexa")).toBeNull();
@@ -2984,9 +2994,14 @@ describe("the data root", () => {
         expect(notes[1]?.text).toContain(`Set INFLEXA_DATA_DIR, or the "dataDir" key of ${env.configPath}, to a folder on a local disk`);
     });
 
-    test("an ignored relative value gets a warning", () => {
-        const notes = dataRootNotes(root({ source: "default", path: "/home/u/.local/share/inflexa", ignored: { source: "env", value: "scratch" } }), local);
-        expect(notes[1]).toEqual({ level: "warn", text: 'INFLEXA_DATA_DIR is "scratch", which is not an absolute path. Inflexa ignores it.' });
+    test("a filesystem that does not answer in time gives unknown facts and a warning, and setup continues", async () => {
+        const hung = { timeoutMs: 20, statfs: (): Promise<never> => new Promise<never>(() => undefined) };
+        const facts = await inspectDataRoot(root({ path: tmpdir() }), hung);
+        expect(facts).toEqual({ freeBytes: null, networkFilesystem: null, earlierData: false, timedOut: true });
+        expect(dataRootNotes(root({}), facts, hung)[1]).toEqual({
+            level: "warn",
+            text: "The filesystem of the data root did not answer in 0.02 s. A network filesystem that hangs is a frequent cause: move the data root to a local disk.",
+        });
     });
 
     test("data in the default root stays there, and setup says where it is", async () => {
@@ -3007,7 +3022,11 @@ describe("the data root", () => {
             );
             expect(existsSync(join(defaultPath, "agent.db"))).toBe(true);
 
-            expect((await inspectDataRoot(root({ path: defaultPath, defaultPath, source: "default" }))).earlierData).toBe(false);
+            // The same folder in a different spelling is not a different root.
+            expect((await inspectDataRoot(root({ path: `${defaultPath}/`, defaultPath, source: "env" }))).earlierData).toBe(false);
+            expect((await inspectDataRoot(root({ path: join(home, ".", "default"), defaultPath, source: "env" }))).earlierData).toBe(false);
+            symlinkSync(defaultPath, join(home, "link"));
+            expect((await inspectDataRoot(root({ path: join(home, "link"), defaultPath, source: "env" }))).earlierData).toBe(false);
         } finally {
             rmSync(home, { recursive: true, force: true });
         }

@@ -10,11 +10,16 @@ import { initBusLogging } from "./lib/bus.ts";
 import { isSelfStartedChild } from "./lib/child_flags.ts";
 import { fail } from "./lib/cli.ts";
 import { describeConfigReadError, readConfigResult } from "./lib/config.ts";
+import { dataRoot } from "./lib/env.ts";
 import { addLogStream, flushLogsSync, getLogger } from "./lib/log.ts";
 import { createOtelLogStream, initOtel } from "./lib/otel.ts";
 import { onShutdown, shutdown, stopForSignal } from "./lib/shutdown.ts";
 import { pendingUpdate } from "./modules/update/latest.ts";
 import { printUpdateNotice } from "./modules/update/notice.ts";
+
+// A setting that names a bad data root stops each command, the server included. A fall back to the default root would
+// put the data on the disk that the user tried to leave.
+if (dataRoot.error !== null) fail(dataRoot.error);
 
 // A config file that does not read stops each command here, before a command can write the defaults over it.
 const config = readConfigResult().match(

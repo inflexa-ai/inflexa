@@ -29,7 +29,7 @@ The system MUST use `agent.db` in the data root as the database path. `src/lib/e
 2. The `dataDir` key of the config file.
 3. `inflexa` under the data home of the platform. The data home is `XDG_DATA_HOME`, or `LOCALAPPDATA` on Windows. When that variable is not set, the data home is `~/.local/share`, or `~/AppData/Local` on Windows.
 
-The value of `INFLEXA_DATA_DIR` and of `dataDir` is the data root itself, not a base directory. The system MUST ignore an empty value and a relative value, and then use the next source. No variable overrides the database path alone. The system MUST make the parent directory if it does not exist.
+The value of `INFLEXA_DATA_DIR` and of `dataDir` is the data root itself, not a base directory. The system MUST ignore an empty value. A leading `~` is the home directory. The first value that is not empty decides. If that value is not an absolute path, each command MUST stop with an error that names the variable or the key, and MUST NOT use the next source. On Windows, each command MUST stop with an error when a value names a custom root, because the Postgres data of Windows is in a named volume and not in the data root. No variable overrides the database path alone. The system MUST make the parent directory if it does not exist.
 
 #### Scenario: Default path
 - **WHEN** `XDG_DATA_HOME`, `INFLEXA_DATA_DIR`, and `dataDir` are not set on Linux or macOS
@@ -46,6 +46,10 @@ The value of `INFLEXA_DATA_DIR` and of `dataDir` is the data root itself, not a 
 #### Scenario: Data root from the config file
 - **WHEN** `INFLEXA_DATA_DIR` is not set, and the config file sets `dataDir` to `/data/u/inflexa`
 - **THEN** the system opens the database at `/data/u/inflexa/agent.db`
+
+#### Scenario: A relative data root stops each command
+- **WHEN** `INFLEXA_DATA_DIR` is set to `scratch/inflexa`
+- **THEN** each command exits with status 1, and the error names `INFLEXA_DATA_DIR`
 
 #### Scenario: Parent directory creation
 - **WHEN** the database path's parent directory does not exist

@@ -1,8 +1,9 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import { Result, ok, err } from "neverthrow";
+import { z } from "zod";
 import type { BootPullProgress } from "../../api/server.ts";
 import { capture, inherit, pullImageThroughEngine, resolveEngineApiSocket, resolveImageTotalBytes, type ContainerRuntime } from "../../lib/container.ts";
 import { env } from "../../lib/env.ts";
@@ -323,6 +324,49 @@ export async function ensureMountSources(mode: ConnectionMode, host: ComposeHost
     return ok(undefined);
 }
 
+/** The mounts of a container as `inspect` prints them. Each other field of a mount stays out. */
+const containerMountsSchema = z.array(z.object({ Source: z.string().optional(), Name: z.string().optional(), Destination: z.string() }));
+
+/**
+ * Whether the mount `source` that the engine reports is the host path `expected`. The engine of Docker Desktop can
+ * report the path with the prefix of its own machine (`/host_mnt/...`), and macOS can report the real path of a
+ * symbolic link, thus the check accepts a suffix match on either spelling of `expected`.
+ */
+function isSameHostPath(source: string, expected: string): boolean {
+    const real = Result.fromThrowable(
+        (path: string) => realpathSync(path, "utf8"),
+        () => null,
+    )(expected).unwrapOr(null);
+    const spellings = real === null ? [resolve(expected)] : [resolve(expected), real];
+    return spellings.some((spelling) => source === spelling || source.endsWith(spelling));
+}
+
+/**
+ * The reason to refuse a compose of the stack, or `null`. The container names and the compose project are per machine,
+ * but the data root is per process. A compose from a second root would recreate the RUNNING Postgres container on the
+ * data of that root, under the server of the first root that uses it. A stopped or absent container is no conflict:
+ * nothing uses it, thus a recreate loses nothing.
+ *
+ * Only the bind mount needs the check. Windows keeps the Postgres data in one named volume and refuses a custom root
+ * (`resolveDataRoot` in lib/env.ts), thus each process on Windows names the same volume.
+ */
+async function postgresRootConflict(rt: ContainerRuntime, host: ComposeHost = realHost()): Promise<string | null> {
+    const location = postgresDataLocation(host);
+    if (location.kind === "volume") return null;
+    const { code, stdout } = await capture(rt, ["container", "inspect", "--format", "{{.State.Running}} {{json .Mounts}}", POSTGRES_CONTAINER_NAME]);
+    if (code !== 0) return null;
+    const line = stdout.trim();
+    const space = line.indexOf(" ");
+    if (space < 0 || line.slice(0, space) !== "true") return null;
+    const mounts = JSON.parseWith(line.slice(space + 1), containerMountsSchema);
+    const source = mounts?.find((mount) => mount.Destination === CONTAINER_DATA_PATH)?.Source;
+    if (source === undefined || isSameHostPath(source, location.path)) return null;
+    return (
+        `The running ${POSTGRES_CONTAINER_NAME} keeps its data in ${source}, but this data root puts it in ${location.path}. ` +
+        `Stop the server and the stack of the other root first: run \`inflexa server stop\`, then \`INFLEXA_DATA_DIR=${dirname(source)} inflexa down\`. Then run the command again.`
+    );
+}
+
 /**
  * Start all services in the compose file (idempotent — already-running services are untouched). Requires
  * the connection `mode` so the mount-source integrity guard runs first: `compose up -d` is the ONE step
@@ -331,6 +375,8 @@ export async function ensureMountSources(mode: ConnectionMode, host: ComposeHost
  * guard) is what makes the guard impossible to bypass.
  */
 export async function composeUp(rt: ContainerRuntime, mode: ConnectionMode): Promise<Result<void, PostgresError>> {
+    const conflict = await postgresRootConflict(rt);
+    if (conflict !== null) return err({ type: "data_root_conflict", message: conflict });
     const guard = await ensureMountSources(mode);
     if (guard.isErr()) return err({ type: "mount_source_unavailable", message: formatInfraStateError(guard.error) });
 
