@@ -24,13 +24,13 @@
  * sandbox initiates nothing, so it gets no egress. The container is created as
  * root with `CAP_NET_ADMIN` and the `SANDBOX_EGRESS_FIREWALL` flag; the image's
  * root entrypoint installs `iptables -P OUTPUT DROP` (allowing loopback and
- * established return traffic) and then `setpriv`-drops to the uid-1000
- * workload, which can neither reach the network nor flush the rules. The host
+ * established return traffic) and then `setpriv`-drops to the workload user,
+ * which can neither reach the network nor flush the rules. The executor fact
+ * selects that user (`workload-identity.ts`). The host
  * polls `GET /exec/{execId}?since={cursor}` over the published port; the reply
  * rides the established connection, so polling works with egress hard-blocked.
  *
- * The workload ends as uid 1000 with `no-new-privileges` and no effective
- * capabilities.
+ * The workload ends with `no-new-privileges` and no effective capabilities.
  */
 
 import { errorMessageOf } from "../lib/thrown.js";
@@ -52,6 +52,7 @@ import { harnessLabels, MANAGED_BY_LABEL, MANAGED_BY_VALUE, mergeLabels, OWNER_W
 import { buildMountPlan, mountCoordsOf, sandboxWriteTail } from "./mount-plan.js";
 import { CPU_ONLINE_PATH, CPUINFO_PATH, cpuFiles, readHostCpuinfoOnce } from "./cpu-files.js";
 import { threadLimitEnv } from "./thread-env.js";
+import { workloadIdentityOf, type SandboxExecutor } from "./workload-identity.js";
 
 /** Read the originating HTTP status off any `SandboxError` variant that carries one. */
 function statusOf(e: SandboxError): number | undefined {
@@ -67,7 +68,7 @@ const SANDBOX_PORT_HOST_IP = "127.0.0.1";
 
 /**
  * The container starts as root so the entrypoint can install the egress
- * firewall; the entrypoint then `setpriv`-drops to uid 1000, so the workload
+ * firewall; the entrypoint then `setpriv`-drops to the workload user, so the workload
  * still runs unprivileged. sandbox-server refuses to start as root when the
  * firewall flag is set, so an image whose entrypoint skips the drop fails at
  * create time rather than running privileged and unconfined.
@@ -98,13 +99,22 @@ type EngineInspectInfo = {
     NetworkSettings: { Ports?: Record<string, Array<{ HostPort?: string }>> };
 };
 
+/**
+ * `HostConfig.Annotations` is in the Engine API since 1.43, but not in the types of
+ * dockerode. Docker and Podman read the field from the same JSON body, thus the
+ * extension only names a field that the API already has.
+ */
+type ContainerCreateOptions = Docker.ContainerCreateOptions & {
+    HostConfig?: Docker.HostConfig & { Annotations?: Record<string, string> };
+};
+
 type EngineContainerInfo = {
     Labels?: Record<string, string>;
     Created?: unknown;
 };
 
 export type DockerEngine = {
-    createContainer(options: Docker.ContainerCreateOptions): Promise<EngineContainer>;
+    createContainer(options: ContainerCreateOptions): Promise<EngineContainer>;
     getContainer(id: string): EngineContainer;
     listContainers(options?: { all?: boolean; filters?: { label?: string[] } }): Promise<EngineContainerInfo[]>;
 };
@@ -158,6 +168,8 @@ export type DockerClientConfig = {
     engineSocketPath?: string;
     /** The silence after which a call to the engine fails. Default {@link ENGINE_CALL_TIMEOUT_MS}. */
     engineCallTimeoutMs?: number;
+    /** How the engine maps the ids of a container onto the host files. Absent is a VM engine whose file sharing masks the owner. */
+    executor?: SandboxExecutor;
     /** Injected for tests. */
     docker?: DockerEngine;
     /** Injected for tests so `/health` polling can be stubbed. */
@@ -284,7 +296,7 @@ export function engineConnectionOptions(engineSocketPath: string | undefined, ti
  */
 async function createOrAdopt(
     docker: DockerEngine,
-    createOpts: Docker.ContainerCreateOptions,
+    createOpts: ContainerCreateOptions,
     name: string,
     ownerWorkflowId: string,
     createFailed: (status: number | undefined, cause: unknown) => SandboxError,
@@ -354,6 +366,7 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
     const logger = (config.logger ?? createNoopLogger()).named("docker-client");
     const fetchImpl = config.fetch ?? fetch;
     const readHostCpuinfo = config.readHostCpuinfo ?? readHostCpuinfoOnce;
+    const workload = workloadIdentityOf(config.executor);
     /** The cpu directory of each sandbox that this process wrote, for `teardown`. */
     const cpuDirs = new Map<string, string>();
 
@@ -480,7 +493,8 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                     const limits = spec.resources;
 
                     // The firewall flag makes the root entrypoint install the egress block
-                    // before it drops to uid 1000.
+                    // before it drops to the workload user. The identity env comes last,
+                    // thus no extra env of a spec can change the user of the workload.
                     //
                     // Composed as one record, not as a list of `K=V`. A duplicate key in
                     // the Env array resolves at the libc that scans `environ`, thus the
@@ -490,9 +504,10 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                         ...threadLimitEnv(limits),
                         ...plan.env,
                         ...spec.extraEnv,
+                        ...workload.env,
                     }).map(([k, v]) => `${k}=${v}`);
 
-                    const createOpts: Docker.ContainerCreateOptions = {
+                    const createOpts: ContainerCreateOptions = {
                         name: sandboxId,
                         Image: image,
                         Env: env,
@@ -515,7 +530,9 @@ export function createDockerSandboxOps(config: DockerClientConfig): {
                             // workload runs — the workload's capability sets end empty — and
                             // `no-new-privileges` prevents regaining any.
                             CapAdd: ["NET_ADMIN", "SETUID", "SETGID", "SETPCAP"],
-                            SecurityOpt: ["no-new-privileges"],
+                            SecurityOpt: ["no-new-privileges", ...workload.securityOpt],
+                            UsernsMode: workload.usernsMode,
+                            Annotations: workload.annotations,
                             NanoCpus: Math.round(limits.cpu * 1e9),
                             Memory: limits.memoryGb * 1024 ** 3,
                             // `Memory` alone lets the container swap as much again. A fork

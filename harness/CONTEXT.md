@@ -101,7 +101,8 @@ harness. The hard decisions and their reasons are in the OpenSpec specs under
 - **Sandbox confinement** — The sandbox has no egress, and only the host reaches
   its exec port. On Docker, an in-container `iptables -P OUTPUT DROP` firewall
   confines it: a root entrypoint with `CAP_NET_ADMIN` installs the rule, and then
-  `setpriv` drops to uid 1000. The exec port is published to `127.0.0.1` only. On
+  `setpriv` drops to the workload user. The exec port is published to
+  `127.0.0.1` only. On
   K8s, a NetworkPolicy of the deployment admits only Cortex to the sandbox port,
   and it denies each egress. There is no gateway sidecar and no `--internal`
   network.

@@ -376,6 +376,68 @@ describe("createSandboxClient — a spawn failure is a value", () => {
     });
 });
 
+describe("createSandboxClient — the executor fact", () => {
+    const SPAWN = {
+        runId: "run-1",
+        stepId: "step-a",
+        analysisId: "an-1",
+        ownerWorkflowId: "sandboxlease:an-1:run-1-0:1",
+        recordTail: RECORD_TAIL,
+        resources: { cpu: 1, memoryGb: 1 },
+    };
+    const REF = { sandboxId: "sbx-1", host: "127.0.0.1", port: 8765, backend: "docker" as const };
+    const modeOf = async (p: string): Promise<number> => (await stat(p)).mode & 0o777;
+
+    let root: string;
+    let captured: dockerClient.DockerClientConfig | null;
+    let spy: ReturnType<typeof spyOn<typeof dockerClient, "createDockerSandboxOps">>;
+    beforeEach(async () => {
+        root = await mkdtemp(join(tmpdir(), "harness-executor-"));
+        captured = null;
+        spy = spyOn(dockerClient, "createDockerSandboxOps").mockImplementation((cfg) => {
+            captured = cfg;
+            return { ...unusedOps(), createSandbox: () => okAsync(REF) };
+        });
+    });
+    afterEach(async () => {
+        spy.mockRestore();
+        await rm(root, { recursive: true, force: true });
+    });
+
+    const spawnWith = async (executor: Parameters<typeof createSandboxClient>[0]["executor"]): Promise<void> => {
+        const client = createSandboxClient({
+            env: { backend: "docker", namespace: "default" },
+            image: "sandbox-base:latest",
+            resourceLimits: { maxCpu: 8, maxMemoryGb: 32, maxGpuCount: 0 },
+            resolveWorkspaceRoot: () => Promise.resolve(root),
+            farmSource: { kind: "fixed", location: { farmPath: "/mnt/libs/farms/catalog" } },
+            executor,
+        });
+        (await client.createSandbox(...splitSpawn(SPAWN), keyedSandboxIdentity("run-1", "lease#1")))._unsafeUnwrap();
+    };
+    const workDir = (): string => join(root, "runs/run-1/step-a/work");
+
+    test("the fact reaches the docker backend", async () => {
+        const executor = { kind: "rootless-podman", selinux: true } as const;
+        await spawnWith(executor);
+        // A read through a function: the spy assigns `captured` in a closure, which the narrowing of tsc cannot see.
+        const readCaptured = (): dockerClient.DockerClientConfig | null => captured;
+        expect(readCaptured()?.executor).toEqual(executor);
+    });
+
+    test("a rootful engine leaves the step tree and the records directory as the host made them", async () => {
+        await spawnWith({ kind: "rootful", user: { uid: 1234, gid: 1234, groups: [] }, selinux: false });
+        expect(await modeOf(workDir())).not.toBe(0o777);
+        expect(await modeOf(join(root, RECORD_TAIL))).not.toBe(0o777);
+    });
+
+    test("a VM engine that shows the host owner opens the step tree and the records directory", async () => {
+        await spawnWith({ kind: "vm", bindOwnership: "host-preserved" });
+        expect(await modeOf(workDir())).toBe(0o777);
+        expect(await modeOf(join(root, RECORD_TAIL))).toBe(0o777);
+    });
+});
+
 describe("createSandboxClient — the label hook", () => {
     type BackendCall = {
         readonly session: SpawnSession;

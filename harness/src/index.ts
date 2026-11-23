@@ -722,6 +722,7 @@ export type { SignableInput } from "./execution/input-signature.js";
 export type { ResolveWorkspaceRoot } from "./workspace/paths.js";
 export { createSandboxClient } from "./sandbox/create-sandbox.js";
 export type { CreateSandboxClientConfig, SandboxBackendConfig } from "./sandbox/create-sandbox.js";
+export type { ExecutorUser, SandboxExecutor } from "./sandbox/workload-identity.js";
 export type { SandboxClient } from "./sandbox/client.js";
 export type { AcquireOutcome, BoundLease, LeaseBinding, NoLease, SandboxLeases } from "./sandbox/leases.js";
 // Hook: sandbox labels. An optional gate on the config of the sandbox client.
