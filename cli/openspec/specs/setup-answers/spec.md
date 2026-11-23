@@ -199,7 +199,19 @@ gets no offer. A second setup during a live transfer reports the run
 and opens no second consent. `resources.sharePct` (flag `--resource-share
 <pct>`, 1-100) answers the machine-allowance question as a percentage. The
 value persists as the absolute budget computed from the detected machine,
-exactly as the wizard's prompt persists it.
+exactly as the wizard's prompt persists it. The percentage applies to the
+host, cut to the container engine. The engine keeps 2 GB of its memory for
+Postgres and the other services, the same as at the boot. When the engine is
+a VM that is smaller than the host, setup names the VM and its figures. Setup
+then tells how to make the VM larger: the Docker Desktop or OrbStack settings,
+or `podman machine set`.
+
+#### Scenario: The share of a small engine VM fits the engine
+
+- **GIVEN** a host with 16 cores and 64 GB, and a Docker engine VM with 4 cores and 8 GB
+- **WHEN** `setup --yes --resource-share 50` runs
+- **THEN** the budget is 2 cores and 3 GB
+- **AND** the output names the VM, its figures, and the settings that make the VM larger
 
 #### Scenario: The sandbox answer starts three detached transfers
 

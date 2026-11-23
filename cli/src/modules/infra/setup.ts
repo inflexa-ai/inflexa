@@ -21,7 +21,16 @@ import {
     type ConfigError,
     type ModelAuthConfig,
 } from "../../lib/config.ts";
-import { ensureReady, firstReadyRuntime, runtimeIds, runtimes, ContainerRuntimeError, type ContainerRuntime } from "../../lib/container.ts";
+import {
+    engineCapacity,
+    ensureReady,
+    firstReadyRuntime,
+    runtimeIds,
+    runtimes,
+    ContainerRuntimeError,
+    type ContainerRuntime,
+    type EngineCapacity,
+} from "../../lib/container.ts";
 import {
     anthropicAuthTokenSet,
     detectProviderEnv,
@@ -42,6 +51,8 @@ import { sshForwardCommand } from "../../lib/open_external.ts";
 import {
     AGENT_NAMES,
     detectedMachine,
+    engineBudgetCeiling,
+    ENGINE_MEMORY_RESERVE_GB,
     resolveHarnessConfig,
     resolveModelConnection,
     writeAgentModel,
@@ -738,7 +749,7 @@ export async function setup(options: SetupOptions): Promise<void> {
         // share persists the machine-relative absolutes without the prompt; a run
         // that can neither ask nor read an answer skips entirely — the resolved
         // default (half the detected machine) applies unpersisted.
-        const resourceAllowance = await promptResourceConfig(answers.resources?.sharePct, asks("resources"));
+        const resourceAllowance = await promptResourceConfig(rt, answers.resources?.sharePct, asks("resources"));
         if (resourceAllowance.isErr()) {
             log.error(
                 `The answered resource allowance could not be saved: ${resourceAllowance.error.type}.\n` +
@@ -1324,6 +1335,11 @@ async function promptPostgresConfig(answered: SetupAnswers["postgres"], canPromp
  * material. The default share reflects the currently-resolved budget (half the
  * machine on a fresh config), so re-running setup shows what already applies.
  *
+ * The share is a share of the host cut to the engine, less {@link ENGINE_MEMORY_RESERVE_GB} for the services: the
+ * same ceiling the boot clamps the budget to. A budget above it would persist a figure that no analysis can get, and
+ * a share of the host offered on a small Docker Desktop VM or podman machine is exactly that. When the engine is
+ * smaller than the host, setup names it and the way to make it larger, because that is the one fix setup cannot do.
+ *
  * An ANSWERED share (`--resource-share` / `resources.sharePct`) skips the prompt and takes exactly the
  * same arithmetic and spread-preserving write the prompt does — the percentage is what travels across a
  * heterogeneous fleet, and the ABSOLUTE budget it resolves to on THIS machine is what is persisted. A
@@ -1334,11 +1350,14 @@ async function promptPostgresConfig(answered: SetupAnswers["postgres"], canPromp
  * {@link promptPostgresConfig} states: a declared allowance that did not land is invisible to the script
  * that declared it, while a prompted one falls back to the resolved default it was already showing.
  */
-async function promptResourceConfig(answeredSharePct: number | undefined, canPrompt: boolean): Promise<Result<void, ConfigError>> {
+async function promptResourceConfig(rt: ContainerRuntime, answeredSharePct: number | undefined, canPrompt: boolean): Promise<Result<void, ConfigError>> {
     const share = answerOf(answeredSharePct);
     if (!share.answered && !canPrompt) return ok(undefined);
 
-    const machine = detectedMachine();
+    const host = detectedMachine();
+    const capacity = await engineCapacity(rt);
+    const ceiling = capacity === undefined ? undefined : engineBudgetCeiling(capacity);
+    const machine = ceiling === undefined ? host : { cpu: Math.min(host.cpu, ceiling.cpu), memoryGb: Math.min(host.memoryGb, ceiling.memoryGb) };
     const resolved = resolveHarnessConfig();
     const currentPct = Math.min(100, Math.max(1, Math.round((resolved.resourcePolicy.budget.cpu / machine.cpu) * 100)));
     // "Configure …" is an instruction to someone about to be asked something. A batch run reaches this
@@ -1346,9 +1365,11 @@ async function promptResourceConfig(answeredSharePct: number | undefined, canPro
     // fact, phrased for a transcript nobody is going to type into.
     log.message(
         canPrompt
-            ? `Configure the analysis resource allowance — detected ${machine.cpu} cores / ${machine.memoryGb} GB`
-            : `Analysis resource allowance — detected ${machine.cpu} cores / ${machine.memoryGb} GB`,
+            ? `Configure the analysis resource allowance — detected ${host.cpu} cores / ${host.memoryGb} GB`
+            : `Analysis resource allowance — detected ${host.cpu} cores / ${host.memoryGb} GB`,
     );
+    const smallerVm = capacity !== undefined && (capacity.cpu < host.cpu || capacity.memoryGb < host.memoryGb);
+    if (smallerVm) note(engineVmNote(rt, capacity, machine), "Analyses run in a smaller VM");
 
     const sharePct = (v: string): string | undefined => {
         if (v.trim() === "") return undefined;
@@ -1358,7 +1379,7 @@ async function promptResourceConfig(answeredSharePct: number | undefined, canPro
     };
     const answer = share.answered
         ? String(share.value)
-        : await promptText("Max share of this machine analyses may use in total (%)", {
+        : await promptText(`Max share of ${smallerVm ? "the VM" : "this machine"} analyses may use in total (%)`, {
               defaultValue: String(currentPct),
               placeholder: String(currentPct),
               validate: sharePct,
@@ -1392,6 +1413,20 @@ async function promptResourceConfig(answeredSharePct: number | undefined, canPro
         log.warn(`Failed to save resource limits: ${persisted.error.type}`);
     }
     return ok(undefined);
+}
+
+/** Name the engine VM that is smaller than the host, what the allowance is a share of, and how to make the VM larger. */
+function engineVmNote(rt: ContainerRuntime, capacity: EngineCapacity, base: { readonly cpu: number; readonly memoryGb: number }): string {
+    const vm = rt.id === "podman" ? "the podman machine" : "the Docker engine VM";
+    const grow =
+        rt.id === "podman"
+            ? "  podman machine stop\n  podman machine set --cpus <n> --memory <MiB>\n  podman machine start"
+            : "  Docker Desktop: Settings → Resources\n  OrbStack: Settings → System";
+    return (
+        `The containers run in a VM, and ${vm} has ${capacity.cpu} cores / ${capacity.memoryGb} GB.\n` +
+        `The allowance is a share of ${base.cpu} cores / ${base.memoryGb} GB: ${ENGINE_MEMORY_RESERVE_GB} GB of the VM stays for Postgres and the other services.\n\n` +
+        `To give analyses more, make the VM larger, then re-run \`inflexa setup\`:\n${grow}`
+    );
 }
 
 /**

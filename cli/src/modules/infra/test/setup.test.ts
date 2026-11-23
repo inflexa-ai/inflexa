@@ -50,6 +50,7 @@ import * as storeDownloadModule from "../../libs/store_download.ts";
 import * as refsCommands from "../../refs/commands.ts";
 import * as refsStore from "../../refs/store.ts";
 import { detectedMachine, writeAgentModel, type ResolvedModelConnection } from "../../harness/config.ts";
+import * as harnessConfig from "../../harness/config.ts";
 import { __resetModelCacheForTest, type ModelAccess } from "../../proxy/models.ts";
 import * as configModule from "../../../lib/config.ts";
 import { readConfig, writeConfig } from "../../../lib/config.ts";
@@ -1572,6 +1573,7 @@ describe("setup() — batch orchestration", () => {
     let firstReady: ReturnType<typeof spyOn<typeof container, "firstReadyRuntime">>;
     let embedStep: ReturnType<typeof spyOn<typeof embeddingSetup, "runEmbeddingSetup">>;
     let refsStep: ReturnType<typeof spyOn<typeof refsCommands, "runReferenceSetup">>;
+    let engine: ReturnType<typeof spyOn<typeof container, "engineCapacity">>;
 
     /** Serve per-route responses keyed by URL suffix; an unmapped route 404s (mirrors probeCredentialSource's own tests). */
     function routeFetch(routes: Record<string, () => Response>): void {
@@ -1687,7 +1689,9 @@ describe("setup() — batch orchestration", () => {
         firstReady = spyOn(container, "firstReadyRuntime").mockImplementation(() => Promise.resolve(ok(container.runtimes.docker)));
         embedStep = spyOn(embeddingSetup, "runEmbeddingSetup").mockImplementation(() => Promise.resolve(ok(undefined)));
         refsStep = spyOn(refsCommands, "runReferenceSetup").mockImplementation(() => Promise.resolve(ok(undefined)));
-        spies.push(firstReady, embedStep, refsStep);
+        // The real read runs `docker info`. No answer keeps the figures of the host, the same as an engine that does not answer.
+        engine = spyOn(container, "engineCapacity").mockImplementation(() => Promise.resolve(undefined));
+        spies.push(firstReady, embedStep, refsStep, engine);
     });
 
     afterEach(() => {
@@ -2122,6 +2126,59 @@ describe("setup() — batch orchestration", () => {
         expect(persistedBudget(readConfig().harness)).toEqual({
             cpu: Math.max(1, Math.floor((machine.cpu * 50) / 100)),
             memoryGb: Math.max(1, Math.floor((machine.memoryGb * 50) / 100)),
+        });
+    });
+
+    describe("the allowance of an engine VM", () => {
+        beforeEach(() => {
+            spies.push(spyOn(harnessConfig, "detectedMachine").mockImplementation(() => ({ cpu: 16, memoryGb: 64 })));
+        });
+
+        test("a share of an engine smaller than the host is a share of the engine, less the memory of the services", async () => {
+            engine.mockImplementation(() => Promise.resolve({ cpu: 4, memoryGb: 8 }));
+
+            const output = await runSetup(batch({ resourceShare: "50" }));
+
+            expect(process.exitCode).toBe(0);
+            expect(persistedBudget(readConfig().harness)).toEqual({ cpu: 2, memoryGb: 3 });
+            expect(output).toContain("16 cores / 64 GB");
+            expect(output).toContain("the Docker engine VM has 4 cores / 8 GB");
+            expect(output).toContain("Docker Desktop");
+            expect(output).toContain("OrbStack");
+        });
+
+        test("a Podman machine smaller than the host names `podman machine set`", async () => {
+            firstReady.mockImplementation(() => Promise.resolve(ok(container.runtimes.podman)));
+            engine.mockImplementation(() => Promise.resolve({ cpu: 4, memoryGb: 8 }));
+
+            const output = await runSetup(batch({ resourceShare: "50" }));
+
+            expect(process.exitCode).toBe(0);
+            expect(output).toContain("the podman machine has 4 cores / 8 GB");
+            expect(output).toContain("podman machine set");
+        });
+
+        test("an engine as large as the host names no VM, and keeps the memory of the services", async () => {
+            engine.mockImplementation(() => Promise.resolve({ cpu: 16, memoryGb: 64 }));
+
+            const output = await runSetup(batch({ resourceShare: "100" }));
+
+            expect(process.exitCode).toBe(0);
+            expect(persistedBudget(readConfig().harness)).toEqual({ cpu: 16, memoryGb: 62 });
+            expect(output).not.toContain("engine VM");
+        });
+
+        test("the share that an interactive run offers fits the engine", async () => {
+            replaceProperty(process.stdin, "isTTY", true);
+            spies.push(...stubRecordedPrompts([], []));
+            globalThis.fetch = fakeFetch(respondWith(null, { status: 404 }));
+            engine.mockImplementation(() => Promise.resolve({ cpu: 4, memoryGb: 8 }));
+
+            await runSetup({ auth: false, start: false, force: false, postgres: false, flags: { connection: "cliproxy" } });
+
+            expect(process.exitCode).toBe(0);
+            // The default budget is half the host, 8 cores. The engine has 4, so the offer is all of the engine.
+            expect(persistedBudget(readConfig().harness)).toEqual({ cpu: 4, memoryGb: 6 });
         });
     });
 

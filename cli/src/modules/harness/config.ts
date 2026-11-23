@@ -134,6 +134,11 @@ function resolvePolicy(cfg: z.infer<typeof harnessConfigSchema> | undefined): Re
  */
 export const ENGINE_MEMORY_RESERVE_GB = 2;
 
+/** The largest budget that an engine can hold: each of its cores, and its memory less {@link ENGINE_MEMORY_RESERVE_GB}, at least 1 GB. */
+export function engineBudgetCeiling(capacity: { readonly cpu: number; readonly memoryGb: number }): MachineBudget {
+    return { cpu: capacity.cpu, memoryGb: Math.max(1, capacity.memoryGb - ENGINE_MEMORY_RESERVE_GB) };
+}
+
 /**
  * Clamp a resource policy to the capacity of the container engine. The budget comes from the host, but a podman
  * machine or a Docker Desktop VM can be smaller, and a sandbox can never use more than its engine has. A budget
@@ -142,8 +147,8 @@ export const ENGINE_MEMORY_RESERVE_GB = 2;
  */
 export function clampPolicyToEngine(policy: ResourcePolicy, capacity: { readonly cpu: number; readonly memoryGb: number } | undefined): ResourcePolicy {
     if (capacity === undefined) return policy;
-    const memoryGb = Math.max(1, capacity.memoryGb - ENGINE_MEMORY_RESERVE_GB);
-    const budget = { cpu: Math.min(policy.budget.cpu, capacity.cpu), memoryGb: Math.min(policy.budget.memoryGb, memoryGb) };
+    const ceiling = engineBudgetCeiling(capacity);
+    const budget = { cpu: Math.min(policy.budget.cpu, ceiling.cpu), memoryGb: Math.min(policy.budget.memoryGb, ceiling.memoryGb) };
     return {
         perStep: { ...policy.perStep, maxCpu: Math.min(policy.perStep.maxCpu, budget.cpu), maxMemoryGb: Math.min(policy.perStep.maxMemoryGb, budget.memoryGb) },
         budget,
