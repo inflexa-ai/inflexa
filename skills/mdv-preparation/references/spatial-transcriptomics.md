@@ -95,16 +95,69 @@ def put_table(sdata, curated, table_name="table"):
     sdata.tables[table_name] = TableModel.parse(table, region=region, region_key=region_key, instance_key=instance_key)
 
 
-def drop_unused(sdata):
-    """Remove the points (the transcripts), which MDV does not show, and keep the shapes and the labels.
+def drop_unused(sdata, keep_points=()):
+    """Remove the points elements that are not in keep_points, and keep the shapes and the labels.
 
-    Returns the names of the removed elements. A Xenium store needs its shapes: mdvtools places the cells on the
-    image with the transform of cell_circles, cell_boundaries, or nucleus_boundaries.
+    The transcripts are the gene tiles of MDV: the tissue chart of a newer MDV draws the transcripts of the genes
+    that the user selects (write_spatial_project Morton-sorts them). Keep them (keep_points=["transcripts"]) when
+    the mdvtools can sort points and the size budget allows ("The size of the project", memory-and-scale.md).
+    Remove them for MDV 1.3.0: its tissue chart does not draw points. Returns the names of the removed elements.
+    A Xenium store needs its shapes: mdvtools places the cells on the image with the transform of cell_circles,
+    cell_boundaries, or nucleus_boundaries.
     """
-    removed = list(sdata.points)
+    removed = [name for name in sdata.points if name not in set(keep_points)]
     for name in removed:
         del sdata.points[name]
     return removed
+
+
+POINTS_BUDGET = 40_000_000     # points that the tissue chart of MDV reads reliably (about 340 MB of parquet)
+
+
+def points_feature_counts(sdata, points_key, feature_key=None):
+    """Transcripts per gene of a points element (a pandas Series). One pass over the feature column (dask)."""
+    pts = sdata.points[points_key]
+    feature_key = feature_key or pts.attrs["spatialdata_attrs"]["feature_key"]
+    return pts[feature_key].astype(str).value_counts().compute()
+
+
+def tile_genes(counts, must=(), prefer=(), budget=POINTS_BUDGET):
+    """The genes whose transcripts stay as gene tiles, within `budget` points.
+
+    The tissue chart reads the points of one element; in some paths it reads the whole file into one browser
+    buffer, and a file of several GB does not load (measured: 323 M points, 2.9 GB, "Array buffer allocation
+    failed"). Thus keep every gene of `must` (the markers of the cell types), then the genes of `prefer` (for
+    example the HVGs), the rarest first, while the total stays within the budget. The expression of every gene
+    stays in the cells ("Gene Scores"). Returns the list of genes.
+    """
+    counts = counts.astype("int64")
+    picked = [g for g in dict.fromkeys(must) if g in counts.index]
+    total = int(counts[picked].sum())
+    if total > budget:
+        raise ValueError(f"the markers alone have {total:,} points, above the budget of {budget:,}: give fewer")
+    for g in counts.reindex([g for g in prefer if g in counts.index and g not in set(picked)]).sort_values().index:
+        if total + int(counts[g]) > budget:
+            break
+        picked.append(g)
+        total += int(counts[g])
+    return picked
+
+
+def keep_genes(sdata, points_key, genes, feature_key=None):
+    """Keep only the points of genes (the var_names of the table): negative-control probes, blank and unassigned
+    codewords, and false codes are QC, not gene tiles. Lazy (dask): the filter runs when the store is written."""
+    from spatialdata.models import PointsModel, get_axes_names
+    from spatialdata.transformations import get_transformation
+    pts = sdata.points[points_key]
+    feature_key = feature_key or pts.attrs["spatialdata_attrs"]["feature_key"]
+    genes = list(genes)
+    kept = pts[pts[feature_key].astype(str).isin(genes)]
+    kept[feature_key] = kept[feature_key].astype(str).astype(pd.CategoricalDtype(genes))
+    kept.attrs.pop("transform", None)              # PointsModel.parse sets the transformations again
+    coords = {a: a for a in get_axes_names(pts)}
+    extra = {"instance_key": pts.attrs["spatialdata_attrs"]["instance_key"]} if "instance_key" in pts.attrs["spatialdata_attrs"] else {}
+    sdata.points[points_key] = PointsModel.parse(kept, coordinates=coords, feature_key=feature_key,
+                                                 transformations=get_transformation(pts, get_all=True), **extra)
 ```
 
 ```python
@@ -410,46 +463,299 @@ def stitch_image(run_root, sign_x, sign_y, work_dir, downsample=1, chunk=1024):
                               transformations={"global": Scale([um_per_px, um_per_px], axes=("y", "x"))})
 
 
-def to_spatialdata(adata, image):
-    """SpatialData of a raw run: the mosaic, one circle per cell (centers and areas in µm), the cell table."""
+def _transcript_files(run_root):
+    tx_dirs = [d for d in glob.glob(os.path.join(run_root, "*"))
+               if glob.glob(os.path.join(d, "FOV*", "*__complete_code_cell_target_call_coord.csv"))]
+    if len(tx_dirs) != 1:
+        raise ValueError(f"expected one decoded run directory with transcript calls, found {tx_dirs}")
+    return {int(re.search(r"FOV(\d+)", p).group(1)): p
+            for p in glob.glob(os.path.join(tx_dirs[0], "FOV*", "*__complete_code_cell_target_call_coord.csv"))}
+
+
+def _fov_points(job):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    path, out, f, x_off, y_off, px_um, genes = job
+    tx = pc.read_csv(path, convert_options=pc.ConvertOptions(include_columns=["CellId", "codeclass", "target", "x", "y"])).to_pandas()
+    tx = tx[tx.codeclass == "Endogenous"]
+    code = pd.Categorical(tx.target, categories=genes).codes
+    if (code < 0).any():
+        raise ValueError(f"FOV {f}: {int((code < 0).sum())} Endogenous transcripts of a gene that is not in `genes`")
+    table = pa.table({
+        "x": ((tx.x.to_numpy() + x_off) * px_um).astype(np.float32),
+        "y": ((tx.y.to_numpy() + y_off) * px_um).astype(np.float32),
+        "feature_name": pa.DictionaryArray.from_arrays(pa.array(code.astype(np.int16)), pa.array(list(genes))),
+        "fov": np.full(len(tx), f, dtype=np.int16),
+        "cell_id_in_fov": tx.CellId.to_numpy().astype(np.int32),
+    })
+    pq.write_table(table, os.path.join(out, f"part.{f:04d}.parquet"), compression="zstd", row_group_size=500_000)
+    return len(tx)
+
+
+def build_points(run_root, sign_x, sign_y, out_dir, genes, processes=4):
+    """The Endogenous transcripts of each FOV as parquet parts in out_dir, in slide µm (the frame of obsm["spatial"]).
+
+    genes: the var_names of build_anndata. Columns: x, y (µm, y down), feature_name (one dictionary for each part),
+    fov, cell_id_in_fov (0 = not in a cell). Negative probes and false codes are QC columns of the cells, not genes.
+    Returns the number of points. Make the points element with points_element(out_dir).
+    """
+    from multiprocessing import Pool
+    cfg, _ = read_config(run_root)
+    px_um = float(cfg["ImPixel_nm"]) / 1000.0
+    pos = fov_positions(run_root, sign_x, sign_y, px_um)
+    files = _transcript_files(run_root)
+    os.makedirs(out_dir, exist_ok=True)
+    jobs = [(files[f], out_dir, f, r.x_offset_px, r.y_offset_px, px_um, list(genes)) for f, r in pos.iterrows() if f in files]
+    json.dump(list(genes), open(os.path.join(out_dir, "genes.json"), "w"))
+    with Pool(processes) as pool:
+        return int(sum(pool.imap_unordered(_fov_points, jobs)))
+
+
+def points_element(parts_dir):
+    """The SpatialData points of build_points (lazy: dask reads the parts when the store is written)."""
+    import dask.dataframe as dd
+    from spatialdata.models import PointsModel
+    from spatialdata.transformations import Identity
+    genes = pd.CategoricalDtype(json.load(open(os.path.join(parts_dir, "genes.json"))))
+    ddf = dd.read_parquet(os.path.join(parts_dir, "part.*.parquet"))
+    ddf["feature_name"] = ddf["feature_name"].astype(genes)      # one dictionary for each part: no scan
+    return PointsModel.parse(ddf, coordinates={"x": "x", "y": "y"}, feature_key="feature_name",
+                             transformations={"global": Identity()})
+
+
+def _fov_polygons(job):
+    import tifffile
+    from shapely.geometry import Polygon
+    from skimage.measure import find_contours, regionprops
+    path, f, x_off, y_off, px_um, ids, tolerance_um = job
+    labels = tifffile.imread(path)
+    want, out = set(int(i) for i in ids), {}
+    for rp in regionprops(labels):
+        if rp.label not in want:
+            continue
+        r0, c0, _, _ = rp.bbox
+        contours = find_contours(np.pad(rp.image, 1).astype(np.uint8), 0.5)
+        if not contours:
+            continue
+        c = max(contours, key=len)            # (row, col) of pixel centers in the padded crop
+        xy = np.column_stack([c[:, 1] + c0 - 0.5 + x_off, c[:, 0] + r0 - 0.5 + y_off]) * px_um
+        poly = Polygon(xy).simplify(tolerance_um, preserve_topology=True)
+        out[rp.label] = poly if poly.is_valid else poly.buffer(0)
+    return f, out
+
+
+def cell_polygons(run_root, sign_x, sign_y, obs, tolerance_um=0.25, processes=4):
+    """The segmented outline of each cell of obs (columns fov, cell_id_in_fov), from CellLabels_Fnnn.tif.
+
+    Returns a list of shapely polygons in slide µm, in the order of obs. A cell with no outline gets a circle of
+    its area (column area_um2) at its center (obsm["spatial"] is not needed: the circle uses x_slide_px, y_slide_px).
+    """
+    from multiprocessing import Pool
+    from shapely.geometry import Point
+    cfg, _ = read_config(run_root)
+    px_um = float(cfg["ImPixel_nm"]) / 1000.0
+    pos = fov_positions(run_root, sign_x, sign_y, px_um)
+    jobs = []
+    for f, ids in obs.groupby("fov")["cell_id_in_fov"]:
+        path = os.path.join(run_root, "CellStatsDir", f"FOV{int(f):03d}", f"CellLabels_F{int(f):03d}.tif")
+        jobs.append((path, int(f), pos.loc[f].x_offset_px, pos.loc[f].y_offset_px, px_um, ids.to_numpy(), tolerance_um))
+    found = {}
+    with Pool(processes) as pool:
+        for f, polys in pool.imap_unordered(_fov_polygons, jobs):
+            found.update({(f, k): v for k, v in polys.items()})
+    out, missing = [], 0
+    for f, i, x, y, a in obs[["fov", "cell_id_in_fov", "x_slide_px", "y_slide_px", "area_um2"]].itertuples(index=False):
+        poly = found.get((int(f), int(i)))
+        if poly is None or poly.is_empty:
+            missing += 1
+            poly = Point(x * px_um, y * px_um).buffer(np.sqrt(a / np.pi))
+        out.append(poly)
+    if missing:
+        print(f"cell_polygons: {missing} cells have no outline in CellLabels; they get a circle")
+    return out
+
+
+def _morphology_fov(run_root, f, stack):
+    """The 2D morphology image of one FOV (channels, y, x), uint16: the Morphology2D file, or the max projection
+    over z of the Morphology3D stack (on the measured run, the 2D file is exactly that projection)."""
+    import tifffile
+    two_d = glob.glob(os.path.join(run_root, "CellStatsDir", "Morphology2D", f"*_F{f:03d}.TIF"))
+    if two_d:
+        return tifffile.imread(two_d[0])
+    planes = sorted(glob.glob(os.path.join(run_root, "CellStatsDir", "Morphology3D", f"FOV{f:03d}", f"*_{stack}_F{f:03d}_Z*.TIF")))
+    if not planes:
+        return None
+    img = tifffile.imread(planes[0])
+    for p in planes[1:]:
+        np.maximum(img, tifffile.imread(p), out=img)
+    return img
+
+
+def morphology_channels(run_root, f=None):
+    """The 3D stack to project and the stain of each channel of the morphology TIFs.
+
+    The channel dictionary of the run can be old. Thus the stain of a channel is measured: the mean of the channel
+    in each cell (CellLabels) is compared with the Mean-<stain> columns of Cell_Stats. Returns
+    {"stack": token of the 3D stack with as many channels as the stains, "names": [stain of channel 0, 1, …],
+    "correlation": [...]}. Raises when a channel does not match one stain clearly (r < 0.9).
+    """
+    import tifffile
+    from scipy.optimize import linear_sum_assignment
+    root = os.path.join(run_root, "CellStatsDir")
+    f = f or int(re.search(r"FOV(\d+)", sorted(glob.glob(os.path.join(root, "FOV[0-9]*")))[0]).group(1))
+    cs = pd.read_csv(glob.glob(os.path.join(root, f"FOV{f:03d}", f"*_Cell_Stats_F{f:03d}.csv"))[0])
+    cs = cs[cs.Area > 0]
+    stains = [c[5:] for c in cs.columns if c.startswith("Mean-")]
+    stacks = {}
+    for p in glob.glob(os.path.join(root, "Morphology3D", f"FOV{f:03d}", f"*_F{f:03d}_Z001.TIF")):
+        token = re.search(r"_([^_]+)_F\d+_Z001\.TIF$", p).group(1)
+        stacks[token] = tifffile.TiffFile(p).series[0].shape[0]
+    stack = next((t for t, n in sorted(stacks.items()) if n == len(stains)), None)
+    if stack is None and not glob.glob(os.path.join(root, "Morphology2D", "*.TIF")):
+        raise ValueError(f"no morphology stack has {len(stains)} channels: {stacks}")
+    img = _morphology_fov(run_root, f, stack).astype(np.float64)
+    labels = tifffile.imread(os.path.join(root, f"FOV{f:03d}", f"CellLabels_F{f:03d}.tif")).ravel()
+    n = np.bincount(labels, minlength=labels.max() + 1)
+    ids = cs.CellId.to_numpy()
+    means = [np.bincount(labels, weights=ch.ravel(), minlength=len(n))[ids] / np.maximum(n[ids], 1) for ch in img]
+    corr = np.array([[np.corrcoef(m, cs[f"Mean-{s}"])[0, 1] for s in stains] for m in means])
+    rows, cols = linear_sum_assignment(-np.nan_to_num(corr))
+    names = [None] * len(means)
+    for r, c in zip(rows, cols):
+        names[r] = stains[c]
+    best = [float(corr[r, c]) for r, c in zip(rows, cols)]
+    if len(rows) != len(means) or min(best) < 0.9:
+        raise ValueError(f"the channels do not match the stains clearly: {dict(zip(stains, np.round(corr, 3).tolist()))}")
+    return {"stack": stack, "names": names, "correlation": best}
+
+
+def _morphology_tile(job):
+    run_root, f, stack, ds = job
+    img = _morphology_fov(run_root, f, stack)
+    if img is None:
+        return f, None
+    c, h, w = img.shape
+    h, w = h - h % ds, w - w % ds
+    tile = img[:, :h, :w].reshape(c, h // ds, ds, w // ds, ds).mean(axis=(2, 4)).astype(np.uint16)
+    return f, tile
+
+
+def stitch_morphology(run_root, sign_x, sign_y, work_dir, channels, downsample=4, processes=4, chunk=1024):
+    """The morphology channels of every FOV on the slide, as one multiscale image (uint16, one channel per stain).
+
+    channels: the result of morphology_channels. Each FOV is averaged over downsample × downsample pixels. The
+    workers read and project the FOVs; this process writes them, so no two writers share a zarr chunk.
+    """
+    import dask.array as da
+    import zarr
+    from multiprocessing import Pool
+    from spatialdata.models import Image2DModel
+    from spatialdata.transformations import Scale
+    cfg, _ = read_config(run_root)
+    px_um = float(cfg["ImPixel_nm"]) / 1000.0
+    fov_px = int(cfg.get("Image Cols", 4256))
+    pos = fov_positions(run_root, sign_x, sign_y, px_um)
+    tile_px = fov_px // downsample
+    H = int(np.ceil(pos.y_offset_px.max() / downsample)) + tile_px
+    W = int(np.ceil(pos.x_offset_px.max() / downsample)) + tile_px
+    os.makedirs(work_dir, exist_ok=True)
+    names = channels["names"]
+    mosaic = zarr.open_array(os.path.join(work_dir, "morphology.zarr"), mode="w", shape=(len(names), H, W),
+                             chunks=(1, chunk, chunk), dtype="uint16", fill_value=0)
+    jobs = [(run_root, int(f), channels["stack"], downsample) for f in pos.index]
+    with Pool(processes) as pool:
+        for f, tile in pool.imap_unordered(_morphology_tile, jobs):
+            if tile is None:
+                continue
+            r = pos.loc[f]
+            y0, x0 = int(round(r.y_offset_px / downsample)), int(round(r.x_offset_px / downsample))
+            mosaic[:, y0:y0 + tile.shape[1], x0:x0 + tile.shape[2]] = tile
+    um_per_px = px_um * downsample
+    return Image2DModel.parse(da.from_zarr(mosaic), dims=("c", "y", "x"), c_coords=names, scale_factors=[2, 2, 2, 2],
+                              transformations={"global": Scale([um_per_px, um_per_px], axes=("y", "x"))})
+
+
+def to_spatialdata(adata, images, polygons=None, points=None):
+    """SpatialData of a raw run: the images, one shape per cell, the transcripts, and the cell table.
+
+    images: {name: image}. The conversion of mdvtools puts the image named first alphabetically under the cells.
+    polygons: the outlines of cell_polygons in the order of adata, or None for one circle of the cell area.
+    points: points_element(...) for the gene tiles, or None.
+    """
+    import geopandas as gpd
     import spatialdata as sd
     from spatialdata.models import ShapesModel, TableModel
     from spatialdata.transformations import Identity
     ids = np.arange(adata.n_obs)
-    radius = np.sqrt(adata.obs["area_um2"].to_numpy() / np.pi)
-    cells = ShapesModel.parse(np.asarray(adata.obsm["spatial"], dtype=float), geometry=0, radius=radius,
-                              index=pd.Index(ids, name="cell"), transformations={"global": Identity()})
+    if polygons is None:
+        radius = np.sqrt(adata.obs["area_um2"].to_numpy() / np.pi)
+        cells = ShapesModel.parse(np.asarray(adata.obsm["spatial"], dtype=float), geometry=0, radius=radius,
+                                  index=pd.Index(ids, name="cell"), transformations={"global": Identity()})
+    else:
+        cells = ShapesModel.parse(gpd.GeoDataFrame(geometry=list(polygons), index=pd.Index(ids, name="cell")),
+                                  transformations={"global": Identity()})
     table = ad.AnnData(X=adata.X, obs=adata.obs.copy(), var=adata.var, obsm=dict(adata.obsm))   # no copy of X
     table.obs["region"] = pd.Categorical(["cells"] * adata.n_obs)
     table.obs["instance_id"] = ids
     table = TableModel.parse(table, region="cells", region_key="region", instance_key="instance_id")
-    return sd.SpatialData(images={"composite": image}, shapes={"cells": cells}, tables={"table": table})
+    return sd.SpatialData(images=dict(images), shapes={"cells": cells}, points={"transcripts": points} if points is not None else {},
+                          tables={"table": table})
 ```
 
 Use it in this order:
 
 ```python
-from cosmx_raw import check_orientation, stitch, build_anndata, stitch_image, to_spatialdata
+from cosmx_raw import (check_orientation, stitch, build_anndata, stitch_image, morphology_channels,
+                       stitch_morphology, cell_polygons, build_points, points_element, to_spatialdata)
 o = check_orientation(RUN)                       # raises when ambiguous
-extent = stitch(RUN, f"{WORK}/slide_composite", o["sign_x"], o["sign_y"])
+sx, sy = o["sign_x"], o["sign_y"]
+extent = stitch(RUN, f"{WORK}/slide_composite", sx, sy)
 # look at slide_composite.jpg: one continuous tissue, no seams that cut structures
-adata = build_anndata(RUN, o["sign_x"], o["sign_y"])
-image = stitch_image(RUN, o["sign_x"], o["sign_y"], f"{WORK}/mosaic", downsample=DOWNSAMPLE)
-sdata = to_spatialdata(adata, image)             # then process adata and put the asset into sdata
+adata = build_anndata(RUN, sx, sy)
+# QC, processing, two-level labels, spatial domains ("Processing for spatial cell data"); keep the QC'd cells
+channels = morphology_channels(RUN)              # the stain of each morphology channel, measured
+images = {"composite": stitch_image(RUN, sx, sy, f"{WORK}/mosaic", downsample=2),
+          "morphology": stitch_morphology(RUN, sx, sy, f"{WORK}/morphology", channels, downsample=4)}
+polygons = cell_polygons(RUN, sx, sy, adata.obs)  # the outlines of the kept cells, in their order
+build_points(RUN, sx, sy, f"{WORK}/points", adata.var_names)
+sdata = to_spatialdata(adata, images, polygons=polygons, points=points_element(f"{WORK}/points"))
+tiles = tile_genes(points_feature_counts(sdata, "transcripts"), must=MARKERS, prefer=HVGS)   # within POINTS_BUDGET
+keep_genes(sdata, "transcripts", tiles)          # mark them in the asset too: var column "gene_tiles" (Yes/No)
+put_table(sdata, asset)
+drop_unused(sdata, keep_points=["transcripts"])  # the gene tiles; [] for MDV 1.3.0
+sdata.write(f"{WORK}/{NAME}.zarr")
+mdv = write_spatial_project(f"{WORK}/{NAME}.zarr", f"{OUT}/{NAME}")   # Morton-sorts the transcripts
+add_views(mdv, "Cell type (putative)", "UMAP", QC, spatial=True, readme_md=README,
+          gene_tiles=TILES, markers=MARKERS, domain="Spatial domain")
 ```
 
-Each transcript file is read in full, so the build is I/O bound (pyarrow reads about 300 MB/s).
-A 400-FOV 6K run takes about 10 minutes on two cores, and its peak is near one copy of the final
-matrix.
+Each transcript file is read in full, so the count build is I/O bound (pyarrow reads about
+300 MB/s). A 400-FOV 6K run takes about 5 minutes on eight cores, and its peak is near one copy
+of the final matrix. These times come from a 392-FOV 6K run on eight cores and 30 GB:
 
-Select `downsample` before the stitch. The image pyramid of the mosaic is about
-3 × FOVs × (FOV px / downsample)² × 4/3 bytes before compression. For 400 FOVs of 4256 px, this
-is about 29 GB at `downsample=1` and about 7 GB at `downsample=2`. Use the smallest value that
-gives 8 GB or less. Then the zip stays below the import limit of MDV. Write the value in the
-README.
+| Step | Time | Output |
+|---|---|---|
+| `build_points` (6 processes) | 5 min | 323 M transcripts, 3.4 GB of parquet; `tile_genes` keeps 40 M of them (1,194 genes) |
+| `cell_polygons` (6 processes) | 1 min | 183,000 polygons, 23 vertices each (median) |
+| `stitch_morphology` from `Morphology3D` (6 processes) | 51 min (it reads about 300 GB of z-planes) | 5 channels at 4× downsampling, 3.0 GB compressed |
+| the Morton sort of `write_spatial_project` | see the README of the project | out of core, 4 GB of memory |
 
-`stitch_image` writes the mosaic one FOV at a time, so its peak memory is about one FOV image.
-Keep `WORK` until the store is written, because the image reads from it.
+The morphology of a FOV is the maximum projection over z of its 3D stack. On the measured run,
+the `Morphology2D` image of a FOV is exactly that projection, but the run has a `Morphology2D`
+image for only 15 of 392 FOVs. A FOV can have two 3D stacks (`N99` and `N100` in the file
+names) with different channel counts. `morphology_channels` selects the stack that has one
+channel for each stain of Cell_Stats.
+
+Select each `downsample` before the stitch. The pyramid of a mosaic is about channels ×
+bytes per value × (slide px / downsample)² × 4/3 before compression, and the slide is larger than
+the FOVs when the FOVs do not fill a rectangle. The image budget of the project is 8 GB for the
+images together, plus the points ("The size of the project", `memory-and-scale.md`). On the
+measured run: the RGB composite at `downsample=2` is 7.8 GB before compression, and the five
+uint16 channels at `downsample=4` are 6.5 GB before compression. Both compress well, because the
+slide outside the tissue is zero. Write the values in the README.
+
+The stitch functions write the mosaic one FOV at a time, so their peak memory is about one FOV
+image for each process. Keep `WORK` until the store is written, because the images read from it.
 
 ## Processing for spatial cell data
 
@@ -460,7 +766,11 @@ Process the cells as single-cell data (single-cell pack), with these differences
   median + 5 × IQR. An oversized segment is a group of merged cells.
 - Select the HVGs (`seurat_v3` on counts) on a subsample of up to 50,000 cells.
 - Do not regress out the FOV. FOV effects are a real QC signal, and the QC view shows them.
-- Label the clusters with tissue markers (`asset-route.md`, `annotate_clusters`).
+- Label the clusters with tissue markers (`asset-route.md`, `annotate_clusters`). Then split the
+  classes that the panel can split (`refine_labels`), and mark the low-quality clusters
+  (`flag_low_quality`, with the FOV column). A cluster of low counts in a few FOVs shows damaged
+  or out-of-focus tissue.
+- Add the spatial domains of the finest labels (`spatial_domains`).
 
 ## The FOV table
 

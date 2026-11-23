@@ -80,7 +80,130 @@ def annotate_clusters(adata, groupby, markers, top_n=50, max_cells_per_group=100
         evidence = "; ".join(f"{t}: {', '.join(hits[t])}" for t in (best, second) if hits[t]) or "no marker in top DE genes"
         calls[c] = (label, evidence, ", ".join(top[:5]))
     return calls
+
+
+def refine_labels(adata, label_key, parent, markers, resolution=0.6, n_top_genes=1000, n_pcs=30, seed=0,
+                  counts_layer="counts", min_score=0.5, **annotate_kw):
+    """Subcluster the cells of one label and annotate the subclusters with finer markers (subtypes, layers).
+
+    The HVGs and the PCA come from the parent cells only: the HVGs of all cells separate the main types, not the
+    subtypes. counts_layer holds the raw counts (seurat_v3). Returns (labels, calls): labels is a Series of the
+    subtype of each parent cell; calls is annotate_clusters of the subclusters. A subcluster with no subtype
+    evidence keeps the parent label. min_score is lower than for the main types: a targeted panel holds few
+    markers of each subtype. Write subtype names without "/" ("L2-3 IT", not "L2/3 IT").
+    """
+    import pandas as pd
+    mask = (adata.obs[label_key] == parent).to_numpy()
+    sub = adata[mask].copy()
+    sc.pp.highly_variable_genes(sub, flavor="seurat_v3", layer=counts_layer, n_top_genes=min(n_top_genes, sub.n_vars - 1))
+    sc.pp.pca(sub, n_comps=n_pcs, mask_var="highly_variable", random_state=seed)
+    sc.pp.neighbors(sub, random_state=seed)
+    sc.tl.leiden(sub, resolution=resolution, flavor="igraph", n_iterations=2, random_state=seed, key_added="sub")
+    calls = annotate_clusters(sub, "sub", markers, seed=seed, min_score=min_score, **annotate_kw)
+    keep = lambda lab: parent if lab == "Unresolved" else lab
+    labels = pd.Series([keep(calls[c][0]) for c in sub.obs["sub"]], index=sub.obs_names)
+    return labels, calls
+
+
+def top_markers(adata, groupby, n=2, max_cells_per_group=1000, seed=0, exclude=(), prefer=None):
+    """{group: [n marker genes]}, for the dot plot of the Markers view and for the gene tiles.
+
+    prefer: {group or a word of the group name: [known markers]}. The known markers that are up in the group (DE
+    score > 0) come first, in DE order, then the top DE genes. Known markers keep the plot readable: the top DE
+    genes of a segmented cell can be genes that spill in from its neighbors. Groups in `exclude` (for example
+    "Low-quality cells") are left out of the result but stay in the comparison."""
+    rng = np.random.default_rng(seed)
+    groups = adata.obs[groupby].astype("category")
+    keep = np.concatenate([rng.choice(np.flatnonzero(groups.values == c), min(max_cells_per_group, int((groups == c).sum())),
+                                      replace=False) for c in groups.cat.categories])
+    sub = adata[np.sort(keep)].copy()
+    sub.obs[groupby] = sub.obs[groupby].astype("category")
+    sc.tl.rank_genes_groups(sub, groupby, method="t-test_overestim_var", n_genes=sub.n_vars)
+    rg = sub.uns["rank_genes_groups"]
+    out, used = {}, set()
+    for c in sub.obs[groupby].cat.categories:
+        if c in exclude:
+            continue
+        score = dict(zip(rg["names"][c], rg["scores"][c]))
+        exact = [g for key, gs in (prefer or {}).items() if key == c for g in gs]          # the markers of the group
+        broad = [g for key, gs in (prefer or {}).items() if key != c and key in str(c).split() for g in gs]   # its class
+        up = lambda gs: sorted({g for g in gs if score.get(g, 0) > 0}, key=lambda g: -score[g])
+        known = up(exact) + up(broad)
+        picks = [g for g in known + list(rg["names"][c]) if g not in used]
+        picks = list(dict.fromkeys(picks))[:n]                    # a gene once, at its first group
+        used.update(picks)
+        out[c] = picks
+    return out
+
+
+def flag_low_quality(adata, cluster_key, label_key, counts_key, fov_key=None, ratio=0.5, fov_share=0.25):
+    """The clusters that are low-quality cells, not a cell type: no marker label ("Unresolved") and a median count
+    below ratio × the median of all cells. Returns {cluster: evidence}. With fov_key, the evidence also gives the
+    FOVs where the cluster is more than fov_share of the cells: damaged or out-of-focus tissue looks like this.
+    """
+    import numpy as np
+    out = {}
+    med_all = float(np.median(adata.obs[counts_key]))
+    for c, obs in adata.obs.groupby(cluster_key, observed=True):
+        med = float(np.median(obs[counts_key]))
+        if (obs[label_key] == "Unresolved").all() and med < ratio * med_all:
+            ev = f"median {med:.0f} transcripts against {med_all:.0f} for all cells; no marker in the top DE genes"
+            if fov_key:
+                share = (adata.obs[cluster_key] == c).groupby(adata.obs[fov_key]).mean()
+                hot = share[share > fov_share].sort_values(ascending=False)
+                if len(hot):
+                    ev += f"; more than {fov_share:.0%} of the cells in FOVs {', '.join(str(i) for i in hot.index[:8])}"
+            out[c] = ev
+    return out
+
+
+def spatial_domains(adata, label_key, n_domains=8, k=30, sample_key=None, min_fraction=0.05, seed=0, names=None):
+    """Spatial domains (niches): k-means of the cell-type composition of the k nearest neighbors of each cell.
+
+    The neighbors come from obsm["spatial"], inside one sample (sample_key) only. A domain gets the name of the
+    cell types that it enriches most (fraction in the domain / fraction in all cells, types above min_fraction of
+    the domain): "Excitatory L2-3 IT, Astrocytes". names: an optional function of the composition of a domain (a
+    Series of fractions) that returns a name from evidence, or None: for example "White matter" for 60 % or more
+    oligodendrocytes. Domains with the same name are one domain: k-means can split one tissue region by density
+    alone. Returns (labels, composition): labels is a categorical of "D01 <name>" (D01 is the largest); composition
+    is the mean neighborhood composition of each domain.
+    """
+    import numpy as np
+    import pandas as pd
+    from sklearn.cluster import MiniBatchKMeans
+    from sklearn.neighbors import NearestNeighbors
+    types = adata.obs[label_key].astype("category")
+    onehot = np.eye(len(types.cat.categories), dtype=np.float32)[types.cat.codes.to_numpy()]
+    comp = np.zeros_like(onehot)
+    groups = adata.obs[sample_key].to_numpy() if sample_key else np.zeros(adata.n_obs)
+    xy = np.asarray(adata.obsm["spatial"], dtype=float)
+    for g in np.unique(groups):
+        idx = np.flatnonzero(groups == g)
+        nn = NearestNeighbors(n_neighbors=min(k, len(idx))).fit(xy[idx])
+        neigh = nn.kneighbors(xy[idx], return_distance=False)
+        comp[idx] = onehot[idx][neigh].mean(axis=1)
+    km = MiniBatchKMeans(n_clusters=n_domains, random_state=seed, n_init=5, batch_size=8192).fit(comp)
+    frame = pd.DataFrame(comp, columns=types.cat.categories)
+    overall = onehot.mean(axis=0)
+    base = {}
+    for d, frac in frame.groupby(km.labels_).mean().iterrows():
+        given = names(frac) if names else None
+        enrich = (frac / np.maximum(overall, 1e-9))[frac >= min_fraction].sort_values(ascending=False)
+        base[d] = given or ", ".join(enrich.index[:2])                # labels can hold "+" (Mixed A + B)
+    merged = pd.Series([base[d] for d in km.labels_])
+    rank = {n: f"D{i:02d} {n}" for i, n in enumerate(merged.value_counts().index, 1)}
+    labels = pd.Categorical(merged.map(rank).to_numpy())
+    composition = frame.groupby(labels, observed=True).mean()
+    return labels, composition.sort_index()
 ```
+
+Annotate in two levels. First the main types (`annotate_clusters`). Then subtypes for each
+type that the panel can split (`refine_labels`): for brain, the layers of the excitatory neurons and
+the classes of the inhibitory neurons. Choose the subtype markers from the cluster's DE genes and
+the tissue literature, restricted to the panel, and write them in the README. A cluster that
+`flag_low_quality` returns gets the label "Low-quality cells": keep it in the project and give the
+evidence, because it shows where the tissue or the segmentation failed. For spatial data, add the
+`spatial_domains` of the finest labels as a column.
 
 Choose the marker lists for the tissue (adult human cortex, PBMC, tumor, …), and keep only the
 genes in the panel. Keep the evidence: it becomes the `clusters` table of the project.
@@ -286,9 +409,16 @@ def write_project(asset, out_dir):
     return mdv
 
 
-def write_spatial_project(sdata_path, out_dir):
-    """The project of one SpatialData store (put_table): its table, images, and regions. Replaces out_dir."""
+def write_spatial_project(sdata_path, out_dir, index_points=True):
+    """The project of one SpatialData store (put_table): its table, images, shapes, points, and regions.
+
+    Replaces out_dir. With index_points, the copy of the store in the project gets Morton-sorted points: then the
+    tissue chart reads the transcripts of a gene in the view (the gene tiles). A version of mdvtools without the
+    browser-store options cannot sort them. Then the function warns, and the points stay as they are: remove them
+    with drop_unused, or use mdvtools from the MDV repository.
+    """
     import dataclasses
+    import warnings
     import spatialdata as sd
     from mdvtools.spatial.conversion import SpatialDataConversionArgs, convert_spatialdata_to_mdv
     os.makedirs(os.path.dirname(os.path.abspath(out_dir)), exist_ok=True)
@@ -297,8 +427,17 @@ def write_spatial_project(sdata_path, out_dir):
         raise ValueError(f"the store has {len(tables)} tables: MDV merges them into one cells table; keep one (put_table)")
     labels = copy.deepcopy(dict(next(iter(tables.values())).uns.get("mdv_labels", {})))
     options = {}
-    if "table_handling" in {f.name for f in dataclasses.fields(SpatialDataConversionArgs)}:
+    fields = {f.name for f in dataclasses.fields(SpatialDataConversionArgs)}
+    if "table_handling" in fields:
         options["table_handling"] = "merge"    # newer mdvtools: one table keeps the names cells and genes
+    points_dir = os.path.join(sdata_path, "points")
+    if index_points and os.path.isdir(points_dir) and [d for d in os.listdir(points_dir) if not d.startswith(".")]:
+        if "browser_store" in fields:
+            from mdvtools.spatial.browser_store import BrowserStoreOptions
+            options["browser_store"] = BrowserStoreOptions(morton_points=True)
+        else:
+            warnings.warn("this mdvtools cannot Morton-sort points: MDV shows no gene tiles. Remove the points "
+                          "(drop_unused) or use mdvtools from the MDV repository")
     with tempfile.TemporaryDirectory() as tmp:
         mdv = convert_spatialdata_to_mdv(SpatialDataConversionArgs(
             spatialdata_path=os.path.abspath(sdata_path), output_folder=os.path.abspath(out_dir), temp_folder=tmp,
@@ -350,21 +489,141 @@ def _cell_radius(mdv, sample=50000, seed=0):
     return float(np.median(dist[dist > 0]) / 2)
 
 
+def _deck_radius(mdv, radius_px, fraction=0.7):
+    """The radius setting of a tissue chart with layers for dots of fraction × radius_px image pixels.
+
+    That chart reads radius × course_radius as 1/10000 of the larger range of x and y, not as pixels (MDV 1.3.0
+    reads pixels). A dot smaller than the cell leaves the outlines and the image visible."""
+    xy = [np.asarray(mdv.get_column(OBS, c), dtype=float) for c in ("x", "y")]
+    span = max(float(np.nanmax(v) - np.nanmin(v)) for v in xy)
+    total = fraction * radius_px * 10000 / span
+    return {"radius": round(total, 2), "course_radius": 1} if total <= 20 else {"radius": round(total / 10, 2), "course_radius": 10}
+
+
+def _label_axis(columns, field):
+    """A y axis wide enough for the longest category of a text column (the default of 40 px cuts the labels)."""
+    longest = max((len(str(v)) for v in columns[field].get("values", [])), default=8)
+    return {"y": {"size": min(280, 16 + 6 * longest), "tickfont": 10, "label": ""}, "x": {"size": 40, "tickfont": 10}}
+
+
 def _region(template, cid, title, color_by, gssize, gsposition, radius):
     chart = copy.deepcopy(template)
-    chart.update(id=cid, title=title, color_by=color_by, color_legend={"display": True}, radius=radius, opacity=0.8,
-                 gssize=gssize, gsposition=gsposition, size=[gssize[0] * 100, gssize[1] * 100])
+    sizes = radius if isinstance(radius, dict) else {"radius": radius}
+    chart.update(id=cid, title=title, color_by=color_by, color_legend={"display": True}, opacity=0.8,
+                 gssize=gssize, gsposition=gsposition, size=[gssize[0] * 100, gssize[1] * 100], **sizes)
     chart.pop("position", None)
     return chart
 
 
-def add_views(mdv, cell_type, embedding, qc, spatial, readme_md):
-    """Replace the views of the conversion with "Tissue" (or "Cells"), "QC", and "About this project".
+LAYERED_CHARTS = ("SpatialDataMdvRegionReact",)   # tissue charts with a layer stack (SpatialData.js viewer)
+
+
+def _store_elements(mdv, region):
+    """{"images"|"shapes"|"points"|"labels": [element names]} of the copy of the store of a region."""
+    store = os.path.join(mdv.dir, "spatial", (region.get("spatial") or {}).get("file", ""))
+    found = {}
+    for kind in ("images", "shapes", "points", "labels"):
+        d = os.path.join(store, kind)
+        found[kind] = sorted(e for e in os.listdir(d) if not e.startswith(".") and os.path.isdir(os.path.join(d, e))) \
+            if os.path.isdir(d) else []
+    return found
+
+
+STAIN_COLORS = {"dapi": [0, 0, 255], "hoechst": [0, 0, 255], "dna": [0, 0, 255], "nuclear": [0, 0, 255],
+                "histone": [255, 255, 255], "gfap": [0, 255, 0], "rrna": [255, 0, 255], "membrane": [255, 255, 0],
+                "cd45": [255, 0, 0], "panck": [0, 255, 0], "cd68": [255, 0, 255]}
+NUCLEAR = {"dapi", "hoechst", "dna", "nuclear"}
+STRUCTURAL = {"histone", "rrna", "membrane", "cd298_b2m", "b2m"}
+
+
+def _shown_channels(names, n=3):
+    """The channels that the image layer shows first: the nuclear stain, then the cell-type stains, then the
+    structural stains, and a channel with only a letter as its name last (it has no target)."""
+    rank = lambda i: (0 if names[i].lower() in NUCLEAR else 2 if names[i].lower() in STRUCTURAL
+                      else 3 if len(names[i]) <= 1 else 1, i)
+    return sorted(range(len(names)), key=rank)[:n]
+OTHER_COLORS = [[255, 0, 0], [0, 255, 0], [255, 255, 0], [255, 0, 255], [0, 255, 255], [255, 128, 0]]
+
+
+def _image_info(mdv, region, name):
+    """(µm per pixel in the coordinate system of the region, the channel config of the image layer).
+
+    An RGB image (channels r, g, b) shows in its own colors. A fluorescence image shows its first three channels,
+    each in the color of its stain, with contrast limits from the 0.5 and 99.8 percentiles of its coarsest level."""
+    import spatialdata as sd
+    from spatialdata.transformations import get_transformation
+    store = os.path.join(mdv.dir, "spatial", (region.get("spatial") or {}).get("file", ""))
+    image = sd.read_zarr(store, selection=("images",)).images[name]
+    system = (region.get("spatial") or {}).get("coordinate_system", "global")
+    level0 = image["scale0"].image if hasattr(image, "children") else image
+    matrix = get_transformation(level0, system).to_affine_matrix(input_axes=("x", "y"), output_axes=("x", "y"))
+    um_per_px = float(abs(matrix[0, 0]))
+    coarsest = image[sorted(image.children)[-1]].image if hasattr(image, "children") else image
+    names = [str(c) for c in coarsest.coords["c"].values]
+    if [n.lower() for n in names] == ["r", "g", "b"]:
+        top = 255 if coarsest.dtype == np.uint8 else float(np.iinfo(coarsest.dtype).max) if coarsest.dtype.kind in "ui" else 1.0
+        return um_per_px, {"colors": [[255, 0, 0], [0, 255, 0], [0, 0, 255]], "contrastLimits": [[0, top]] * 3,
+                           "channelsVisible": [True] * 3, "selections": [{"c": i} for i in range(3)]}
+    data = np.asarray(coarsest.values, dtype=float)
+    shown = _shown_channels(names)
+    others = iter(OTHER_COLORS)
+    colors, limits = [], []
+    for i in shown:
+        values = data[i][data[i] > 0]
+        lo, hi = (np.percentile(values, [0.5, 99.8]) if values.size else (0.0, 1.0))
+        limits.append([float(lo), float(max(hi, lo + 1))])
+        colors.append(STAIN_COLORS.get(names[i].lower()) or next(others))
+    return um_per_px, {"colors": colors, "contrastLimits": limits, "channelsVisible": [True] * len(shown),
+                       "selections": [{"c": i} for i in shown]}
+
+
+def _render_stack(elements, main_image, gene_tiles, channels=None, show_tiles=True):
+    """The layers of the tissue chart: the main image (the other images hidden), the cell outlines, and the
+    transcripts of gene_tiles. MDV adds its own overlays (the cells, colored by the chart) when it loads the stack."""
+    entries, n = [], 0
+    def entry(kind, key, visible, props):
+        nonlocal n
+        n += 1
+        entries.append({"kind": "spatial", "id": f"spatialdata-{kind}-{key}-#mdv{n:02d}", "visible": visible,
+                        "source": {"elementType": kind, "elementKey": key}, "props": props})
+    images = elements["images"]
+    for img in ([main_image] if main_image in images else []) + [i for i in images if i != main_image]:
+        props = {"channels": (channels or {})[img]} if (channels or {}).get(img) else {}
+        entry("image", img, img == main_image or main_image not in images and img == images[0], props)
+    for key in elements["shapes"]:
+        # a faint fill and a 1-pixel edge: the edge alone does not draw in every renderer (measured), the fill does
+        entry("shapes", key, True, {"fillColor": [255, 255, 255, 30], "strokeColor": [255, 255, 255, 200],
+                                    "strokeWidth": 1, "strokeWidthUnits": "pixels", "strokeWidthMinPixels": 1,
+                                    "strokeWidthMaxPixels": 2})
+    for key in elements["points"]:
+        entry("points", key, bool(gene_tiles) and show_tiles, {"pointSize": 2, "featureNames": list(gene_tiles)})
+    return {"schemaVersion": 2, "entries": entries}
+
+
+def gene_field(mdv, gene):
+    """The field of the expression of one gene in the cells (the first expression set, "Gene Scores")."""
+    link = mdv.get_datasource_metadata(OBS).get("links", {}).get(VAR, {}).get("rows_as_columns", {})
+    sg = next(iter(link.get("subgroups", {})), None)
+    if sg is None:
+        raise ValueError("the cells have no expression link to the genes")
+    names = [str(g) for g in mdv.get_column(VAR, link.get("name_column", "name"))]
+    if gene not in names:
+        raise ValueError(f"gene {gene!r} is not in the genes of the project")
+    return f"{sg}|{gene}({sg})|{names.index(gene)}"
+
+
+def add_views(mdv, cell_type, embedding, qc, spatial, readme_md, gene_tiles=(), markers=(), domain=None):
+    """Replace the views of the conversion with "Tissue" (or "Cells"), "Markers", "Domains", "QC", and "About this
+    project".
 
     cell_type: the cell-type column. embedding: the obsm key of the UMAP ("UMAP" gives UMAP_1, UMAP_2).
     qc: {role: column}. "counts" (transcripts or UMIs per cell) is necessary. "sample" (text) groups a violin.
         Each other numeric column gets a histogram. A column is its field or its label.
     readme_md: the README of the project. It is the only text of "About this project".
+    gene_tiles: up to 8 genes whose transcripts the Tissue view shows, from the points of the store (a tissue
+        chart with a layer stack only). The user selects other genes in the layer panel.
+    markers: genes for a "Markers" view: a dot plot of the cell types by the genes. Give the top markers of each type.
+    domain: a column of spatial domains (spatial_domains) for a "Domains" view.
     """
     columns = {c["field"]: c for c in mdv.get_datasource_metadata(OBS)["columns"]}
     if "counts" not in qc:
@@ -382,6 +641,31 @@ def add_views(mdv, cell_type, embedding, qc, spatial, readme_md):
         if template is None:
             raise ValueError("the conversion made no tissue chart: the store has no image region for the table")
         radius = _cell_radius(mdv)
+        if template.get("type") in LAYERED_CHARTS:
+            region = regions[template["region"]]
+            main_image = os.path.basename((region.get("viv_image") or {}).get("file", ""))
+            elements = _store_elements(mdv, region)
+            info = {img: _image_info(mdv, region, img) for img in elements["images"]}
+            # The cells' x and y are pixels of the main image, but this chart draws in the coordinate system of the
+            # store: regions.scale (µm per pixel of the main image) puts the cells on the image.
+            if main_image in info:
+                meta = mdv.get_datasource_metadata(OBS)
+                meta["regions"]["scale"] = info[main_image][0]
+                mdv.set_datasource_metadata(meta)
+            radius = _deck_radius(mdv, radius)
+            channels = {img: c for img, (_, c) in info.items()}
+            # At the zoom of the slide, millions of transcripts cover the cells: the Tissue view selects the genes
+            # but hides the layer, and the "Gene tiles" view shows it over faded cells.
+            tiles = list(gene_tiles)[:8]
+            tiles_chart = dict(copy.deepcopy(template), renderStack=_render_stack(elements, main_image, tiles, channels))
+            template = dict(copy.deepcopy(template),
+                            renderStack=_render_stack(elements, main_image, tiles, channels, show_tiles=False))
+            plain = dict(copy.deepcopy(template), renderStack=_render_stack(elements, main_image, [], channels))
+        else:
+            if gene_tiles:
+                print("add_views: this tissue chart has no layer stack: the gene tiles are not shown")
+            plain = template
+            tiles_chart = None
 
     first = "Tissue" if spatial else "Cells"
     if spatial:
@@ -404,7 +688,7 @@ def add_views(mdv, cell_type, embedding, qc, spatial, readme_md):
         n += 1
     row = 3 * ((n + 2) // 3)
     if spatial:
-        qc_charts.append(_region(template, "qc90", f"Tissue by {name(qc['counts'])}", qc["counts"], [8, 6], [0, row], radius))
+        qc_charts.append(_region(plain, "qc90", f"Tissue by {name(qc['counts'])}", qc["counts"], [8, 6], [0, row], radius))
     if "sample" in qc:
         qc_charts.append(_chart("qc91", "violin_plot", f"{name(qc['counts'])} by {name(qc['sample'])}",
                                 [qc["sample"], qc["counts"]], [4, 6], [8 if spatial else 0, row]))
@@ -412,13 +696,34 @@ def add_views(mdv, cell_type, embedding, qc, spatial, readme_md):
     text = readme_md.strip()
     about = _chart("abo01", "text_box_chart", "About this project", [], [12, 8], [0, 0], text=text)
     grid = {"layout": "gridstack", "panelWidth": 70}
-    mdv.views = {
-        first: {"initialCharts": {OBS: main, VAR: genes},
-                "dataSources": {OBS: grid, VAR: {"layout": "absolute", "panelWidth": 30}}},
-        "QC": {"initialCharts": {OBS: qc_charts}, "dataSources": {OBS: dict(grid, panelWidth=100)}},
-        "About this project": {"initialCharts": {OBS: [about]}, "dataSources": {OBS: dict(grid, panelWidth=100)}},
-    }
-    state["all_views"] = [first, "QC", "About this project"]
+    full = dict(grid, panelWidth=100)
+    views = {first: {"initialCharts": {OBS: main, VAR: genes},
+                     "dataSources": {OBS: grid, VAR: {"layout": "absolute", "panelWidth": 30}}}}
+    if spatial and gene_tiles and tiles_chart is not None:
+        gt = _region(tiles_chart, "gtl01", f"Gene tiles: {', '.join(list(gene_tiles)[:8])}", cell_type, [12, 9], [0, 0], radius)
+        gt["opacity"] = 0.25          # the cells stay as faded context under the transcripts
+        views["Gene tiles"] = {"initialCharts": {OBS: [gt], VAR: [dict(copy.deepcopy(c), id=f"gtg{i:02d}") for i, c in enumerate(GENE_CHARTS, 1)]},
+                               "dataSources": {OBS: grid, VAR: {"layout": "absolute", "panelWidth": 30}}}
+    if markers:
+        fields = [gene_field(mdv, g) for g in dict.fromkeys(markers)]
+        width = 7 if spatial else 12
+        mk = [_chart("mrk01", "dot_plot", f"Markers by {name(cell_type)}", [cell_type, *fields], [width, 7], [0, 0],
+                     axis=_label_axis(columns, cell_type))]
+        if spatial:
+            mk.append(_region(plain, "mrk02", f"Tissue by {markers[0]}", fields[0], [5, 7], [7, 0], radius))
+        views["Markers"] = {"initialCharts": {OBS: mk}, "dataSources": {OBS: full}}
+    if domain:
+        domain = _field(columns, domain)
+        dm = [_chart("dom02", "stacked_row_chart", f"{name(cell_type)} by {name(domain)}", [domain, cell_type], [4, 6], [8, 0],
+                     axis=_label_axis(columns, domain), color_legend={"display": True}),
+              _chart("dom03", "row_chart", name(domain), [domain], [4, 4], [8, 6])]
+        if spatial:
+            dm.insert(0, _region(plain, "dom01", name(domain), domain, [8, 8], [0, 0], radius))
+        views["Domains"] = {"initialCharts": {OBS: dm}, "dataSources": {OBS: full}}
+    views["QC"] = {"initialCharts": {OBS: qc_charts}, "dataSources": {OBS: full}}
+    views["About this project"] = {"initialCharts": {OBS: [about]}, "dataSources": {OBS: full}}
+    mdv.views = views
+    state["all_views"] = list(views)
     state["initial_view"] = first
     mdv.state = state
     with open(os.path.join(mdv.dir, "README.md"), "w", encoding="utf-8") as f:
@@ -478,13 +783,20 @@ use `write_spatial_project` in place of `write_project` (`spatial-transcriptomic
 
 | View | Charts |
 |---|---|
-| "Tissue" (spatial) | the cells on the image, colored by the cell type, with a legend. The UMAP in the same colors. A row chart of the cell types. The gene table and the gene finder |
+| "Tissue" (spatial) | the cells on the image, colored by the cell type, with a legend. The UMAP in the same colors. A row chart of the cell types. The gene table and the gene finder. On a tissue chart with layers (newer MDV): the main image, the other images hidden, the cell outlines, and the gene tiles of `gene_tiles` |
+| "Gene tiles" (spatial, with `gene_tiles`, newer MDV) | the tissue with the transcripts of the `gene_tiles` genes over faded cells. The Tissue view selects the same genes but hides the layer: at the zoom of the slide, millions of transcripts cover the cells |
+| "Markers" | a dot plot of the cell types by the `markers` genes. For spatial data, the tissue colored by the first marker |
+| "Domains" (spatial, with `domain`) | the tissue colored by the domain. A stacked row chart of the cell types in each domain. A row chart of the domains |
 | "Cells" (not spatial) | the UMAP colored by the cell type, with a legend. A row chart of the cell types. The gene table and the gene finder |
 | "QC" | a histogram of each numeric QC column. For spatial data, the cells on the image colored by the counts. A violin of the counts for each sample |
 | "About this project" | the README |
 
 A click on a cell type in the row chart filters the other charts of the view. The user can change
 and save the views in MDV.
+
+Give `gene_tiles` one marker of each main cell class, a maximum of 8 (`top_markers` of the classes
+with `prefer` set to the known markers). The user selects other genes in the layer panel of the
+tissue chart. MDV loads the transcripts of a selected gene on demand.
 
 ## 5. Context tables
 
@@ -494,6 +806,9 @@ Small tables that answer "can I trust this?" go into the project as more datasou
 | Table | One row is | Columns |
 |---|---|---|
 | `clusters` | a cluster | label, cells, top DE genes, marker evidence |
+| `cell_types` | a cell type | class, cells, the marker genes of the dot plot |
+| `subclusters` | a subcluster of `refine_labels` | the subtype call, top DE genes, marker evidence |
+| `domains` | a spatial domain | cells, the main cell types of its neighborhoods |
 | `samples` | a sample, a slide, or a donor | design factors, cells before and after QC, median counts |
 | `fovs` (CosMx and other FOV platforms) | a field of view | the FOV center in slide µm, cells, cells after QC, median transcripts per cell, fraction of transcripts in cells, negative-probe transcripts |
 

@@ -2,7 +2,7 @@
 name: mdv-preparation
 description: Read before you make an MDV (Multi-Dimensional Viewer) project from single-cell, scATAC, spatial transcriptomics, or spatial proteomics data.
 metadata:
-  version: 2.0.0
+  version: 2.1.0
   tags: [mdv, multi-dimensional-viewer, visualization, mdv-project, anndata, spatialdata, h5ad, zarr, cosmx, xenium, visium, merfish, codex, imc, mibi]
   category: methods
 ---
@@ -22,6 +22,21 @@ An asset is **MDV-ready** when:
 
 A project is ready for delivery when its asset is MDV-ready and the project check in
 `references/validation.md` reports zero errors.
+
+A project is **complete** when it shows all that the data can give. For each modality, it has:
+
+| Content | Single cell | Spatial (imaging platform: Xenium, CosMx, MERSCOPE) | Spatial (spots: Visium) |
+|---|---|---|---|
+| Cell types at two levels: classes, and subtypes where the panel can split them (`refine_labels`) | yes | yes | yes |
+| Low-quality clusters marked with evidence (`flag_low_quality`) | yes | yes | yes |
+| A Markers view: dot plot of the cell types by their markers (`top_markers`) | yes | yes | yes |
+| Spatial domains and a Domains view (`spatial_domains`) | — | yes | yes |
+| The tissue image; for a multichannel morphology, the channels with their stain names | — | yes | yes |
+| The real cell outlines (polygons or labels), not only circles | — | yes | spots |
+| The transcripts as gene tiles: Morton-sorted points, with a few markers selected | — | yes | — |
+
+Some content needs a newer MDV than 1.3.0 (the gene tiles, the layers of the tissue chart). Then make it if the
+mdvtools of the step supports it (`write_spatial_project`, `add_views`), and write in the README what each MDV shows.
 
 ## Deliverable
 
@@ -52,7 +67,8 @@ Input?
 │   ├── Xenium                     → spatialdata_io.xenium
 │   ├── Visium / Visium HD         → spatialdata_io.visium / visium_hd; one project for each bin size
 │   ├── CosMx flat-file export     → spatialdata_io.cosmx
-│   ├── CosMx raw instrument run   → cosmx_raw.py: FOV orientation check (mandatory), stitched image
+│   ├── CosMx raw instrument run   → cosmx_raw.py: FOV orientation check (mandatory), stitched images,
+│   │                                outlines from CellLabels, transcripts as points
 │   └── MERFISH / MERSCOPE         → spatialdata_io.merscope
 └── Spatial proteomics             → spatial-proteomics.md → spatial project with the images
     (CODEX/PhenoCycler, IMC, MIBI)   markers as features, arcsinh intensities
@@ -69,6 +85,7 @@ Each branch ends in a project. If a spatial input has no image, make the project
 - **Safe fields.** A field uses only letters, digits, `_`, `.`, and `-`, and is unique without
   regard to case. Do not use a field that mdvtools writes (`x`, `y`, `mdv_cell_id`, …).
 - **Readable categories.** Number the clusters by size and add the label: `C01 Oligodendrocytes`.
+  Do not use `/` in a label: write `L2-3 IT`, not `L2/3 IT`.
   Map codes, float IDs (`"1.0"`), and booleans to words. Give each sample a name, not only its
   barcode. Mark an inferred label as putative, and keep its evidence in a context table.
 - **Grouping columns stay `text`.** Use a maximum of 256 categories. Above 256, MDV makes the
@@ -105,8 +122,18 @@ The gotchas of this environment come first.
   the project files under more than one folder. `zip_project` writes the correct layout. A
   production build of MDV 1.3.0 hides the import. Then the operator unzips the zip into the
   projects directory of the server (`asset-route.md`, "The way into MDV").
-- **The transcript points in the store.** mdvtools copies the full store into the project, and
-  the points can be larger than the images. `drop_unused` removes them.
+- **Transcripts that the project cannot use.** The transcripts are the gene tiles of a newer MDV,
+  but only as Morton-sorted points. `write_spatial_project` sorts them when the mdvtools can.
+  For MDV 1.3.0, or when the size budget does not allow them, `drop_unused` removes them. Keep
+  only the points of genes (`keep_genes`): control probes and codewords are QC, not genes.
+  Keep 40 M points or fewer (`tile_genes`): the browser does not load a points file of
+  several GB, and nothing reports it before a user opens the project.
+- **Cells off the image in a newer MDV.** Its tissue chart draws in the coordinate system of
+  the store, but the x and y of the cells are pixels of the main image. If the image has a µm
+  scale and `regions.scale` stays 1.0, the cells are at the wrong scale, and only the project
+  check reports it. `add_views` sets `regions.scale` to the µm per pixel of the main image.
+- **The channel dictionary of a raw run.** The dictionary of a CosMx run can name another kit.
+  `morphology_channels` measures the stain of each channel against the per-cell intensities.
 - **A Xenium store without its shapes.** mdvtools places the cells on the image with the
   transform of a Xenium shape. Without one, it reads µm as image pixels, the cells do not sit on
   the image, and no check reports an error. `drop_unused` keeps the shapes and the labels.

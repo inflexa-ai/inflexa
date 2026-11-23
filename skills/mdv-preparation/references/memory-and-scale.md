@@ -132,7 +132,7 @@ On two cores, 183,000 cells: PCA about 1.5 min, UMAP about 4 min, Leiden under 3
 | Part | Size |
 |---|---|
 | `datafile.h5` | about 8 bytes for each non-zero of X, not compressed, plus the same again for each layer |
-| `spatial/` | the copy of the store. An image pyramid is about 4/3 × the bytes of the full-resolution image, before compression |
+| `spatial/` | the copy of the store. An image pyramid is about 4/3 × the bytes of the full-resolution image, before compression. Morton-sorted points are about 8 bytes for each transcript (zstd parquet; 2.7 GB for 323 M transcripts) |
 | the zip | the project folder, compressed. Images do not get smaller in the zip, because they are compressed already |
 
 A spatial project is on disk three times before delivery: the work store, the copy in the
