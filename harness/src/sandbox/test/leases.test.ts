@@ -32,7 +32,7 @@ import { presentAt } from "../../lib/present.js";
 import { tailWritePrefix } from "../../workspace/paths.js";
 import type { SandboxClient } from "../client.js";
 import { leaseRecordTail } from "../lease-names.js";
-import { createSandboxLeases, type BoundLease } from "../leases.js";
+import { createSandboxLeases, type BoundLease, type LeaseBinding } from "../leases.js";
 import type { ExecRequest, ExecResult, SandboxRef, SandboxSpec } from "../types.js";
 
 if (DBOS.isInitialized()) {
@@ -116,7 +116,10 @@ const leases = createSandboxLeases({
 
 type Case = (lease: BoundLease) => Promise<unknown>;
 
-const cases = new Map<string, { readonly run: Case; readonly analysisId: string; readonly parts: PausePart[] }>();
+const cases = new Map<
+    string,
+    { readonly run: Case; readonly analysisId: string; readonly parts: PausePart[]; readonly onSandboxWait?: LeaseBinding["onSandboxWait"] }
+>();
 
 const RUN_ID = "run-leases";
 
@@ -142,16 +145,21 @@ const consumer = DBOS.registerWorkflow(
                 current.parts.push(part);
                 return Promise.resolve();
             },
+            onSandboxWait: current.onSandboxWait,
         });
         return current.run(lease);
     },
     { name: "lease-consumer" },
 );
 
-function start(analysisId: string, run: Case): { readonly caseId: string; readonly parts: PausePart[]; readonly result: Promise<unknown> } {
+function start(
+    analysisId: string,
+    run: Case,
+    onSandboxWait?: LeaseBinding["onSandboxWait"],
+): { readonly caseId: string; readonly parts: PausePart[]; readonly result: Promise<unknown> } {
     const caseId = rig.nextWorkflowId("lease-consumer-");
     const parts: PausePart[] = [];
-    cases.set(caseId, { run, analysisId, parts });
+    cases.set(caseId, { run, analysisId, parts, onSandboxWait });
     const result = DBOS.startWorkflow(consumer, { workflowID: caseId })(caseId).then((handle) => handle.getResult());
     return { caseId, parts, result };
 }
@@ -405,28 +413,102 @@ describe("the machine of a lease", () => {
         expect(backend.torn).toContain(presentAt(backend.spawned, 0).sandboxId);
     }, 60_000);
 
-    it("removes the machine of an idle lease and keeps the grant, and the next exec gets a new machine", async () => {
+    it("moves an idle lease to idle, and the next exec waits for the grant and a new machine", async () => {
         backend.runningExecs = 0;
-        const run = start(rig.nextWorkflowId("an-"), async (lease) => {
-            await lease.acquire(SMALL);
-            await DBOS.recv<string>("go", 60);
-            const exec = (await lease.exec({ command: ["ls"] }, () => {}))._unsafeUnwrap();
-            await lease.release();
-            return exec;
-        });
+        const waits: string[] = [];
+        const run = start(
+            rig.nextWorkflowId("an-"),
+            async (lease) => {
+                await lease.acquire(SMALL);
+                await DBOS.recv<string>("go", 60);
+                const exec = (await lease.exec({ command: ["ls"] }, () => {}))._unsafeUnwrap();
+                await lease.release();
+                return exec;
+            },
+            (wait) => {
+                waits.push(wait.state === "waiting" ? `waiting ${wait.size.cpu}/${wait.size.memoryGb}` : "ready");
+                return Promise.resolve();
+            },
+        );
         const lease = await until(async () => {
             const row = await leaseOf(run.caseId);
             return row?.state === "granted" && row.machine !== undefined ? row : undefined;
         }, "the first machine");
 
-        await until(async () => ((await leaseRow(lease.leaseWorkflowId))?.machine === undefined ? true : undefined), "the idle removal");
-        expect((await leaseRow(lease.leaseWorkflowId))?.state).toBe("granted");
+        await until(async () => ((await leaseRow(lease.leaseWorkflowId))?.state === "idle" ? true : undefined), "the idle removal");
+        expect((await leaseRow(lease.leaseWorkflowId))?.machine).toBeUndefined();
         expect(backend.torn).toEqual([presentAt(backend.spawned, 0).sandboxId]);
 
         backend.runningExecs = 1;
         await DBOS.send(run.caseId, "go", "go");
         expect(await run.result).toMatchObject({ exitCode: 0 });
         expect(backend.spawned).toHaveLength(2);
+        expect(waits).toEqual(["waiting 1/2", "ready"]);
+    }, 60_000);
+
+    it("gives the capacity of an idle lease to the next request, and the idle lease gets it back first", async () => {
+        backend.runningExecs = 0;
+        const FULL = { cpu: 4, memoryGb: 8 };
+        const idle = start(rig.nextWorkflowId("an-"), async (lease) => {
+            await lease.acquire(FULL);
+            await DBOS.recv<string>("go", 60);
+            const exec = (await lease.exec({ command: ["ls"] }, () => {}))._unsafeUnwrap();
+            await lease.release();
+            return exec;
+        });
+        const idleLease = await until(async () => {
+            const row = await leaseOf(idle.caseId);
+            return row?.state === "idle" ? row : undefined;
+        }, "the idle removal of the first lease");
+        // A busy machine stays, thus the second lease holds its grant.
+        backend.runningExecs = 1;
+
+        const holder = start(rig.nextWorkflowId("an-"), async (lease) => {
+            const outcome = await lease.acquire(FULL);
+            await DBOS.recv<string>("go", 60);
+            await lease.release();
+            return outcome;
+        });
+        await until(async () => ((await leaseOf(holder.caseId))?.state === "granted" ? true : undefined), "the grant of the second lease");
+
+        // The exec of the idle lease waits: the second lease holds the whole budget.
+        await DBOS.send(idle.caseId, "go", "go");
+        await until(async () => ((await leaseRow(idleLease.leaseWorkflowId))?.state === "requested" ? true : undefined), "the wake of the idle lease");
+        const third = start(rig.nextWorkflowId("an-"), async (lease) => {
+            const outcome = await lease.acquire(SMALL);
+            await lease.release();
+            return outcome;
+        });
+        await until(async () => leaseOf(third.caseId), "the request of the third lease");
+        await sleep(1_500);
+        expect((await leaseRow(idleLease.leaseWorkflowId))?.state).toBe("requested");
+
+        await DBOS.send(holder.caseId, "go", "go");
+        expect(await holder.result).toEqual({ kind: "granted", size: FULL });
+        expect(await idle.result).toMatchObject({ exitCode: 0 });
+        expect(await third.result).toEqual({ kind: "granted", size: SMALL });
+        // The idle lease kept its place at the front: its new machine starts before the machine of the later request.
+        const owners = backend.spawned.map((entry) => entry.spec.ownerWorkflowId);
+        const thirdLease = presentAt(owners, owners.length - 1);
+        expect(owners.lastIndexOf(idleLease.leaseWorkflowId)).toBeLessThan(owners.indexOf(thirdLease));
+    }, 60_000);
+
+    it("releases an idle lease", async () => {
+        backend.runningExecs = 0;
+        const run = start(rig.nextWorkflowId("an-"), async (lease) => {
+            await lease.acquire(SMALL);
+            await DBOS.recv<string>("go", 60);
+            await lease.release();
+            return "released";
+        });
+        const lease = await until(async () => {
+            const row = await leaseOf(run.caseId);
+            return row?.state === "idle" ? row : undefined;
+        }, "the idle removal");
+
+        await DBOS.send(run.caseId, "go", "go");
+        expect(await run.result).toBe("released");
+        expect((await leaseRow(lease.leaseWorkflowId))?.state).toBe("released");
     }, 60_000);
 
     it("releases the lease of an owner that ended without a release", async () => {

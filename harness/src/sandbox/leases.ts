@@ -9,7 +9,8 @@
  *
  * A machine of a lease is replaceable. The state of a lease is its files, the exec records in its records
  * directory, and the checkpoints of its consumer. Thus the module removes the machine of an idle lease, and the
- * next exec gets a new one.
+ * lease gives back its grant: a paused consumer holds no capacity. The next exec asks for the grant again at the
+ * front of the queue, and then it gets a new machine.
  */
 
 import { rm } from "node:fs/promises";
@@ -45,6 +46,7 @@ import {
     setMachine,
     touchLease,
     tryGrant,
+    wakeIdleLease,
     type LeaseRecord,
 } from "../state/sandbox-leases.js";
 import type { PersistedSandboxRef } from "../state/schema.js";
@@ -110,7 +112,17 @@ export type LeaseBinding = {
     readonly spawn?: LeaseSpawnSpec;
     /** Writes a part to the stream of the consumer. A wait mirrors the pause of the lease workflow through it. */
     readonly emit?: (part: PausePart) => Promise<void>;
+    /**
+     * Shows an exec that waits for a machine, for example after the idle removal: `waiting` before the wait, with
+     * the size of the lease, and `ready` when the machine runs. The agent sees no change but the time of its call.
+     */
+    readonly onSandboxWait?: (wait: SandboxWait) => Promise<void>;
 };
+
+export type SandboxWait = { readonly state: "waiting"; readonly size: ResourceSpec } | { readonly state: "ready" };
+
+/** The callbacks of the waits of an exec. */
+type ExecWaits = Pick<LeaseBinding, "emit" | "onSandboxWait">;
 
 export type AcquireOutcome =
     | { readonly kind: "granted"; readonly size: ResourceSpec }
@@ -136,7 +148,7 @@ export type SandboxLeases = {
      * work calls it, thus the machines go now and not at the next tick of each lease workflow.
      */
     releaseOwnedBy(ownerWorkflowIds: readonly string[]): Promise<void>;
-    exec(leaseKey: string, request: ExecRequest, emit: ExecEmit, mirror?: LeaseBinding["emit"]): Promise<Result<ExecResult, NoLease>>;
+    exec(leaseKey: string, request: ExecRequest, emit: ExecEmit, waits?: ExecWaits): Promise<Result<ExecResult, NoLease>>;
     bind(binding: LeaseBinding): BoundLease;
 };
 
@@ -362,41 +374,50 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
             }
         };
 
+        /**
+         * Wait for the grant of the row: the first grant, and the grant again after the idle removal. A message that
+         * is not a release only makes the loop ask again. `released`: the row ended before the grant. `ended`: a
+         * release or the end of the owner, and the lease must end with the reason.
+         */
+        const awaitGrant = async (): Promise<
+            | { readonly kind: "granted"; readonly size: ResourceSpec; readonly atMs: number }
+            | { readonly kind: "released" }
+            | { readonly kind: "ended"; readonly reason: string }
+        > => {
+            for (;;) {
+                const grant = await DBOS.runStep(
+                    async () => ({ outcome: unwrapOrThrow(await tryGrant(pool, id, config.resourcePolicy?.budget)), atMs: Date.now() }),
+                    { name: "lease.grant" },
+                );
+                if (grant.outcome.kind === "granted") {
+                    // A free capacity can admit the next request too.
+                    await wakeNext();
+                    return { kind: "granted", size: grant.outcome.size, atMs: grant.atMs };
+                }
+                if (grant.outcome.kind === "released") return { kind: "released" };
+                const message = await DBOS.recv<LeaseMessage>(LEASE_TOPIC, tickSeconds);
+                if (message?.kind === "release") return { kind: "ended", reason: message.reason };
+                if (await ownerEnded()) return { kind: "ended", reason: "owner-ended" };
+            }
+        };
+
         // 1. The grant.
-        let size: ResourceSpec | undefined;
-        let grantedAtMs = 0;
-        while (size === undefined) {
-            const grant = await DBOS.runStep(
-                async () => ({ outcome: unwrapOrThrow(await tryGrant(pool, id, config.resourcePolicy?.budget)), atMs: Date.now() }),
-                { name: "lease.grant" },
-            );
-            if (grant.outcome.kind === "granted") {
-                size = grant.outcome.size;
-                grantedAtMs = grant.atMs;
-                break;
-            }
-            if (grant.outcome.kind === "released") {
-                await DBOS.setEvent(GRANTED_EVENT, { kind: "refused", reason: "released" } satisfies AcquireOutcome);
-                return;
-            }
-            const message = await DBOS.recv<LeaseMessage>(LEASE_TOPIC, tickSeconds);
-            if (message?.kind === "release" || (await ownerEnded())) {
-                await DBOS.setEvent(GRANTED_EVENT, { kind: "refused", reason: "released" } satisfies AcquireOutcome);
-                await end(message?.kind === "release" ? message.reason : "owner-ended");
-                return;
-            }
+        const first = await awaitGrant();
+        if (first.kind !== "granted") {
+            await DBOS.setEvent(GRANTED_EVENT, { kind: "refused", reason: "released" } satisfies AcquireOutcome);
+            if (first.kind === "ended") await end(first.reason);
+            return;
         }
-        // A free capacity can admit the next request too.
-        await wakeNext();
+        const size = first.size;
 
         // 2. The first machine.
         let machineGeneration = 1;
-        const first = await startMachine(machineGeneration, grantedAtMs);
-        if (first.kind !== "ready") {
+        const started = await startMachine(machineGeneration, first.atMs);
+        if (started.kind !== "ready") {
             const outcome: AcquireOutcome =
-                first.kind === "failed"
-                    ? { kind: "failed", detail: first.detail }
-                    : { kind: "refused", reason: first.kind === "refused" ? first.reason : "suspended" };
+                started.kind === "failed"
+                    ? { kind: "failed", detail: started.detail }
+                    : { kind: "refused", reason: started.kind === "refused" ? started.reason : "suspended" };
             await DBOS.setEvent(GRANTED_EVENT, outcome);
             await end(outcome.kind === "failed" ? "spawn-failed" : `refused:${outcome.reason}`);
             return;
@@ -414,6 +435,8 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
                     reason = "owner-ended";
                     break;
                 }
+                // The idle removal gave back the grant, thus the capacity can admit the next request.
+                if (tick === "idle-removed") await wakeNext();
                 continue;
             }
             if (message.kind === "release") {
@@ -423,6 +446,13 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
             if (message.kind === "machine") {
                 // A request names the generation that its exec found empty. A later generation already answers it.
                 if (message.after < machineGeneration) continue;
+                // An idle lease that an exec moved to `requested` waits for its grant again. A granted lease gets it at once.
+                const grant = await awaitGrant();
+                if (grant.kind !== "granted") {
+                    await DBOS.setEvent(machineEventKey(machineGeneration + 1), { kind: "failed", detail: "the lease ended" } satisfies MachineEvent);
+                    reason = grant.kind === "ended" ? grant.reason : "released";
+                    break;
+                }
                 const next = await startMachine(machineGeneration + 1);
                 if (next.kind !== "ready") {
                     reason = next.kind === "failed" ? "spawn-failed" : `refused:${next.kind === "refused" ? next.reason : "suspended"}`;
@@ -451,7 +481,7 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
         { name: LEASE_WORKFLOW },
     );
 
-    /** One tick of a granted lease: the end of the owner, a dead machine, and the idle removal. */
+    /** One tick of a lease: the end of the owner, a dead machine, and the idle removal, which moves the lease to `idle`. */
     const tickOnce = async (id: string, machineGeneration: number, ownerWorkflowId: string): Promise<TickOutcome> => {
         const owner = await DBOS.getWorkflowStatus(ownerWorkflowId);
         if (owner === null || TERMINAL_STATUSES.has(owner.status)) return "owner-ended";
@@ -651,28 +681,63 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
         }
     };
 
-    /** Get a machine for an exec that found none: ask the lease workflow, and wait for the next machine generation. */
-    const requestMachine = async (lease: LeaseRecord, after: number, mirror: LeaseBinding["emit"]): Promise<Result<SandboxRef, NoLease>> => {
+    /**
+     * Get a machine for an exec that found none: ask the lease workflow, and wait for the next machine generation. The
+     * lease workflow asks for the grant first when the lease is `requested` after the idle removal.
+     */
+    const requestMachine = async (lease: LeaseRecord, after: number, waits: ExecWaits): Promise<Result<SandboxRef, NoLease>> => {
         const dbos = await engine();
         const key = DBOS.workflowID === undefined ? undefined : `${DBOS.workflowID}:${String(DBOS.stepID)}:machine:${after}`;
+        await waits.onSandboxWait?.({ state: "waiting", size: lease.requested });
         await dbos.send(lease.leaseWorkflowId, { kind: "machine", after } satisfies LeaseMessage, LEASE_TOPIC, key);
-        const event = await waitForEvent<MachineEvent>(lease, machineEventKey(after + 1), mirror);
+        const event = await waitForEvent<MachineEvent>(lease, machineEventKey(after + 1), waits.emit);
         if (event === "ended") return err({ kind: "no_lease", detail: "the lease ended" });
         if (event.kind === "failed") return err({ kind: "no_lease", detail: `the sandbox did not start again: ${event.detail}` });
+        await waits.onSandboxWait?.({ state: "ready" });
         return ok(event.ref);
     };
 
-    const exec = (leaseKey: string, request: ExecRequest, emit: ExecEmit, mirror?: LeaseBinding["emit"]): Promise<Result<ExecResult, NoLease>> =>
+    /**
+     * The lease of an exec, and its machine when it has one. An idle lease moves to `requested` here, thus the exec
+     * waits for the grant and a new machine. A `requested` lease with a machine generation is such a lease, for
+     * example after a recovery of the exec. A `requested` lease with no generation has no acquire yet.
+     */
+    const leaseOfExec = async (
+        leaseKey: string,
+    ): Promise<{ readonly lease: LeaseRecord; readonly machine?: SandboxRef; readonly machineGeneration: number } | undefined> => {
+        const lease = unwrapOrThrow(await activeLease(pool, leaseKey));
+        if (lease === undefined) return undefined;
+        switch (lease.state) {
+            case "granted": {
+                // The use is written before the submit, thus the idle removal cannot take the machine of this exec.
+                const touched = unwrapOrThrow(await touchLease(pool, lease.leaseWorkflowId));
+                // The idle removal won the row between the two reads, thus the lease is idle now.
+                if (touched === undefined) return leaseOfExec(leaseKey);
+                return { lease, machine: touched.machine, machineGeneration: touched.machineGeneration };
+            }
+            case "idle":
+                unwrapOrThrow(await wakeIdleLease(pool, lease.leaseWorkflowId));
+                return { lease, machineGeneration: lease.machineGeneration };
+            case "requested":
+                return lease.machineGeneration === 0 ? undefined : { lease, machineGeneration: lease.machineGeneration };
+            case "released":
+                return undefined;
+            default: {
+                const exhaustive: never = lease.state;
+                throw new Error(`unhandled lease state: ${String(exhaustive)}`);
+            }
+        }
+    };
+
+    const exec = (leaseKey: string, request: ExecRequest, emit: ExecEmit, waits: ExecWaits = {}): Promise<Result<ExecResult, NoLease>> =>
         durably("sandbox.exec", async (): Promise<Result<ExecResult, NoLease>> => {
-            const lease = unwrapOrThrow(await activeLease(pool, leaseKey));
-            if (lease?.state !== "granted") return err({ kind: "no_lease" });
-            // The use is written before the submit, thus the idle removal cannot take the machine of this exec.
-            const touched = unwrapOrThrow(await touchLease(pool, lease.leaseWorkflowId));
-            if (touched === undefined) return err({ kind: "no_lease" });
-            let machine = touched.machine;
-            let machineGeneration = touched.machineGeneration;
+            const found = await leaseOfExec(leaseKey);
+            if (found === undefined) return err({ kind: "no_lease" });
+            const { lease } = found;
+            let machine = found.machine;
+            let machineGeneration = found.machineGeneration;
             if (machine === undefined) {
-                const started = await requestMachine(lease, machineGeneration, mirror);
+                const started = await requestMachine(lease, machineGeneration, waits);
                 if (started.isErr()) return err(started.error);
                 machine = started.value;
                 machineGeneration += 1;
@@ -724,7 +789,7 @@ export function createSandboxLeases(config: SandboxLeasesConfig): SandboxLeases 
         bind: (binding) => ({
             acquire: (size) => leases.acquire(binding, size),
             release: () => leases.release(binding.leaseKey),
-            exec: (request, emit) => exec(binding.leaseKey, request, emit, binding.emit),
+            exec: (request, emit) => exec(binding.leaseKey, request, emit, { emit: binding.emit, onSandboxWait: binding.onSandboxWait }),
         }),
     };
     return leases;

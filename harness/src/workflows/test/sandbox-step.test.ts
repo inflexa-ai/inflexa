@@ -987,6 +987,22 @@ describe("sandbox-step lease", () => {
         expect(binding.spawn).toEqual({ image: "sandbox-base:test", extraEnv: { A: "1" } });
         expect(leases.releasedKeys).toEqual([binding.leaseKey]);
     });
+
+    it("shows an exec that waits for a new machine as the wait of an acquire, and then the step activity again", async () => {
+        const leases = fakeLeases(leaseOverClient(makeSandboxClient(), SANDBOX_REF));
+        await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), leases });
+        const binding = presentAt(leases.bindings, 0);
+        dbosState.emittedParts.length = 0;
+
+        await binding.onSandboxWait?.({ state: "waiting", size: { cpu: 1, memoryGb: 2 } });
+        await binding.onSandboxWait?.({ state: "ready" });
+
+        const activities = dbosState.emittedParts.filter((part) => part.type === "data-step-activity");
+        expect(activities.map((part) => [part.phase, part.activity])).toEqual([
+            ["sandbox-init", "Waiting for a sandbox (1 CPU, 2 GB)"],
+            ["executing", `Running ${USAGE_AGENT_ID}`],
+        ]);
+    });
 });
 
 // ── pause ─────────────────────────────────────────────────────────────

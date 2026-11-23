@@ -15,7 +15,11 @@ import { tryMutation, tryQuery, withTransaction, type Connectable, type DbError,
 import type { Querier } from "./db.js";
 import { PersistedSandboxRefSchema, type PersistedSandboxRef } from "./schema.js";
 
-export type LeaseState = "requested" | "granted" | "released";
+/**
+ * `idle`: the idle removal took the machine of a granted lease. An idle lease holds no capacity and has no place in
+ * the queue. Its next exec moves it back to `requested` with its first request time, thus it goes to the front.
+ */
+export type LeaseState = "requested" | "granted" | "idle" | "released";
 
 /** One generation of a lease, as its row records it. */
 export type LeaseRecord = {
@@ -49,7 +53,7 @@ const LeaseRowSchema = z.object({
     work_id: z.string(),
     requested: ResourceSpecSchema,
     granted: ResourceSpecSchema.nullable(),
-    state: z.enum(["requested", "granted", "released"]),
+    state: z.enum(["requested", "granted", "idle", "released"]),
     release_reason: z.string().nullable(),
     machine: PersistedSandboxRefSchema.nullable(),
     machine_generation: z.number(),
@@ -152,6 +156,8 @@ function grantIn(client: TransactionQuerier, leaseWorkflowId: string, budget: Ma
         const lease = own.rows.length === 0 ? undefined : recordOf(own.rows[0]);
         if (lease === undefined || lease.state === "released") return { kind: "released" };
         if (lease.state === "granted") return { kind: "granted", size: lease.granted ?? lease.requested };
+        // An idle lease asks for no grant until its next exec moves it to `requested`.
+        if (lease.state === "idle") return { kind: "waiting" };
         if (budget !== undefined) {
             // The strict order of the requests: only the oldest waiting request can take a grant.
             const head = await client.query<{ lease_workflow_id: string }>(
@@ -222,7 +228,8 @@ export function clearMachine(pool: Querier, leaseWorkflowId: string, machineGene
 }
 
 /**
- * Clear the machine of an idle lease: no exec used the lease for `idleMs`. An exec writes `last_used_at` before it
+ * Clear the machine of an idle lease, and move the lease to `idle`: no exec used the lease for `idleMs`. The grant
+ * then leaves the capacity sum, thus a paused consumer holds no capacity. An exec writes `last_used_at` before it
  * submits, under the same row lock, thus an exec that starts can never lose its machine to this clear.
  */
 export function clearIdleMachine(
@@ -235,16 +242,30 @@ export function clearIdleMachine(
         const { rows } = await pool.query({
             text: `WITH old AS (
                        SELECT lease_workflow_id, machine FROM cortex_sandbox_leases
-                       WHERE lease_workflow_id = $1 AND machine_generation = $2 AND machine IS NOT NULL
+                       WHERE lease_workflow_id = $1 AND machine_generation = $2 AND machine IS NOT NULL AND state = 'granted'
                          AND last_used_at < now() - make_interval(secs => $3::double precision / 1000)
                        FOR UPDATE
                    )
-                   UPDATE cortex_sandbox_leases AS l SET machine = NULL FROM old
+                   UPDATE cortex_sandbox_leases AS l SET machine = NULL, state = 'idle' FROM old
                    WHERE l.lease_workflow_id = old.lease_workflow_id
                    RETURNING old.machine`,
             values: [leaseWorkflowId, machineGeneration, idleMs],
         });
         return rows.length === 0 ? undefined : PersistedSandboxRefSchema.parse(rows[0]?.machine);
+    });
+}
+
+/**
+ * Move an idle lease back to `requested` for its next exec. The row keeps its first request time, thus it goes to the
+ * front of the queue. Gives `false` when the lease is not idle.
+ */
+export function wakeIdleLease(pool: Querier, leaseWorkflowId: string): ResultAsync<boolean, DbError> {
+    return tryMutation("sandboxLeases.wakeIdle", async () => {
+        const { rowCount } = await pool.query({
+            text: `UPDATE cortex_sandbox_leases SET state = 'requested', last_used_at = now() WHERE lease_workflow_id = $1 AND state = 'idle'`,
+            values: [leaseWorkflowId],
+        });
+        return (rowCount ?? 0) > 0;
     });
 }
 
