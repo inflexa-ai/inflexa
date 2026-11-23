@@ -324,12 +324,75 @@ describe("stageInputs", () => {
         expect(second.warnings).toEqual(["far.csv is not reachable now; its staged files stay"]);
     });
 
-    test("a missing source is unreachable when its volume is gone, and deleted when its folder is present", async () => {
-        const mountRoot = join(testDir, "mounts");
-        mkdirSync(join(mountRoot, "present"), { recursive: true });
-        expect(await missingSourceKind(join(mountRoot, "lab", "data", "x.csv"), [mountRoot])).toBe("unreachable");
-        expect(await missingSourceKind(join(mountRoot, "present", "x.csv"), [mountRoot])).toBe("deleted");
-        expect(await missingSourceKind(join(anchorDir, "gone", "x.csv"), [mountRoot])).toBe("deleted");
+    test("a directory input whose root is now empty keeps its staged files, and the outcome names it", async () => {
+        const dirPath = join(anchorDir, "mnt-proj");
+        mkdirSync(dirPath, { recursive: true });
+        writeFileSync(join(dirPath, "a.csv"), "a");
+        insertAnalysisInput({ path: "mnt-proj", isDir: true, analysisId, anchorId })._unsafeUnwrap();
+        (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+
+        // An unmounted autofs or NFS mount point stays as an empty folder.
+        rmSync(join(dirPath, "a.csv"));
+
+        const outcome = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        expect(outcome.staged.map((s) => s.key)).toEqual([join("mnt-proj", "a.csv")]);
+        expect(outcome.warnings).toEqual([`${dirPath} is not reachable now; its staged files stay`]);
+        expect((await enumerateInputPaths(analysisId, targetDir))._unsafeUnwrap().unreachable).toBe(1);
+    });
+
+    test("a directory input whose root is missing keeps its staged files", async () => {
+        const dirPath = join(anchorDir, "volume");
+        mkdirSync(dirPath, { recursive: true });
+        writeFileSync(join(dirPath, "a.csv"), "a");
+        insertAnalysisInput({ path: "volume", isDir: true, analysisId, anchorId })._unsafeUnwrap();
+        (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+
+        rmSync(dirPath, { recursive: true, force: true });
+
+        const outcome = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        expect(outcome.staged.map((s) => s.key)).toEqual([join("volume", "a.csv")]);
+        expect(outcome.warnings).toEqual([`${dirPath} is not reachable now; its staged files stay`]);
+    });
+
+    test("a member missing from a directory input whose root has entries was deleted, and its copy goes", async () => {
+        const dirPath = join(anchorDir, "present");
+        mkdirSync(dirPath, { recursive: true });
+        writeFileSync(join(dirPath, "a.csv"), "a");
+        writeFileSync(join(dirPath, "b.csv"), "b");
+        insertAnalysisInput({ path: "present", isDir: true, analysisId, anchorId })._unsafeUnwrap();
+        (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+
+        rmSync(join(dirPath, "b.csv"));
+
+        const outcome = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        expect(outcome.staged.map((s) => s.key)).toEqual([join("present", "a.csv")]);
+        expect(outcome.warnings).toEqual([]);
+        expect(existsSync(join(targetDir, "inputs", "local", "present", "b.csv"))).toBe(false);
+    });
+
+    test("a file input whose parent folder is empty or missing keeps its staged copy", async () => {
+        mkdirSync(join(anchorDir, "solo"), { recursive: true });
+        mkdirSync(join(anchorDir, "deep", "gone"), { recursive: true });
+        writeFileSync(join(anchorDir, "solo", "x.csv"), "x");
+        writeFileSync(join(anchorDir, "deep", "gone", "y.csv"), "y");
+        insertAnalysisInput({ path: join("solo", "x.csv"), isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        insertAnalysisInput({ path: join("deep", "gone", "y.csv"), isDir: false, analysisId, anchorId })._unsafeUnwrap();
+        (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+
+        rmSync(join(anchorDir, "solo", "x.csv"));
+        rmSync(join(anchorDir, "deep", "gone"), { recursive: true, force: true });
+
+        const outcome = (await stageInputs(analysisId, targetDir))._unsafeUnwrap();
+        expect(outcome.staged.map((s) => s.key).sort()).toEqual([join("deep", "gone", "y.csv"), join("solo", "x.csv")]);
+        expect(outcome.warnings).toHaveLength(2);
+    });
+
+    test("a stale or failing source is unreachable, whatever its folder holds", () => {
+        expect(missingSourceKind(Object.assign(new Error("stale"), { code: "ESTALE" }), "present")).toBe("unreachable");
+        expect(missingSourceKind(Object.assign(new Error("io"), { code: "EIO" }), "present")).toBe("unreachable");
+        expect(missingSourceKind(Object.assign(new Error("gone"), { code: "ENOENT" }), "present")).toBe("deleted");
+        expect(missingSourceKind(Object.assign(new Error("gone"), { code: "ENOENT" }), "empty")).toBe("unreachable");
+        expect(missingSourceKind(Object.assign(new Error("gone"), { code: "ENOENT" }), "missing")).toBe("unreachable");
     });
 
     test("an input row that the user removed takes its staged files with it", async () => {

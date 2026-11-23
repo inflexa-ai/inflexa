@@ -509,12 +509,14 @@ function notQuarantined(file: InputFile): boolean {
  * stat/readdir/access: no content reads, no tree writes. This is the SINGLE source
  * of "which files an input yields", so the identity spaces of its callers are structurally unable to diverge.
  *
- * A missing source is one of two cases. A source whose anchor root cannot be located, or whose volume is not mounted
- * (see {@link missingSourceKind}), is not reachable now: the walk carries the copies that an earlier pass staged
- * under `dataDir`, and it names the source in `warnings`. Thus an unmounted drive neither deletes the staged tree nor
- * empties the input set and clears the profile. A source missing from a present volume was deleted: it yields
- * nothing, and its staged files go at the next pass, as the files of a removed input row do. A source that cannot be
- * read is carried the same way as an unreachable one. With `dataDir` `null`, nothing is carried.
+ * A missing source is one of two cases, decided for the whole input (see {@link reachOf}). A source whose anchor root
+ * cannot be located, a stale or failing source, a directory input whose root is missing or empty, and a file input
+ * whose parent folder is missing or empty are not reachable now: the walk carries the copies that an earlier pass
+ * staged under `dataDir`, and it names the source in `warnings`. Thus an unmounted drive neither deletes the staged
+ * tree nor empties the input set and clears the profile. A file input missing from a folder that holds other entries,
+ * and a member missing from a directory input whose root holds entries, were deleted: they yield nothing, and their
+ * staged files go at the next pass, as the files of a removed input row do. A source that cannot be read is carried
+ * the same way as an unreachable one. With `dataDir` `null`, nothing is carried.
  */
 function walkInputFiles(analysisId: string, dataDir: string | null): ResultAsync<WalkedInputs, DbError> {
     return new ResultAsync(walkInputFilesAsync(analysisId, dataDir));
@@ -532,12 +534,6 @@ async function walkInputFilesAsync(analysisId: string, dataDir: string | null): 
         resolvedInputs.push({ input, absPath: absPath.value });
     }
 
-    // Resolve existence ONCE, in the walk each caller shares, so the callers can never disagree about whether a
-    // source is reachable.
-    const present = await pathsExistAsync(
-        resolvedInputs.map(({ absPath }) => absPath ?? ""),
-        METADATA_WIDTH,
-    );
     const found: InputFile[] = [];
     const kept: KeptPart[] = [];
     const warnings: string[] = [];
@@ -545,7 +541,9 @@ async function walkInputFilesAsync(analysisId: string, dataDir: string | null): 
     let unreadable = 0;
     // One directory walk at a time: each walk keeps its own fixed-width queue, so parallel walks would multiply
     // the bound by the count of directory inputs.
-    for (const [index, { input, absPath }] of resolvedInputs.entries()) {
+    // Existence is decided ONCE, in the walk each caller shares, so the callers can never disagree about whether a
+    // source is reachable.
+    for (const { input, absPath } of resolvedInputs) {
         // Anchored inputs keep their human-readable anchor-relative path as the
         // key. Anchorless inputs carry an ABSOLUTE host path — used verbatim it
         // leaks the host filesystem into the sandbox layout and the agent
@@ -554,11 +552,12 @@ async function walkInputFilesAsync(analysisId: string, dataDir: string | null): 
         // fileId-prefixed basename instead (collision-free across same-named
         // files from different locations, deterministic across runs).
         const keyRoot = input.anchorId === null ? join(deriveFileId(input), basename(input.path)) : input.path;
-        if (absPath !== null && !present[index] && (await missingSourceKind(absPath)) === "deleted") {
-            getLogger("staging").info({ absPath, path: input.path }, "input source deleted from a present folder — its staged files go");
+        const reach = absPath === null ? "unreachable" : await reachOf(absPath, input.isDir);
+        if (reach === "deleted") {
+            getLogger("staging").info({ absPath, path: input.path }, "input source deleted from a folder that holds other entries — its staged files go");
             continue;
         }
-        if (absPath === null || !present[index]) {
+        if (absPath === null || reach === "unreachable") {
             getLogger("staging").warn({ absPath, path: input.path }, "input source not reachable — keeping its staged files");
             warnings.push(`${absPath ?? input.path} is not reachable now; its staged files stay`);
             unreachable++;
@@ -603,32 +602,40 @@ async function walkInputFilesAsync(analysisId: string, dataDir: string | null): 
     return ok({ files: [...carried, ...files], warnings, unreachable, unreadable });
 }
 
-/**
- * The roots under which a system mounts a volume: a volume whose mount point is gone leaves the nearest present
- * ancestor of a source at one of these, or at a folder right under `/media` or `/run/media` (a folder for each user).
- */
-const MOUNT_ROOTS: readonly string[] = ["/Volumes", "/media", "/run/media", "/mnt"];
+/** The folder that decides why a source is missing: present with entries, present and empty, or missing. */
+export type FolderState = "present" | "empty" | "missing";
 
 /**
- * Why a source path that is not on disk is missing. `deleted`: the volume is present, thus the user deleted the source
- * (or a folder above it), and its staged copy goes, as for a removed input row. `unreachable`: the nearest present
- * ancestor is a mount root, thus the volume of the source is not mounted now, and its staged copy stays.
+ * Why a source is not on disk, from the error of its `stat` and the state of its folder: the root of a directory
+ * input, or the parent folder of a file input. `unreachable`: the source is stale or failing (`ESTALE`, `EIO`), or its
+ * folder is missing or empty — an unmounted volume, or an autofs or NFS mount point that stays as an empty folder. Its
+ * staged copy stays. `deleted`: the folder is present and holds other entries, thus the user deleted the source, and
+ * its staged copy goes, as for a removed input row.
  */
-export async function missingSourceKind(source: string, mountRoots: readonly string[] = MOUNT_ROOTS): Promise<"deleted" | "unreachable"> {
-    let current = dirname(source);
-    for (;;) {
-        const present = await stat(current).then(
-            (s) => s.isDirectory(),
-            () => false,
-        );
-        if (present) {
-            const isMountRoot = mountRoots.includes(current) || mountRoots.some((root) => ["/media", "/run/media"].includes(root) && dirname(current) === root);
-            return current !== dirname(source) && isMountRoot ? "unreachable" : "deleted";
-        }
-        const parent = dirname(current);
-        if (parent === current) return "unreachable";
-        current = parent;
-    }
+export function missingSourceKind(cause: unknown, folder: FolderState): "deleted" | "unreachable" {
+    const code = errnoCode(cause);
+    if (code === "ESTALE" || code === "EIO") return "unreachable";
+    return folder === "present" ? "deleted" : "unreachable";
+}
+
+/**
+ * Whether the source of an input is on disk, and if not, why. A directory input decides on its root: a root that is
+ * missing or empty is unreachable. A file input decides on its parent folder (see {@link missingSourceKind}).
+ */
+async function reachOf(absPath: string, isDir: boolean): Promise<"present" | "deleted" | "unreachable"> {
+    const stats = await stat(absPath).then(
+        (): null => null,
+        (cause: unknown) => ({ cause }),
+    );
+    if (stats === null) return isDir && (await folderState(absPath)) === "empty" ? "unreachable" : "present";
+    return missingSourceKind(stats.cause, isDir ? "missing" : await folderState(dirname(absPath)));
+}
+
+async function folderState(path: string): Promise<FolderState> {
+    return readdir(path).then(
+        (entries): FolderState => (entries.length > 0 ? "present" : "empty"),
+        (): FolderState => "missing",
+    );
 }
 
 /** The staged files under each kept part, as {@link InputFile}s whose `absPath` is the staged copy itself. */

@@ -107,20 +107,22 @@ before it removes a stale destination, thus a source that cannot be read never l
 ### Requirement: A source that is not reachable keeps its staged files
 
 An input row that the user removed SHALL lose its staged files at the next pass. A source that is
-missing while its row remains is one of two cases:
+missing while its row remains is one of two cases, decided for the whole input:
 
-- The source is not reachable now when the anchor root of the input cannot be located, or when the
-  volume of the source is not mounted: the nearest present folder above the source is a mount root
-  (`/Volumes`, `/media`, `/run/media`, `/mnt`, or a folder for each user right under `/media` or
-  `/run/media`). Such a source SHALL keep its staged files. The walk SHALL carry them into the manifest
-  and into the enumeration, from the staged copy, and the outcome SHALL name the source in `warnings`.
-- The source was deleted when its volume is present, for example when the folder of the source is
-  present and the source is not. Its staged files SHALL go at the next pass, as for a removed input row,
-  and the outcome SHALL name nothing.
+- The source is not reachable now when the anchor root of the input cannot be located, when its `stat`
+  fails with `ESTALE` or `EIO`, when the root of a directory input is missing or empty, or when the parent
+  folder of a file input is missing or empty. An unmounted volume, and an autofs or NFS mount point that
+  stays as an empty folder, look like this. Such a source SHALL keep its staged files. The walk SHALL carry
+  them into the manifest and into the enumeration, from the staged copy, and the outcome SHALL name the
+  source in `warnings`.
+- The source was deleted when a file input is missing from a parent folder that holds other entries, or
+  when a member is missing from a directory input whose root holds entries. Its staged files SHALL go at
+  the next pass, as for a removed input row, and the outcome SHALL name nothing.
 
-Thus an unmounted volume does not clear the profile (see the data-profile-launch spec), and a deleted
-source does not stay forever. `enumerateInputPaths` reports the count of unreachable inputs in
-`unreachable`.
+A user who deletes the last file of a folder keeps its staged copy until the folder goes: the rule errs
+toward keeping data. Thus an unmounted volume does not clear the profile (see the data-profile-launch
+spec), and a deleted source does not stay forever. `enumerateInputPaths` reports the count of
+unreachable inputs in `unreachable`.
 
 #### Scenario: An unmounted source keeps its staged files
 
@@ -131,8 +133,26 @@ source does not stay forever. `enumerateInputPaths` reports the count of unreach
 #### Scenario: A source deleted from a present folder loses its files
 
 - **GIVEN** an input that a pass staged
-- **WHEN** its source is deleted, its folder stays, and `stageInputs` runs again
+- **WHEN** its source is deleted, its folder stays with other entries, and `stageInputs` runs again
 - **THEN** its staged file is deleted, `unreachable` is 0, and `warnings` is empty
+
+#### Scenario: A directory input whose root is empty keeps its files
+
+- **GIVEN** a directory input that a pass staged
+- **WHEN** its root stays as an empty folder and `stageInputs` runs again
+- **THEN** its staged files stay, and `warnings` names the root
+
+#### Scenario: A member deleted from a directory input loses its file
+
+- **GIVEN** a directory input that a pass staged
+- **WHEN** one member is deleted, the root holds other entries, and `stageInputs` runs again
+- **THEN** the staged file of that member is deleted, and `warnings` is empty
+
+#### Scenario: A file input whose parent folder is empty keeps its file
+
+- **GIVEN** a file input that a pass staged
+- **WHEN** it is deleted and its parent folder is left empty, and `stageInputs` runs again
+- **THEN** its staged file stays, and `warnings` names it
 
 #### Scenario: A source whose anchor root is missing keeps its files
 
