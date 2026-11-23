@@ -122,6 +122,11 @@ cannot read MUST fail the boot with the dedicated error variant, before a side
 effect. Setup MUST refuse rootless Docker and userns-remap with the same
 message, before it writes the configuration.
 
+Setup MUST show the executor fact in plain words: how the sandbox reaches the
+files of the user, and each limit with its fix. The limits are the three
+warnings of the boot, a host user that is root, and SELinux, where the sandbox
+container runs with `label=disable`. Setup MUST NOT stop on a limit.
+
 #### Scenario: Podman pin wires the compat socket and the executor fact
 
 - **WHEN** the runtime boots with `podman` pinned, a resolvable compat socket, and rootless Podman on Linux
@@ -137,6 +142,11 @@ message, before it writes the configuration.
 
 - **WHEN** setup or the boot runs with `docker` pinned, and the daemon reports `name=rootless` or `name=userns`
 - **THEN** it fails with a message that names rootful Docker, Docker Desktop, and Podman as the supported engines
+
+#### Scenario: Setup shows the executor fact
+
+- **WHEN** setup runs on rootless Podman 4.9
+- **THEN** setup says that the sandbox cannot read the data of a project group, and names Podman 5.1 and rootful Docker
 
 #### Scenario: Podman before 4.3 keeps uid 1000 and warns
 
