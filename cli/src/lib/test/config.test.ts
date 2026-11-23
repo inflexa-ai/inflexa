@@ -5,13 +5,14 @@ import { dirname } from "node:path";
 import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
-import { ensureRuntime, readConfig, resolveRuntime, writeConfig, type Config } from "../config.ts";
+import { describeConfigReadError, ensureRuntime, readConfig, readConfigResult, resolveRuntime, writeConfig, type Config } from "../config.ts";
 import { ContainerRuntimeError, runtimes, type ContainerRuntime } from "../container.ts";
 import { DEFAULT_THEME_ID } from "../design_system.ts";
 import { env } from "../env.ts";
 import { unknownRecordSchema } from "../json_record.ts";
 import { assertTestSandbox } from "../../test_support/sandbox.ts";
 import { parsedJson } from "../../test_support/json.ts";
+import { runCli } from "../../test_support/cli.ts";
 import { describeCause } from "../cause.ts";
 
 // Drives config through the public readConfig/writeConfig surface against the sandboxed
@@ -71,6 +72,37 @@ describe("readConfig — fail-closed", () => {
         const cfg = readConfig();
         expect(cfg.telemetry).toBe(false);
         expect(cfg.theme).toBe(DEFAULT_THEME_ID);
+    });
+
+    test("a file that does not parse is an error that names the path, not the defaults", () => {
+        writeRawConfig("{ not valid json");
+        expect(readConfigResult()._unsafeUnwrapErr()).toMatchObject({ type: "config_invalid", path: env.configPath });
+        writeRawConfig(JSON.stringify({ theme: DEFAULT_THEME_ID }));
+        const e = readConfigResult()._unsafeUnwrapErr();
+        expect(e).toMatchObject({ type: "config_invalid", path: env.configPath });
+        expect(describeConfigReadError(e)).toContain("telemetry");
+    });
+
+    test("a missing file reads as the defaults", () => {
+        rmSync(env.configPath, { force: true });
+        expect(readConfigResult()._unsafeUnwrap().telemetry).toBe(false);
+    });
+
+    test("a write never replaces a file that does not parse", () => {
+        const broken = '{ "telemetry": true, "models": { "connection": { "mode": "direct" } }, ';
+        writeRawConfig(broken);
+        const e = writeConfig({ ...readConfig(), runtime: "docker" })._unsafeUnwrapErr();
+        expect(e.type).toBe("config_write_failed");
+        expect(describeCause(e.cause)).toContain(env.configPath);
+        expect(readFileSync(env.configPath, "utf8")).toBe(broken);
+    });
+
+    test("a command stops at once on a file that does not parse, and names the file", () => {
+        writeRawConfig("{ not valid json");
+        const run = runCli(["--version"]);
+        expect(run.exitCode).toBe(1);
+        expect(run.stderr).toContain(`The config file ${env.configPath} is not a valid config`);
+        expect(readFileSync(env.configPath, "utf8")).toBe("{ not valid json");
     });
 
     test("a missing config file falls back to safe defaults", () => {

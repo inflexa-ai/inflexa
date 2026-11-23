@@ -8,14 +8,20 @@ import { releaseHeldInstanceLocks } from "./lib/lock.ts";
 import { initProvenanceRecording, flushProvenanceAsync } from "./modules/prov/prov.ts";
 import { initBusLogging } from "./lib/bus.ts";
 import { isSelfStartedChild } from "./lib/child_flags.ts";
-import { readConfig } from "./lib/config.ts";
+import { fail } from "./lib/cli.ts";
+import { describeConfigReadError, readConfigResult } from "./lib/config.ts";
 import { addLogStream, flushLogsSync, getLogger } from "./lib/log.ts";
 import { createOtelLogStream, initOtel } from "./lib/otel.ts";
 import { onShutdown, shutdown, stopForSignal } from "./lib/shutdown.ts";
 import { pendingUpdate } from "./modules/update/latest.ts";
 import { printUpdateNotice } from "./modules/update/notice.ts";
 
-if (initOtel(readConfig().telemetry)) {
+// A config file that does not read stops each command here, before a command can write the defaults over it.
+const config = readConfigResult().match(
+    (c) => c,
+    (e) => fail(describeConfigReadError(e)),
+);
+if (initOtel(config.telemetry)) {
     addLogStream(createOtelLogStream());
 }
 initBusLogging();
@@ -37,7 +43,7 @@ process.on("exit", flushLogsSync);
 // Release every advisory lock this instance holds (open analysis, harness runtime) on any exit. This
 // single sync hook covers the graceful TUI quit too (App.quit → shutdown → process.exit), so no
 // separate release in App.quit() is needed. SIGKILL bypasses it; those stale locks are reclaimed by
-// the pid check on the next open.
+// the holder check on the next open.
 process.on("exit", releaseHeldInstanceLocks);
 
 // Run the same shutdown chain (telemetry/log flush, DB close, sidecar reap) on a killed or

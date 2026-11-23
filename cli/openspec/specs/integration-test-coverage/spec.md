@@ -74,6 +74,6 @@ malformed-JSON fail-closed, against temp dirs.
 - **THEN** it is rejected/flagged, not resolved outside the boundary
 
 #### Scenario: malformed config fails closed
-- **WHEN** `readConfig` reads a malformed JSON config file
-- **THEN** it returns a safe default / typed failure rather than throwing
+- **WHEN** `readConfigResult` reads a malformed JSON config file
+- **THEN** it returns a typed failure that names the path, rather than the defaults or a throw
 

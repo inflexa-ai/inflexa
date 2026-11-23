@@ -4,25 +4,14 @@ import { Result, ok, err } from "neverthrow";
 import { z } from "zod";
 
 import { DEFAULT_THEME_ID, themeIds } from "./design_system.ts";
-import {
-    ContainerRuntimeError,
-    ensureReady,
-    firstReadyRuntime,
-    runtimeIds,
-    runtimes,
-    type ContainerRuntime,
-} from "./container.ts";
+import { ContainerRuntimeError, ensureReady, firstReadyRuntime, runtimeIds, runtimes, type ContainerRuntime } from "./container.ts";
+import { messageOf } from "./cause.ts";
 import { env, isReservedPostgresPort } from "./env.ts";
+import { errnoCode } from "./fs.ts";
 import { getLogger } from "./log.ts";
 import { unknownRecordSchema } from "./json_record.ts";
 import { isMember } from "./types.ts";
-import {
-    DEFAULT_DATABASE,
-    DEFAULT_HOST,
-    DEFAULT_PASSWORD,
-    DEFAULT_USER,
-    type PostgresConnection,
-} from "../modules/infra/postgres_types.ts";
+import { DEFAULT_DATABASE, DEFAULT_HOST, DEFAULT_PASSWORD, DEFAULT_USER, type PostgresConnection } from "../modules/infra/postgres_types.ts";
 
 /** The attachments that a change adds to a built-in agent, or removes from it. */
 const attachmentsChangeSchema = z.object({
@@ -224,13 +213,7 @@ const configSchema = z.object({
         .default({})
         .transform((e) => ({
             ...e,
-            mode:
-                e.mode ??
-                (e.apiKey !== undefined
-                    ? ("api-key" as const)
-                    : e.modelPath !== undefined
-                      ? ("local" as const)
-                      : ("off" as const)),
+            mode: e.mode ?? (e.apiKey !== undefined ? ("api-key" as const) : e.modelPath !== undefined ? ("local" as const) : ("off" as const)),
         })),
 });
 export type Config = z.infer<typeof configSchema>;
@@ -352,19 +335,61 @@ export const modelsConfigSchema = z.object({
 
 export type ConfigError = { type: "config_write_failed"; cause: unknown };
 
-export function readConfig(): Config {
-    try {
-        const config = JSON.parseWith(readFileSync(env.configPath, "utf8"), configSchema);
-        if (config !== null) return config;
-    } catch {
-        // Missing or unreadable config fails closed: consent not granted.
-    }
+/** Why the config file that exists could not be read: the read failed, or the text is not a config. */
+export type ConfigReadError = { type: "config_unreadable"; path: string; cause: unknown } | { type: "config_invalid"; path: string; detail: string };
+
+/** The config with no file. Telemetry is off: consent is not granted. */
+function defaultConfig(): Config {
     return {
         telemetry: false,
         theme: DEFAULT_THEME_ID,
         leaderTimeout: 2000,
         embedding: { mode: "off" },
     };
+}
+
+/**
+ * The config file, or the defaults when there is no file. A file that exists but does not read or does not
+ * parse is an error, never the defaults: the next write would replace the mode, the model pins, and the
+ * Postgres password of the person with the defaults.
+ */
+export function readConfigResult(): Result<Config, ConfigReadError> {
+    const path = env.configPath;
+    let raw: string;
+    try {
+        raw = readFileSync(path, "utf8");
+    } catch (cause) {
+        return errnoCode(cause) === "ENOENT" ? ok(defaultConfig()) : err({ type: "config_unreadable", path, cause });
+    }
+    return JSON.parseResult(raw, configSchema).mapErr((e): ConfigReadError => ({
+        type: "config_invalid",
+        path,
+        detail: e.type === "malformed" ? messageOf(e.cause) : z.prettifyError(e.error),
+    }));
+}
+
+/** One message for a person, for each {@link ConfigReadError}. */
+export function describeConfigReadError(e: ConfigReadError): string {
+    const fix = "Correct the file, or move it away to start with the defaults.";
+    switch (e.type) {
+        case "config_unreadable":
+            return `Could not read the config file ${e.path} (${messageOf(e.cause)}). ${fix}`;
+        case "config_invalid":
+            return `The config file ${e.path} is not a valid config:\n${e.detail}\n${fix}`;
+        default: {
+            const exhaustive: never = e;
+            throw new Error(`unhandled config read error: ${JSON.stringify(exhaustive)}`);
+        }
+    }
+}
+
+/**
+ * The config, or the defaults when the file is absent or does not read. The entry point refuses to start on a
+ * file that does not read (`readConfigResult`), thus the defaults stand in for a bad file only when the file
+ * breaks while a process runs. {@link writeConfig} refuses to write over such a file.
+ */
+export function readConfig(): Config {
+    return readConfigResult().unwrapOr(defaultConfig());
 }
 
 /**
@@ -445,14 +470,10 @@ function canonicalKeyOrder(value: unknown, schema: z.core.$ZodType | null): unkn
     // Own keys only — `in` walks the prototype chain and would invent `toString` & friends.
     const own = Object.keys(record);
     const ownSet = new Set(own);
-    const ordered = [
-        ...declared.filter((key) => ownSet.has(key)),
-        ...own.filter((key) => !declaredSet.has(key)).sort(),
-    ];
+    const ordered = [...declared.filter((key) => ownSet.has(key)), ...own.filter((key) => !declaredSet.has(key)).sort()];
 
     const canonical: Record<string, unknown> = {};
-    for (const key of ordered)
-        canonical[key] = canonicalKeyOrder(record[key], shape?.[key] ?? null);
+    for (const key of ordered) canonical[key] = canonicalKeyOrder(record[key], shape?.[key] ?? null);
     return canonical;
 }
 
@@ -462,13 +483,14 @@ function canonicalKeyOrder(value: unknown, schema: z.core.$ZodType | null): unkn
  * property `inflexa setup --yes` idempotency rests on. Creates the parent directory if needed.
  */
 export function writeConfig(config: Config): Result<void, ConfigError> {
+    // `config` can hold the defaults that `readConfig` gave for a file that does not read. A write would then
+    // replace the settings of the person, thus the write waits until the file reads again.
+    const current = readConfigResult();
+    if (current.isErr()) return err({ type: "config_write_failed", cause: new Error(describeConfigReadError(current.error)) });
     return Result.fromThrowable(
         () => {
             mkdirSync(dirname(env.configPath), { recursive: true });
-            writeFileSync(
-                env.configPath,
-                JSON.stringify(canonicalKeyOrder(config, configSchema), null, 4) + "\n",
-            );
+            writeFileSync(env.configPath, JSON.stringify(canonicalKeyOrder(config, configSchema), null, 4) + "\n");
         },
         (cause): ConfigError => ({ type: "config_write_failed", cause }),
     )();
@@ -527,12 +549,7 @@ export async function resolveRuntime(
         // fallback, which must not tell you to run setup) nor in setup itself.
         return (await probe(selected))
             .map((): ResolvedRuntime => ({ runtime: selected, detected: false }))
-            .mapErr(
-                (e) =>
-                    new ContainerRuntimeError(
-                        `${e.message}\n  To switch container runtimes, run \`inflexa setup\`.`,
-                    ),
-            );
+            .mapErr((e) => new ContainerRuntimeError(`${e.message}\n  To switch container runtimes, run \`inflexa setup\`.`));
     }
 
     return (
@@ -648,15 +665,13 @@ function warnDiscardedReservedPort(persisted: number, resolved: number): void {
  */
 export function resolvePostgresConfig(): PostgresConnection {
     const pg = readConfig().postgres;
-    const port =
-        pg?.port !== undefined && !isReservedPostgresPort(pg.port) ? pg.port : env.postgresPort;
+    const port = pg?.port !== undefined && !isReservedPostgresPort(pg.port) ? pg.port : env.postgresPort;
     // The discard above is deliberate freeze-bug healing but otherwise silent — a user who set a reserved
     // port on purpose (e.g. a prod-only user picking the dev default 8434 to dodge a local conflict) would
     // see it stop working with no explanation. Surface it, but ONLY when the discard actually changes the
     // resolved port: a reserved pin equal to THIS channel's own default resolves to itself, so warning then
     // would be pure noise.
-    if (pg?.port !== undefined && isReservedPostgresPort(pg.port) && pg.port !== port)
-        warnDiscardedReservedPort(pg.port, port);
+    if (pg?.port !== undefined && isReservedPostgresPort(pg.port) && pg.port !== port) warnDiscardedReservedPort(pg.port, port);
     return {
         host: pg?.host ?? DEFAULT_HOST,
         port,

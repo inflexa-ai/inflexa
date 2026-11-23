@@ -6,15 +6,15 @@ Opt-in, consent-gated OpenTelemetry log export — config-stored consent and the
 ## Requirements
 
 ### Requirement: Opt-in consent stored in user config
-Telemetry SHALL be disabled by default. Consent SHALL be persisted as `{ "telemetry": boolean }` in a JSON config file under the user config directory (`XDG_CONFIG_HOME`/`~/.config` on Unix, `APPDATA` on Windows, path `inflexa/config.json`). A missing or unreadable config file SHALL be treated as consent not granted.
+Telemetry SHALL be disabled by default. Consent SHALL be persisted as `{ "telemetry": boolean }` in a JSON config file under the user config directory (`XDG_CONFIG_HOME`/`~/.config` on Unix, `APPDATA` on Windows, path `inflexa/config.json`). A missing config file SHALL be treated as consent not granted. A config file that exists but does not read or does not parse SHALL stop each command before it starts, with a message that names the path of the file and the error. The CLI SHALL NOT write the config while the file does not parse, because a write would replace the settings of the user with the defaults.
 
 #### Scenario: Default is off
 - **WHEN** the CLI runs on a machine with no config file
 - **THEN** no telemetry is initialized and no network calls are made
 
-#### Scenario: Corrupt config fails closed
+#### Scenario: Corrupt config stops the command
 - **WHEN** the config file exists but contains invalid JSON
-- **THEN** telemetry is treated as disabled and the CLI runs normally
+- **THEN** the command exits with a message that names the path of the file and the parse error, initializes no telemetry, and does not change the file
 
 ### Requirement: Interactive settings command
 The system SHALL provide an `inflexa config` command that opens an interactive OpenTUI settings form built only from existing dependencies. The form SHALL show one checkbox row per setting; the telemetry row SHALL display a short disclosure of what is collected and whether an export endpoint is configured. Toggling a setting SHALL only update an in-form draft (marked as unsaved); pressing `s` or Ctrl+S SHALL persist the draft to the config file. Exiting with unsaved changes SHALL warn once and require a second exit press to discard. Exiting the form SHALL restore the terminal state (mouse tracking, alternate screen, input mode) before going through the flushing shutdown path.
