@@ -86,7 +86,9 @@ onto a hardlink of the same source, which truncates the user's file.
 ### Requirement: A source that cannot be read is skipped, not fatal
 
 A file or a directory of a source that staging cannot read (`EACCES`, `EIO`, and others) SHALL be
-skipped, and the outcome SHALL name it in `warnings`. It SHALL NOT fail the pass. A path that vanished
+skipped, and the outcome SHALL name it in `warnings`. The shared walk SHALL decide it (a failed `readdir`,
+`stat`, or `access` for read), thus staging, the enumeration, and the already-materialized predicate leave
+out the same files, and `enumerateInputPaths` counts them in `unreadable`. It SHALL NOT fail the pass. A path that vanished
 during the walk (`ENOENT`) SHALL be skipped with no warning. A skipped path SHALL keep the copy that an
 earlier pass staged for it, and the manifest SHALL describe that copy. Staging SHALL read the source
 before it removes a stale destination, thus a source that cannot be read never loses its staged copy.
@@ -100,22 +102,43 @@ before it removes a stale destination, thus a source that cannot be read never l
 
 - **WHEN** an input file cannot be read and was never staged
 - **THEN** the pass completes over the other inputs, and `warnings` names the file
+- **AND** the enumeration leaves the file out, and the predicate reports the rest of the set already-materialized
 
 ### Requirement: A source that is not reachable keeps its staged files
 
-An input row that the user removed SHALL lose its staged files at the next pass. An input whose row
-remains and whose source is not reachable now — an unmounted volume, an anchor folder that cannot be
-located, a source deleted under its row — SHALL NOT. The walk SHALL carry the files that an earlier
-pass staged for such an input into the manifest and into the enumeration, from the staged copy, and
-the outcome SHALL name the source in `warnings`. Thus the reconcile pass keeps the files, and an input
-set that is empty only because a source is not reachable does not clear the profile (see the
-data-profile-launch spec). `enumerateInputPaths` reports the count of such inputs in `unreachable`.
+An input row that the user removed SHALL lose its staged files at the next pass. A source that is
+missing while its row remains is one of two cases:
+
+- The source is not reachable now when the anchor root of the input cannot be located, or when the
+  volume of the source is not mounted: the nearest present folder above the source is a mount root
+  (`/Volumes`, `/media`, `/run/media`, `/mnt`, or a folder for each user right under `/media` or
+  `/run/media`). Such a source SHALL keep its staged files. The walk SHALL carry them into the manifest
+  and into the enumeration, from the staged copy, and the outcome SHALL name the source in `warnings`.
+- The source was deleted when its volume is present, for example when the folder of the source is
+  present and the source is not. Its staged files SHALL go at the next pass, as for a removed input row,
+  and the outcome SHALL name nothing.
+
+Thus an unmounted volume does not clear the profile (see the data-profile-launch spec), and a deleted
+source does not stay forever. `enumerateInputPaths` reports the count of unreachable inputs in
+`unreachable`.
 
 #### Scenario: An unmounted source keeps its staged files
 
 - **GIVEN** an input that a pass staged
 - **WHEN** its source is not reachable and `stageInputs` runs again
 - **THEN** its staged file stays, the manifest describes it, and `warnings` names the source
+
+#### Scenario: A source deleted from a present folder loses its files
+
+- **GIVEN** an input that a pass staged
+- **WHEN** its source is deleted, its folder stays, and `stageInputs` runs again
+- **THEN** its staged file is deleted, `unreachable` is 0, and `warnings` is empty
+
+#### Scenario: A source whose anchor root is missing keeps its files
+
+- **GIVEN** an input under a second anchor that a pass staged
+- **WHEN** the anchor root is gone and `stageInputs` runs again
+- **THEN** its staged file stays, and `warnings` names the input
 
 #### Scenario: A removed input row takes its files
 
@@ -125,10 +148,18 @@ data-profile-launch spec). `enumerateInputPaths` reports the count of such input
 ### Requirement: An unchanged destination is kept
 
 Staging SHALL keep a destination that is already a hardlink of the source (the same `dev` and `ino`),
-or a regular file with the same size and modification time as the source. It SHALL NOT remove and link
+or a copy — a regular file on a different volume than the source, or with one link — with the same size
+and modification time as the source. A destination that is a hardlink of a different file SHALL be linked
+again, whatever its size and modification time. The copy fallback SHALL write with `COPYFILE_EXCL`. When
+two inputs stage to one destination from different files (by `dev` and `ino`), staging SHALL log the clash. It SHALL NOT remove and link
 such a destination again. Thus a pass over an unchanged set writes nothing to the staged tree. Each
 other destination SHALL be removed before the link, because `copyFile` onto a hardlink of the source
 itself truncates the source.
+
+#### Scenario: Two files with one destination, size, and mtime
+
+- **WHEN** two inputs from different files with the same size and mtime stage to one destination
+- **THEN** the destination holds the bytes of the last, as a hardlink of it
 
 #### Scenario: A pass over an unchanged set does not remove a file
 
@@ -150,7 +181,7 @@ local-server spec).
 ### Requirement: A probe tells when staging will copy
 
 The module SHALL provide `probeHardlinks(sources, targetDir)`. For each volume of the sources, it SHALL
-make one real hardlink of one file of the sources into the nearest existing directory of `targetDir`,
+make one real hardlink of the real path of one file of the sources into the nearest existing directory of `targetDir`,
 and then remove the link. A comparison of `st_dev` alone is not sufficient, because exFAT refuses a
 hardlink on the same device. When a link fails, it SHALL give a warning that names the sources that
 staging will copy, and that tells the user to put the analysis folder on the same volume as the data.
@@ -190,8 +221,12 @@ Linux does not follow a symlink, and a hardlink of a symlink is a symlink.
 When walking a directory input, entries that are symlinks SHALL be resolved via stat:
 a symlink to a file is staged (as the target's content), and a symlink to a directory
 is traversed. Symlinks whose target does not exist SHALL be skipped without failing
-the walk. The walk SHALL enter each directory once for each `(dev, ino)`, thus a
-symlink that points back up the tree ends the descent.
+the walk. A directory SHALL give its files under one path only for each `(dev, ino)`:
+the path that comes first in a depth-first walk of the `readdir` order, whatever order
+the reads complete in. Thus a symlink that points back up the tree ends the descent, and
+two aliases of one directory give the same paths and file ids on each run. An entry that
+`readdir` does not report as a file (a symlink, a directory, or `DT_UNKNOWN` on some NFS
+and FUSE mounts) SHALL be resolved with `stat`.
 
 #### Scenario: Symlink to a file within a directory input
 
@@ -214,11 +249,13 @@ Directory-input walks SHALL skip directories whose name identifies tool or
 source-control noise rather than data: the harness's ignored set (`node_modules`,
 `__pycache__`, `.cache`, `.ruff_cache`, `.ipynb_checkpoints`, `.Rproj.user`) plus the
 cli-specific `.git` and `.inflexa`, and the scratch trees of the workflow engines and the
-archive droppings (`work`, `.nextflow`, `.snakemake`, `__MACOSX`). The walk SHALL also
-skip each name that the harness quarantines (`quarantineReason`): AppleDouble `._*`
-files, partial downloads, editor temps, and others. A file input whose name the harness
-quarantines SHALL NOT be staged. Staging, the enumeration, and the already-materialized
-predicate SHALL apply the same filter through the walk that they share. The `.inflexa` exclusion is load-bearing, not
+archive droppings (`work`, `.nextflow`, `.snakemake`, `__MACOSX`). Staging SHALL
+also leave out each file whose `relativePath` the harness quarantines (`quarantineReason`):
+AppleDouble `._*` files, partial downloads, editor temps, files under `__MACOSX` or
+`.Trash-*`, and others. It SHALL apply the rule to the same path that
+`computeInputSignature` reads, thus the count of the manifest equals the count of the
+signature. Staging, the enumeration, and the already-materialized predicate SHALL apply
+the same filter through the walk that they share. The `.inflexa` exclusion is load-bearing, not
 hygiene: the workspace itself lives at `<anchor>/.inflexa/analyses/<slug>/`, so an
 anchor-folder directory input would otherwise stage the analysis's own staged inputs
 and run artifacts into itself, recursively. Skipping SHALL apply
@@ -428,5 +465,5 @@ database and the filesystem routinely disagree and a gone file is honestly repor
 
 #### Scenario: A vanished source is not a failure
 
-- **WHEN** an input's row survives but its file was deleted from disk
-- **THEN** the enumeration gives the staged copy of the file when one exists, counts the input in `unreachable`, and stays in the ok channel
+- **WHEN** an input's row survives but its file was deleted from a present folder
+- **THEN** the enumeration leaves the file out, counts nothing in `unreachable`, and stays in the ok channel
