@@ -10,7 +10,7 @@ import { KEYS, chordLabel, type Chord } from "../../keymap.ts";
 import { entryDetails, readFolder, type EntryDetails, type FolderEntry } from "../../../lib/folder_listing.ts";
 import { processIdentity, type ProcessIdentity } from "../../../lib/fs.ts";
 import { canonicalPathAsync } from "../../../lib/paths.ts";
-import { openExternal } from "../../../lib/open_external.ts";
+import { openByHandHint, openExternal } from "../../../lib/open_external.ts";
 import { notify } from "../../hooks/notice.ts";
 import { useDialogBindings, useDialogCancel, useDialogCloseGuard } from "./dialog_host.tsx";
 import { DialogPanel } from "./dialog_panel.tsx";
@@ -392,7 +392,7 @@ export function FilePicker(props: FilePickerProps): JSX.Element {
         const dir = abs === undefined ? cwd() : isDirRow(abs) ? abs : dirname(abs);
         openExternal(dir).match(
             () => notify({ kind: "info", text: `Opened ${dir}` }),
-            () => notify({ kind: "error", text: "No system file browser available." }),
+            (e) => notify({ kind: "error", text: openByHandHint(e, dir) }),
         );
     }
 

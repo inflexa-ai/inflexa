@@ -891,10 +891,11 @@ export function installedBinPath(): string {
 }
 
 /**
- * Terminal-environment detection for the clipboard writer (src/lib/clipboard.ts), homed here because
+ * Terminal-environment detection for the clipboard writer (src/lib/clipboard.ts) and the external opener
+ * (src/lib/open_external.ts), homed here because
  * env.ts is the single sanctioned `process.env` reader. These are NOT inflexa configuration — they are
  * terminal-multiplexer / display-server facts (the same category as `process.stdout.isTTY`), so they
- * live OUTSIDE the `env`/`envDoc` config object and never appear in `--help`. All three vars are set
+ * live OUTSIDE the `env`/`envDoc` config object and never appear in `--help`. Each of these vars is set
  * at process startup and stable for its lifetime, so reading them once at module load is correct.
  */
 export const terminalEnv = Object.freeze({
@@ -902,4 +903,8 @@ export const terminalEnv = Object.freeze({
     multiplexed: Boolean(process.env.TMUX || process.env.STY),
     /** Running under Wayland — the clipboard tool is `wl-copy` rather than X11's `xclip`. */
     wayland: Boolean(process.env.WAYLAND_DISPLAY),
+    /** An X11 or a Wayland display is set — a browser or a file manager that a spawn opens can show. */
+    display: Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY),
+    /** `SSH_CONNECTION` (`<client ip> <client port> <server ip> <server port>`) when the session runs through SSH, else `null`. */
+    sshConnection: process.env.SSH_CONNECTION || null,
 });

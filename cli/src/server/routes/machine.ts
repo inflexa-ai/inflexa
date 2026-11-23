@@ -258,7 +258,10 @@ export function machineRoutes(opts: MachineRouteOpts = DEFAULT_MACHINE_ROUTE_OPT
         }
         if (!onDisk.value.isDirectory()) return apiError(c, "conflict", `${folder.value} is a file, and the endpoint opens directories only.`);
         const opened = opts.openExternal(folder.value);
-        if (opened.isErr()) getLogger("server").warn({ code: opened.error.code, path: folder.value }, "could not open a folder in the file manager");
+        if (opened.isErr()) {
+            const failure = opened.error.type === "open_failed" ? opened.error.code : opened.error.reason;
+            getLogger("server").warn({ failure, path: folder.value }, "could not open a folder in the file manager");
+        }
         return c.json({ opened: opened.isOk() } satisfies OpenFolderResult);
     });
 

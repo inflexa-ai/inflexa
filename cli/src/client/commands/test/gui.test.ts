@@ -71,6 +71,15 @@ describe("inflexa gui", () => {
         await gui(opts);
 
         expect(lines[0]).toStartWith(`${server.baseUrl}/api/v1/session?nonce=`);
-        expect(lines.at(-1)).toContain("could not open a browser");
+        expect(lines.at(-1)).toContain("Could not start an opener. Open it by hand:");
+    });
+
+    test("over SSH, it prints the port-forward command for the port of the link", async () => {
+        const { opts, lines } = guiOpts(() => err({ type: "no_display", reason: "ssh" }));
+
+        await gui(opts);
+
+        expect(lines.at(-1)).toContain("This session runs through SSH");
+        expect(lines.at(-1)).toContain(`-L ${new URL(server.baseUrl).port}:127.0.0.1:${new URL(server.baseUrl).port}`);
     });
 });

@@ -72,7 +72,7 @@ import { env } from "../../lib/env.ts";
 import { errnoCode, mkdirResult, readFileResult, renameResult, rmResult, writeFileResult } from "../../lib/fs.ts";
 import { unknownRecordSchema } from "../../lib/json_record.ts";
 import { getLogger } from "../../lib/log.ts";
-import { openExternal } from "../../lib/open_external.ts";
+import { openByHandHint, openExternal } from "../../lib/open_external.ts";
 import { runAfter } from "../../lib/timer.ts";
 import { workspaceRootForAnalysisId } from "../analysis/output.ts";
 import { resolveHarnessConfig } from "../harness/config.ts";
@@ -320,7 +320,7 @@ export function defaultCustomizationOpts(mcpFailures: CustomizationOpts["mcpFail
         openBrowser: (url) => {
             openExternal(url.toString()).match(
                 () => undefined,
-                (e) => log.warn({ url: url.toString(), code: e.code }, "no browser opened for the MCP sign-in; open the URL by hand"),
+                (e) => log.warn({ url: url.toString(), hint: openByHandHint(e, url.toString()) }, "no browser opened for the MCP sign-in"),
             );
         },
         signIn: signInToMcpServer,
