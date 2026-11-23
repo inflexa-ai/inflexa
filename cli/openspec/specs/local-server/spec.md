@@ -213,9 +213,13 @@ The pull MUST write one line at its start and one line for its outcome.
 
 An `instance` command MUST connect to the server before its action runs. The client MUST read the discovery file and probe `GET /api/v1/server` with a limit of 2 s. A server that answers in any phase counts. A file whose process is dead is stale, and the client MUST remove it, after it reads the file again. The client MUST use the liveness rule of the instance lock: a different host name, a dead pid, or a pid with a different start time is a dead process.
 
+A file whose process lives but whose port does not answer names a busy server. The client MUST then probe again until the server answers, up to 30 s, and it MUST tell the person that it waits. It MUST NOT start a second server, because a second server cannot bind the port. If the process ends during the wait, the file is stale. If the server does not answer within 30 s, the command MUST fail with a message that names the pid, the port, and the server log.
+
 When no server answers, the client MUST take the `server-spawn` lock, read the file again, and run `inflexa serve --detach`. Then it MUST probe until the server answers, up to 30 s. A client that finds the lock held MUST start nothing, and it MUST wait for the server that the holder starts. Thus two clients that find no server start one server. The client MUST tell the person that it starts the server, and it MUST name the server log.
 
-A server whose `apiVersion` differs from the API version of the client MUST be refused, with the instruction to run `inflexa server stop`.
+The client MUST compare the package version of the server with its own version. An update replaces the binary, but the old server keeps its old code. When the server is older and has no active work, the client MUST stop the server and start a server of its own version. When the server is older and has active work, the client MUST keep the server, and it MUST tell the person to run `inflexa server stop` when the work ends. The client MUST NOT stop a newer server. A client that starts no server (`INFLEXA_SERVER_FILE`) MUST NOT stop a server.
+
+A server whose `apiVersion` differs from the API version of the client, and that the client does not replace, MUST be refused, with the instruction to run `inflexa server stop`.
 
 #### Scenario: The first command starts the server
 
@@ -228,6 +232,24 @@ A server whose `apiVersion` differs from the API version of the client MUST be r
 - **GIVEN** no server runs
 - **WHEN** two `instance` commands start at the same time
 - **THEN** one of them starts the server, and both use that server
+
+#### Scenario: A busy server
+
+- **GIVEN** a server process that lives, and that does not answer the probe within 2 s
+- **WHEN** the person runs an `instance` command
+- **THEN** the command waits up to 30 s for the answer, and it starts no second server
+
+#### Scenario: An idle server of an older version
+
+- **GIVEN** a server of an older version with no active work, after an update
+- **WHEN** the person runs an `instance` command
+- **THEN** the command stops that server and starts a server of its own version
+
+#### Scenario: A busy server of an older version
+
+- **GIVEN** a server of an older version with a chat turn that runs
+- **WHEN** the person runs an `instance` command
+- **THEN** the command uses that server and tells the person to run `inflexa server stop` when the work ends
 
 #### Scenario: A server of a different API version
 
