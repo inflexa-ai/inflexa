@@ -823,6 +823,8 @@ Before each profile drive, the server MUST ask why a sandbox of the analysis can
 - An analysis with no inputs profiles nothing, thus it MUST pass.
 - A catalog transfer in its `unpacking` phase MUST refuse, and name `inflexa sandbox status`. That phase merges into the store root.
 - A live image transfer over an absent image MUST refuse, and name `inflexa sandbox status`. A live catalog transfer over an absent or incomplete store MUST refuse in the same way. Each other live transfer MUST NOT refuse.
+
+A sandbox that starts in the download phase can run during the merge of the catalog. Thus the merge MUST change no entry that a running sandbox reads. The merge MUST only add `store/` directories, and it MUST keep each `store/` directory that exists. The directory name is the hash of the content. An update replaces only the catalog farm and the publisher records, and only a compose reads them. A sandbox reads its analysis farm, whose links name only `store/` directories.
 - A container engine that does not answer MUST refuse with the message of the engine.
 - An image that the engine cannot find MUST refuse, and name `inflexa sandbox pull`, or the build of a custom image.
 - An absent or incomplete store MUST refuse, and name `inflexa store download`. A declined or canceled catalog transfer gives the reason.
