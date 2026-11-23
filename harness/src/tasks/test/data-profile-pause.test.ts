@@ -91,8 +91,8 @@ async function seedProfile(): Promise<string> {
     const analysisId = rig.nextWorkflowId("an-profile-pause-");
     const now = new Date().toISOString();
     await pool.query({
-        text: `INSERT INTO cortex_analysis_state (analysis_id, status, data_profile_status, seed_input_file_ids, created_at, updated_at)
-               VALUES ($1, 'active', 'pending', '["f1"]'::jsonb, $2, $2)`,
+        text: `INSERT INTO cortex_analysis_state (analysis_id, status, data_profile_status, seed_input_count, created_at, updated_at)
+               VALUES ($1, 'active', 'pending', 1, $2, $2)`,
         values: [analysisId, now],
     });
     expect((await tryStartDataProfile(pool, analysisId))._unsafeUnwrap()).toBe(true);

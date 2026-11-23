@@ -261,7 +261,7 @@ type SeedOptions = {
     /** `data_profile_status`. NULL is the honest "no profile" state. */
     readonly dpStatus?: string | null;
     readonly result?: DataProfileResult | null;
-    /** `seed_input_file_ids` — the CURRENT input set, which a stale profile no longer covers. */
+    /** The ids of the CURRENT input set, stored as their count in `seed_input_count`, which a stale profile no longer covers. */
     readonly seed?: string[] | null;
 };
 
@@ -269,9 +269,9 @@ async function seedAnalysis(pool: Pool, analysisId: string, opts: SeedOptions = 
     const now = new Date().toISOString();
     await pool.query({
         text: `INSERT INTO cortex_analysis_state
-           (analysis_id, status, context, data_profile_status, data_profile_result, seed_input_file_ids, created_at, updated_at)
-           VALUES ($1, 'active', NULL, $2, $3::jsonb, $4::jsonb, $5, $6)`,
-        values: [analysisId, opts.dpStatus ?? null, opts.result ? JSON.stringify(opts.result) : null, opts.seed ? JSON.stringify(opts.seed) : null, now, now],
+           (analysis_id, status, context, data_profile_status, data_profile_result, seed_input_count, created_at, updated_at)
+           VALUES ($1, 'active', NULL, $2, $3::jsonb, $4, $5, $6)`,
+        values: [analysisId, opts.dpStatus ?? null, opts.result ? JSON.stringify(opts.result) : null, opts.seed ? opts.seed.length : null, now, now],
     });
 }
 

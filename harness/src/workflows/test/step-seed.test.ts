@@ -77,7 +77,7 @@ function fakePool(state: FakeState): Pool {
                         data_profile_started_at: null,
                         data_profile_completed_at: null,
                         data_profile_result: state.profile,
-                        seed_input_file_ids: ["f1"],
+                        seed_input_count: 1,
                     },
                 ],
                 rowCount: 1,

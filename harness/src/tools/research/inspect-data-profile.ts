@@ -144,7 +144,7 @@ type FilesOutput = ProfileEnvelope & {
  * Deliberately carries no staleness verdict. None of this variant's three
  * producers retains a comparand: an analysis that was never profiled and one
  * with no input files never had one, and `clearDataProfile` nulls
- * `seed_input_file_ids` along with every other profile column, so a cleared row
+ * `seed_input_count` along with every other profile column, so a cleared row
  * keeps no record of what it once covered. Such a field could only ever be
  * constant here, and a constant field carries no information while implying
  * that it does. `FailedOutput` omits one for the same reason — see its note.
@@ -166,7 +166,7 @@ type PendingOutput = {
  * Carries no staleness verdict, deliberately. Whether the failed attempt covered
  * the files the analysis holds NOW is not derivable here: this tool reads one
  * `cortex_analysis_state` row, the current input set is the embedder's knowledge,
- * and `seed_input_file_ids` is the most recently seeded set rather than a
+ * and `seed_input_count` is the most recently seeded set rather than a
  * per-attempt snapshot (`upsertAnalysis` overwrites it). A field reporting that
  * verdict could only ever hold one value, which carries no information while
  * implying that it does — and the tool description, being the whole of what an

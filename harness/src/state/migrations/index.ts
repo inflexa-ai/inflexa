@@ -36,6 +36,7 @@ import { addTheRunMandateColumnAgain } from "./20261112120000_add_the_run_mandat
 import { recordThePersonOfWork } from "./20261114120000_record_the_person_of_work.js";
 import { recordTheAgentOfAStep } from "./20261116120000_record_the_agent_of_a_step.js";
 import { recordTheTemplateOfAnArtifact } from "./20261116120000_record_the_template_of_an_artifact.js";
+import { countTheSeedInputs } from "./20261123120000_count_the_seed_inputs.js";
 
 export function cortexMigrations(logger: Logger): Record<string, Migration> {
     return {
@@ -70,5 +71,6 @@ export function cortexMigrations(logger: Logger): Record<string, Migration> {
         "20261114120000_record_the_person_of_work": recordThePersonOfWork,
         "20261116120000_record_the_agent_of_a_step": recordTheAgentOfAStep,
         "20261116120000_record_the_template_of_an_artifact": recordTheTemplateOfAnArtifact,
+        "20261123120000_count_the_seed_inputs": countTheSeedInputs,
     };
 }

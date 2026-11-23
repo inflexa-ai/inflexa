@@ -65,8 +65,8 @@ beforeAll(async () => {
     if (!DBOS.isInitialized()) await DBOS.launch();
     const now = new Date().toISOString();
     await rig.pool.query({
-        text: `INSERT INTO cortex_analysis_state (analysis_id, status, context, data_profile_status, seed_input_file_ids, created_at, updated_at)
-               VALUES ($1, 'active', NULL, 'failed', '["file-a"]'::jsonb, $2, $2)`,
+        text: `INSERT INTO cortex_analysis_state (analysis_id, status, context, data_profile_status, seed_input_count, created_at, updated_at)
+               VALUES ($1, 'active', NULL, 'failed', 1, $2, $2)`,
         values: [ANALYSIS_ID, now],
     });
     expect((await tryRetryDataProfile(rig.pool, ANALYSIS_ID))._unsafeUnwrap()).toBe(true);

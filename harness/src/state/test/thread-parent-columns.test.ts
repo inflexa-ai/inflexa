@@ -167,6 +167,7 @@ describe("initCortexState and an open transaction on cortex_analysis_threads", (
             "20261114120000_record_the_person_of_work",
             "20261116120000_record_the_agent_of_a_step",
             "20261116120000_record_the_template_of_an_artifact",
+            "20261123120000_count_the_seed_inputs",
         ]);
     }, 20_000);
 });
