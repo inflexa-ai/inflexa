@@ -51,6 +51,7 @@ export type {
     ModelRetryPart,
     ModelRefusal,
     ModelRefusalPart,
+    ToolProgressPart,
     ChatPart,
     KnownChatPart,
 } from "./chat-parts.js";

@@ -535,6 +535,15 @@ export const ModelRetryPartSchema = z.object({
     status: z.number().int().optional(),
 });
 
+// ── Tool progress ───────────────────────────────────────────────────
+
+export const ToolProgressPartSchema = z.object({
+    type: z.literal("data-tool-progress"),
+    id: z.string(),
+    toolUseId: z.string(),
+    text: z.string(),
+});
+
 // ── Sub-agent activity ──────────────────────────────────────────────
 
 export const SubAgentActivityEntrySchema = z.object({
@@ -585,4 +594,5 @@ export const ChatPartSchema = z.discriminatedUnion("type", [
     PausePartSchema,
     ModelRetryPartSchema,
     ModelRefusalPartSchema,
+    ToolProgressPartSchema,
 ]);

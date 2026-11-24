@@ -1024,6 +1024,28 @@ describe("sandbox-step lease", () => {
         expect(entryOf("wait-tu-a")).toMatchObject({ phase: "sandbox-init", activity: "Waiting for a sandbox (1 CPU, 2 GB)" });
         expect(entryOf("ready-tu-a")).toMatchObject({ phase: "executing", activity: ownActivity });
     });
+
+    it("shows the progress of a tool call as the current activity of the step, with no entry in the history", async () => {
+        const slow = defineTool({
+            id: "slow",
+            description: "Report progress, then end.",
+            inputSchema: z.object({}),
+            view: "none",
+            describeCall: "none",
+            execute: async (_input, ctx) => {
+                const data = { id: `progress-${ctx.invocationId}`, toolUseId: ctx.invocationId, text: "a.txt: 1 B of 2 B" };
+                await ctx.emit({ type: "data-tool-progress", source: ctx.session.provenance, data });
+                return ok("done");
+            },
+        });
+        const { provider } = scriptedModel([callTools(toolCall("tu-slow", "slow", {})), reply([text("done")]), reply([text("## Summary")])]);
+
+        await runSandboxStepBody(usageStepInput(), { ...usageStepDeps(undefined), provider, services: stepServices([slow]) });
+
+        const shown = dbosState.emittedParts.filter((part) => part.activity === "a.txt: 1 B of 2 B");
+        expect(shown.map((part) => [part.type, part.phase])).toEqual([["data-step-activity", "executing"]]);
+        expect(dbosState.emittedParts.some((part) => part.type === "data-tool-progress")).toBe(false);
+    });
 });
 
 // ── pause ─────────────────────────────────────────────────────────────

@@ -112,3 +112,19 @@ When the server answers 404 for a URL, the tool MUST read the page of the folder
 
 - **WHEN** an agent downloads a missing file, and its folder answers 404 too
 - **THEN** the failed file gives the reason `the server answered HTTP 404`
+
+### Requirement: The tool reports the progress of a call
+
+While a call runs, the tool MUST emit `data-tool-progress` parts under one id for the call, with the id of the tool call and one line of text. A line MUST go out at the start of each file and at the start of each extraction. Between them, at most one line MUST go out in each interval of 2 seconds. A line MUST name the file, the bytes that arrived, the size when the server gives it, and the place of the file when the call has more than one file. The registry MUST mark the part as a transient conversation part that reconciles, thus the stored transcript does not hold it. A failed write of a line MUST NOT change the download.
+
+In a sandbox step, the step MUST show the text of the line as the current activity of the step, under the activity key of the tool call. The line MUST NOT add an entry to the activity history.
+
+#### Scenario: A call with two files
+
+- **WHEN** an agent downloads `a.txt` of 1 byte and `b.txt` of 2 bytes in one call
+- **THEN** the call emits the lines `a.txt: 0 B of 1 B, file 1 of 2` and `b.txt: 0 B of 2 B, file 2 of 2` under one id
+
+#### Scenario: A download in a step
+
+- **WHEN** a step agent downloads a file
+- **THEN** the current activity of the step gives the line of the download, and the activity history holds no entry for the line

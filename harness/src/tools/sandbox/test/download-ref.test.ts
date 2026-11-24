@@ -58,6 +58,7 @@ function optsWith(addresses: Record<string, ResolvedAddress[]> = {}): DownloadRe
                 req.on("error", reject);
                 req.end();
             }),
+        now: Date.now,
     };
 }
 
@@ -179,6 +180,7 @@ describe("the host check", () => {
                 if (options.address.address === unreachable) return Promise.reject(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }));
                 return reachable.request(url, options);
             },
+            now: Date.now,
         };
         const out = await download(["https://raw.githubusercontent.com/a.bed"], false, opts);
         expect(out.files[0]).toMatchObject({ status: "downloaded", path: "/mnt/refs/raw.githubusercontent.com/a.bed" });
@@ -379,5 +381,49 @@ describe("the approval hook", () => {
     test("a call that the check refuses asks nothing", async () => {
         const tool = createDownloadRefTool({ storePath: store });
         expect(await tool.approval?.({ urls: ["https://zenodo.org/a.txt", "https://figshare.com/b.txt"] }, approvalCtx)).toBeUndefined();
+    });
+});
+
+describe("the progress", () => {
+    const ProgressPartSchema = z.object({
+        type: z.literal("data-tool-progress"),
+        data: z.object({ id: z.string(), toolUseId: z.string(), text: z.string() }),
+    });
+
+    async function progressOf(urls: string[], extract: boolean, now: () => number): Promise<z.infer<typeof ProgressPartSchema>["data"][]> {
+        const tool = createDownloadRefTool({ storePath: store }, { ...optsWith(), now });
+        const { ctx, emitted } = makeToolContext();
+        (await tool.execute({ urls, extract }, ctx))._unsafeUnwrap();
+        return emitted.flatMap((event) => {
+            const parsed = ProgressPartSchema.safeParse(event);
+            return parsed.success ? [parsed.data.data] : [];
+        });
+    }
+
+    test("each file starts a line that names the file, its size, and its place in the call, under the id of the call", async () => {
+        serve("ftp.ebi.ac.uk/a.txt", "a");
+        serve("ftp.ebi.ac.uk/b.txt", "bb");
+        const lines = await progressOf(["https://ftp.ebi.ac.uk/a.txt", "https://ftp.ebi.ac.uk/b.txt"], false, () => 0);
+        expect(lines).toEqual([
+            { id: "progress-test-tool-call", toolUseId: "test-tool-call", text: "a.txt: 0 B of 1 B, file 1 of 2" },
+            { id: "progress-test-tool-call", toolUseId: "test-tool-call", text: "b.txt: 0 B of 2 B, file 2 of 2" },
+        ]);
+    });
+
+    test("a later line goes out only after the interval, and the last line gives the whole size", async () => {
+        serve("ftp.ebi.ac.uk/big.txt", "x".repeat(4096));
+        let clock = 0;
+        const lines = await progressOf(["https://ftp.ebi.ac.uk/big.txt"], false, () => (clock += 2_500));
+        expect(lines[0]?.text).toBe("big.txt: 0 B of 4.0 KB");
+        expect(lines.at(-1)?.text).toBe("big.txt: 4.0 KB of 4.0 KB");
+        serve("ftp.ebi.ac.uk/same.txt", "x".repeat(4096));
+        const still = await progressOf(["https://ftp.ebi.ac.uk/same.txt"], false, () => 0);
+        expect(still.map((line) => line.text)).toEqual(["same.txt: 0 B of 4.0 KB"]);
+    });
+
+    test("an extraction gives its own line", async () => {
+        serve("unite.ut.ee/sh/unite.tgz", gzipSync(tarOf({ "unite/its.fasta": ">a\nACGT\n" })));
+        const lines = await progressOf(["https://unite.ut.ee/sh/unite.tgz"], true, () => 0);
+        expect(lines.at(-1)?.text).toBe("Extracting unite.tgz");
     });
 });

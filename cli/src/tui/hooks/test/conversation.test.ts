@@ -424,6 +424,19 @@ describe("send() drives the adapter over the turn stream", () => {
 
         // A sub-agent spends most of a long call in a model request, before its first tool call too, and
         // an empty line there reads as a wedged call.
+        test("the progress of a call is its activity line, and the transcript holds no part of it", async () => {
+            const activity = await activityDuring((emit) => {
+                void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "download_ref" });
+                void emit({
+                    type: "data-tool-progress",
+                    source: ROOT,
+                    data: { id: "progress-t1", toolUseId: "t1", text: "a.gmt: 1.0 MB of 4.0 MB" },
+                });
+            });
+            expect(activity).toBe("a.gmt: 1.0 MB of 4.0 MB");
+            expect(messages[1]?.parts.some((part) => part.type === "data-tool-progress") ?? false).toBe(false);
+        });
+
         test("a sub-agent that starts a model request shows its thinking line", async () => {
             const activity = await activityDuring((emit) => {
                 void emit({ type: "tool-started", source: ROOT, toolUseId: "t1", name: "plan_analysis" });
