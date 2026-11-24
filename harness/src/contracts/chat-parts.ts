@@ -11,6 +11,7 @@
  *   Compaction:      data-compaction (a compaction of the conversation thread)
  *   Model retry:     data-model-retry (a retry of a model request inside the retry envelope of the provider)
  *   Model refusal:   data-model-refusal (a model request that the provider declined)
+ *   Tool progress:   data-tool-progress (the progress of a tool call that runs for a long time)
  *   Run lifecycle:   run-started, dag-state, run-completed, run-failed, run-synthesis,
  *                    synthesis-progress
  *   Per-step live:   step-activity, step-file-tree
@@ -629,6 +630,19 @@ export type SubAgentActivityPart = {
 export type PauseCause = { readonly kind: "outage" } | { readonly kind: "credential" } | { readonly kind: "host"; readonly reason: string };
 
 /**
+ * The progress of one tool call that runs, as one line of text that the tool writes. Re-emitted under the same `id`
+ * for each report of the call. The end of the call ends it.
+ */
+export type ToolProgressPart = {
+    type: "data-tool-progress";
+    /** The id of the report. One call gives one id. */
+    id: string;
+    /** The id of the tool call. */
+    toolUseId: string;
+    text: string;
+};
+
+/**
  * One retry of a model request inside the retry envelope of the provider, before the wait of that retry. Re-emitted
  * under the same `id` for each retry of the request. A later frame of the same agent ends it: the request then gave
  * a reply, or it failed after the last retry.
@@ -746,7 +760,8 @@ export type KnownChatPart =
     | CompactionPart
     | PausePart
     | ModelRetryPart
-    | ModelRefusalPart;
+    | ModelRefusalPart
+    | ToolProgressPart;
 
 /**
  * A part of a known contract, or a part whose type this build does not know. An emitter newer than this

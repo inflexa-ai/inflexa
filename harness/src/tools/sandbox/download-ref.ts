@@ -31,12 +31,13 @@ import { err, ok, type Result } from "neverthrow";
 import { z } from "zod";
 
 import type { ReferenceDownloadOptions } from "../../config/environment-stores.js";
+import { formatBytes } from "../../input-scan/scan.js";
 import { isAbsent } from "../../lib/fs-result.js";
 import { safeParseJsonAs } from "../../lib/parse-json.js";
 import { errorMessageOf } from "../../lib/thrown.js";
 import { REFS_CONTAINER_PATH } from "../../sandbox/mount-plan.js";
 import type { AskRequest } from "../approval/contract.js";
-import { defineTool, type Tool, type ToolError } from "../define-tool.js";
+import { defineTool, type Tool, type ToolContext, type ToolError } from "../define-tool.js";
 import { HARNESS_USER_AGENT } from "../lib/api-utils.js";
 import { isGuardedAddress } from "../research/guarded-address.js";
 import { archiveKindOf, extractTarStream, extractZipStream, type ExtractRefusal, type ExtractSummary } from "../script/archive.js";
@@ -132,6 +133,7 @@ export const DEFAULT_DOWNLOAD_AUTO_APPROVE_HOSTS: readonly string[] = [
 const MAX_URLS = 20;
 const MAX_REDIRECTS = 5;
 const IDLE_TIMEOUT_MS = 120_000;
+const PROGRESS_INTERVAL_MS = 2_000;
 const SOURCES_DIR = ".inflexa";
 const SOURCES_FILE = "sources.jsonl";
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -153,6 +155,7 @@ export type DownloadRequestOptions = {
 export type DownloadRefOpts = {
     readonly resolveHost: (hostname: string) => Promise<readonly ResolvedAddress[]>;
     readonly request: (url: URL, options: DownloadRequestOptions) => Promise<DownloadResponse>;
+    readonly now: () => number;
 };
 
 function httpsGet(url: URL, options: DownloadRequestOptions): Promise<DownloadResponse> {
@@ -183,6 +186,7 @@ export const DEFAULT_DOWNLOAD_REF_OPTS: DownloadRefOpts = {
         return dnsLookup(hostname, { all: true });
     },
     request: httpsGet,
+    now: Date.now,
 };
 
 export type DownloadRefFile = {
@@ -363,7 +367,13 @@ async function requestFirstReachable(
  * Transfer one URL into `part`, and follow the redirects. A `.part` file that exists continues with a `Range`
  * request. A server that sends the whole file again, or that refuses the range, starts the file again one time.
  */
-async function transfer(start: URL, part: string, opts: DownloadRefOpts, signal: AbortSignal): Promise<Transfer> {
+async function transfer(
+    start: URL,
+    part: string,
+    opts: DownloadRefOpts,
+    signal: AbortSignal,
+    onBytes: (written: number, total: number | undefined) => void,
+): Promise<Transfer> {
     let current = start;
     let redirects = 0;
     let restarted = false;
@@ -416,8 +426,17 @@ async function transfer(start: URL, part: string, opts: DownloadRefOpts, signal:
 
         const length = Number.parseInt(firstHeader(response.headers, "content-length") ?? "", 10);
         const expected = Number.isFinite(length) ? length + (resumes ? offset : 0) : undefined;
+        let received = resumes ? offset : 0;
+        onBytes(received, expected);
+        const counted = async function* (source: AsyncIterable<Buffer>): AsyncGenerator<Buffer> {
+            for await (const chunk of source) {
+                received += chunk.length;
+                onBytes(received, expected);
+                yield chunk;
+            }
+        };
         try {
-            await pipeline(response.body, createWriteStream(part, { flags: resumes ? "a" : "w" }), { signal });
+            await pipeline(response.body, counted, createWriteStream(part, { flags: resumes ? "a" : "w" }), { signal });
         } catch (cause) {
             if (signal.aborted) throw cause;
             return { kind: "failed", reason: `the transfer broke: ${errorMessageOf(cause) ?? "unknown error"}. A new call continues it.` };
@@ -581,6 +600,21 @@ function isExtractable(kind: ReturnType<typeof archiveKindOf>): kind is "zip" | 
     return kind === "zip" || kind === "tar" || kind === "tar-gzip";
 }
 
+/** One line of progress. A forced line goes out at once, and another line waits for the end of the interval since the last line. */
+type ReportProgress = (text: string, force: boolean) => void;
+
+function progressReporter(ctx: ToolContext, opts: DownloadRefOpts): ReportProgress {
+    let last = Number.NEGATIVE_INFINITY;
+    return (text, force) => {
+        const at = opts.now();
+        if (!force && at - last < PROGRESS_INTERVAL_MS) return;
+        last = at;
+        const data = { id: `progress-${ctx.invocationId}`, toolUseId: ctx.invocationId, text };
+        // A lost line of progress changes nothing, and the transfer does not wait for the stream.
+        void Promise.resolve(ctx.emit({ type: "data-tool-progress", source: ctx.session.provenance, data })).catch(() => undefined);
+    };
+}
+
 /** The downloads in this process, by store and URL. A second call for the same URL waits for the first. */
 const inFlight = new Map<string, Promise<DownloadRefFile>>();
 
@@ -591,6 +625,7 @@ async function downloadOne(
     sources: ReadonlyMap<string, string>,
     opts: DownloadRefOpts,
     signal: AbortSignal,
+    progress: ReportProgress,
 ): Promise<DownloadRefFile> {
     const recorded = sources.get(target.key);
     if (recorded !== undefined && (await exists(join(storePath, recorded)))) {
@@ -600,6 +635,7 @@ async function downloadOne(
         if (!extract || !isExtractable(kind) || !(await stat(recordedPath)).isFile()) {
             return { url: target.key, status: "reused", path: containerPath(storePath, recordedPath) };
         }
+        progress(`Extracting ${basename(recordedPath)}`, true);
         const extraction = await extractBeside(recordedPath, kind, basename(recordedPath), dirname(recordedPath));
         if (extraction.kind === "failed") return { url: target.key, status: "failed", error: extraction.reason };
         await recordSource(storePath, extraction.dir, target.key);
@@ -610,7 +646,10 @@ async function downloadOne(
     const urlName = target.segments.at(-1) ?? "";
     await mkdir(dir, { recursive: true });
     const part = join(dir, `${urlName}.part`);
-    const done = await transfer(target.url, part, opts, signal);
+    const label = urlName === "" ? target.host : urlName;
+    const done = await transfer(target.url, part, opts, signal, (written, total) => {
+        progress(total === undefined ? `${label}: ${formatBytes(written)}` : `${label}: ${formatBytes(written)} of ${formatBytes(total)}`, written === 0);
+    });
     if (done.kind === "failed") {
         const error = done.missing === undefined ? done.reason : await withParentListing(done.reason, done.missing, opts, signal);
         return { url: target.key, status: "failed", error };
@@ -630,6 +669,7 @@ async function downloadOne(
         const note = kind === "gzip" ? "a gzip file of one file stays compressed" : "the file is not a tar or zip archive";
         return { url: target.key, status: "downloaded", path: containerPath(storePath, file), extracted: false, note };
     }
+    progress(`Extracting ${name}`, true);
     const extraction = await extractBeside(file, kind, name, dir);
     if (extraction.kind === "failed") return { url: target.key, status: "failed", error: extraction.reason };
     await recordSource(storePath, extraction.dir, target.key);
@@ -689,8 +729,10 @@ export function createDownloadRefTool(
             const call = checkCall(urls);
             if (call.isErr()) return err({ error: call.error, retryable: false });
             const sources = await readSources(options.storePath);
+            const report = progressReporter(ctx, opts);
             const files: DownloadRefFile[] = [];
-            for (const target of call.value.urls) {
+            for (const [index, target] of call.value.urls.entries()) {
+                const position = call.value.urls.length > 1 ? `, file ${index + 1} of ${call.value.urls.length}` : "";
                 const key = `${options.storePath}\0${target.key}`;
                 const running = inFlight.get(key);
                 if (running !== undefined) {
@@ -698,7 +740,8 @@ export function createDownloadRefTool(
                     files.push(earlier.status === "failed" ? earlier : { ...earlier, status: "reused" });
                     continue;
                 }
-                const download = downloadOne(target, extract === true, options.storePath, sources, opts, ctx.signal).catch(
+                const progress: ReportProgress = (text, force) => report(`${text}${position}`, force);
+                const download = downloadOne(target, extract === true, options.storePath, sources, opts, ctx.signal, progress).catch(
                     (cause: unknown): DownloadRefFile => {
                         if (ctx.signal.aborted) throw cause;
                         return { url: target.key, status: "failed", error: errorMessageOf(cause) ?? "the download failed" };

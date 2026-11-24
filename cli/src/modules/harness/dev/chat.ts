@@ -501,6 +501,9 @@ export function createChatPrinter(sink: ChatSink, options: PrinterOptions = {}):
                 // this line (`answerPendingAsk`).
                 sink.out(`\n  [approval] ${part.command} — ${part.status}\n`);
                 return;
+            case "data-tool-progress":
+                sink.out(`  [progress] ${part.text}\n`);
+                return;
             default:
                 // A part of a known type with no render case here.
                 sink.out(`  [part:${part.type}]\n`);

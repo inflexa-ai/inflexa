@@ -9,6 +9,7 @@
 import { z } from "zod";
 
 import type { ActivityEntryPart, FileTreeEntry, StepActivityPart, StepPhase, SynthesisPhase, SynthesisProgressPart } from "../contracts/chat-parts.js";
+import { ToolProgressPartSchema } from "../contracts/schemas/chat-parts.js";
 import { parseUnknownRecord } from "../lib/unknown-containers.js";
 import type { ChatDataPart, EmitFn } from "../loop/types.js";
 
@@ -92,6 +93,15 @@ export function synthesisEmission(
  */
 export function activityForTool(name: string, detail?: string): string {
     return detail === undefined ? name : `${name} ${detail}`;
+}
+
+const ToolProgressDataSchema = ToolProgressPartSchema.omit({ type: true });
+
+/** The tool call and the text of a `data-tool-progress` part, or null for a part of another type or a malformed one. */
+export function toolProgressOf(part: { type: string; data?: unknown }): { readonly toolUseId: string; readonly text: string } | null {
+    if (part.type !== "data-tool-progress") return null;
+    const parsed = ToolProgressDataSchema.safeParse(part.data);
+    return parsed.success ? { toolUseId: parsed.data.toolUseId, text: parsed.data.text } : null;
 }
 
 /** On-change working-tree delta the sandbox executor posts per exec (paths

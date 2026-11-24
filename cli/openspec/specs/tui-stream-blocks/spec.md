@@ -341,6 +341,16 @@ activity SHALL be shown, one line at a time.
 - **WHEN** a sub-agent emits iterations and tool events
 - **THEN** no transcript-level block is created for them
 
+### Requirement: A running tool block shows the progress of its call
+
+A `data-tool-progress` frame of the root agent MUST set the activity line of the running tool block of its `toolUseId` to the text of the frame. The frame MUST NOT add a part to the transcript. The line leaves on completion, the same as the line of a sub-agent.
+
+#### Scenario: A download reports its bytes
+
+- **GIVEN** a running `download_ref` block
+- **WHEN** a `data-tool-progress` frame for that call gives `a.gmt: 1.0 MB of 4.0 MB`
+- **THEN** the block shows that text on its activity line, and the transcript holds no part of the frame
+
 ### Requirement: A tool block reflows a detail that does not fit
 
 `ToolBlock` SHALL take an optional `detail` string describing what the call is doing, and SHALL render it in a muted role. The detail SHALL render on the name line when it fits the available width, and SHALL otherwise render on one row indented by `space.md`. The detail SHALL NOT be truncated in either form.

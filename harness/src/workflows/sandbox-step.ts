@@ -62,6 +62,7 @@ import {
     sandboxTreeDelta,
     stepPartId,
     toolActivityKey,
+    toolProgressOf,
 } from "../sandbox/sandbox-step-translate.js";
 import { sandboxWaitActivity } from "../tools/sandbox/lease-tools.js";
 import { modelFailureClass } from "../providers/errors.js";
@@ -618,6 +619,13 @@ export async function runSandboxStepBody(input: SandboxStepInput, deps: SandboxS
             if (delta) {
                 applyTreeDelta(treeFiles, delta);
                 await emitFileTree();
+                return;
+            }
+            // The progress of a tool call becomes the current activity of the step, with no entry in the history.
+            // It comes from inside the step of the call, thus the wall clock dates it.
+            const progress = toolProgressOf(event);
+            if (progress !== null) {
+                await safeEmit(activityEmission(input, toolActivityKey(progress.toolUseId), "executing", progress.text, new Date().toISOString()).activity);
                 return;
             }
             await safeEmit(event);

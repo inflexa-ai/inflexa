@@ -513,6 +513,7 @@ export type {
     ModelRetryPart,
     ModelRefusal,
     ModelRefusalPart,
+    ToolProgressPart,
     AskPart,
     ChildSessionStartedPart,
     ReportRenderedPart,

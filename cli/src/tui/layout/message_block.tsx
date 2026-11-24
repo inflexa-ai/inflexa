@@ -387,6 +387,9 @@ export function MessageBlock(props: MessageBlockProps): JSX.Element {
                     case "data-model-retry":
                         // The header shows a retry of a model request, and the part never lands in a message.
                         return null;
+                    case "data-tool-progress":
+                        // The block of the call shows the progress, and the part never lands in a message.
+                        return null;
                     // The banner of a filtered turn shows a stop.
                     case "data-model-refusal":
                         return part.outcome === "fallback" ? (

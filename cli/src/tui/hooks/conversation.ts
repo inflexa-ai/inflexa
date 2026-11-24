@@ -390,17 +390,21 @@ function applySubAgentActivity(frame: ChatFrame): void {
     // The newest open call — `Map` preserves insertion order, and tools are inserted on start.
     const toolUseId = [...openTools.keys()].pop();
     if (toolUseId === undefined) return;
+    setToolActivity(id, toolUseId, label);
+}
 
+/** Write the activity line of one tool call of the message: the label of a sub-agent call, or the progress of the call. */
+function setToolActivity(messageId: string, toolUseId: string, activity: string): void {
     setMessages(
         produce((msgs) => {
-            const msg = msgs.find((m) => m.id === id);
+            const msg = msgs.find((m) => m.id === messageId);
             if (!msg) return;
             const idx = msg.parts.findIndex((p) => p.type === "tool-call" && p.toolCallId === toolUseId);
             const part = msg.parts[idx];
             // Fresh object so Solid reconciles the edit — the same rule every other part write here
             // follows. The line is screen state of the store alone: the harness part of the call never
             // holds it.
-            if (part?.type === "tool-call") msg.parts[idx] = { ...part, activity: label };
+            if (part?.type === "tool-call") msg.parts[idx] = { ...part, activity };
         }),
     );
 }
@@ -444,6 +448,7 @@ export function noteAskFeedback(askId: string, feedback: string): void {
  *     model call that a recovery ran again, and the sub-agent routing above drops the frame of a sub-agent;
  *   - `tool-started`/`tool-finished` also open and close the call in `openTools`: the start stamp gives
  *     the fallback duration;
+ *   - a `data-tool-progress` sets the activity line of its call, and never lands in the message;
  *   - a data frame is checked with `checkChatPart` at receipt: an invalid part of a known type is
  *     dropped with a warning, and a part of a type that this build does not know passes unchanged;
  *   - a `data-ask` docks or settles its prompt, and a report spawn pokes the report-children listing;
@@ -509,6 +514,14 @@ export function applyServerFrame(frame: ChatFrame): void {
             // The bracket stays as the fallback for a harness that sends no
             // duration, which is the read that `ToolFinishedEvent` asks a host for.
             applyFrame(frame.durationMs === undefined && startedAt !== undefined ? { ...frame, durationMs: Date.now() - startedAt } : frame);
+            return;
+        }
+        case "data-tool-progress": {
+            // The progress of a call is the activity line of its block. The part is transient, thus it never lands in the message.
+            const checked = checkChatPart(frame);
+            if (checked.ok && isKnownPartFrame(checked.frame) && checked.frame.type === "data-tool-progress") {
+                setToolActivity(id, checked.frame.toolUseId, checked.frame.text);
+            }
             return;
         }
         default:

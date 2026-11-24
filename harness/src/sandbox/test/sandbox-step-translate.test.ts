@@ -10,7 +10,7 @@ import { createWriteFileTool } from "../../tools/workspace/write-file.js";
 import type { WorkspaceMutator } from "../../tools/workspace/mutator.js";
 import { makeFakeWorkspaceFs } from "../../agents/sandbox/__fixtures__/deps.js";
 import { ChatPartSchema } from "../../contracts/schemas/chat-parts.js";
-import { activityForTool, applyTreeDelta, buildFileTree, sandboxTreeDelta, stepPartId, synthesisEmission } from "../sandbox-step-translate.js";
+import { activityForTool, applyTreeDelta, buildFileTree, sandboxTreeDelta, stepPartId, synthesisEmission, toolProgressOf } from "../sandbox-step-translate.js";
 
 describe("stepPartId", () => {
     it("pins the id shape the run-stream fold reconciles on", () => {
@@ -123,6 +123,15 @@ describe("sandboxTreeDelta", () => {
         expect(sandboxTreeDelta(part({ kind: "phase" }))).toBeNull();
         expect(sandboxTreeDelta(part({ kind: "file-tree" }))).toBeNull(); // no tree
         expect(sandboxTreeDelta({ type: "data-step-activity" })).toBeNull();
+    });
+});
+
+describe("toolProgressOf", () => {
+    it("gives the call and the text of a progress part, and null for another part or a malformed one", () => {
+        const data = { id: "progress-tu", toolUseId: "tu", text: "a.txt: 1 B of 2 B" };
+        expect(toolProgressOf({ type: "data-tool-progress", data })).toEqual({ toolUseId: "tu", text: "a.txt: 1 B of 2 B" });
+        expect(toolProgressOf({ type: "data-tool-progress", data: { id: "progress-tu", text: "x" } })).toBeNull();
+        expect(toolProgressOf({ type: "data-step-activity", data })).toBeNull();
     });
 });
 
