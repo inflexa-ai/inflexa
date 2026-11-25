@@ -52,7 +52,7 @@ RUN gcc -shared -fPIC -O2 -pthread -fstack-protector-strong -Wformat -Wformat-se
 # step, thus the binary never lands in a layer of the image.
 # =============================================================================
 
-FROM anchore/syft:v1.57.1@sha256:03215d0e98b661d0ecbc8575dbc14d65be1743b5de5df6410aecb7e80f95b060 AS syft
+FROM anchore/syft:v1.57.2@sha256:e97e20b6e6d1699c60296b66ab337941724f9bd06ac279d893eda89601fc4b2a AS syft
 
 # =============================================================================
 # Stage 3: libs-toolchain — the manifest and the reader scripts. The conda
