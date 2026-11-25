@@ -22,7 +22,7 @@ ARG BASE_IMAGE=rocker/r-ver:4.6.0@sha256:6f05a1a8b8c52328f181593923909b01cbfd14c
 
 # The SBOM scanner, the same pin as sandbox-base. The SBOM step mounts its
 # binary, thus the binary never lands in a layer.
-FROM anchore/syft:v1.57.1@sha256:03215d0e98b661d0ecbc8575dbc14d65be1743b5de5df6410aecb7e80f95b060 AS syft
+FROM anchore/syft:v1.57.2@sha256:e97e20b6e6d1699c60296b66ab337941724f9bd06ac279d893eda89601fc4b2a AS syft
 
 FROM ${BASE_IMAGE}
 # Re-declared after FROM so the assertion RUN can read it.
