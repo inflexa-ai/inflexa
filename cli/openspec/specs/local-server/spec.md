@@ -1284,7 +1284,7 @@ The list route MUST answer 400 `validation_error` when `path` is absent, is not 
 
 Each route under `/api/v1/fs` MUST take each path as an absolute path. The client MUST expand `~` with the home path before it sends a path. The server MUST remove each `.` and `..` segment of a path as text, before it resolves a symbolic link. Each path that a route gives MUST be absolute, with each symbolic link of its folders resolved. The one exception is `link.target` of a list entry, because it is the text that the link stores. The server MUST change a path to a relative path only inside its own code.
 
-The routes MUST NOT limit a path to a root. A person can browse and preview each place on the machine. The routes give what the same OS user can read with `ls -l` and `cat`. The routes MUST NOT write to the disk, with two exceptions. The guard of `analysisId` writes the lock file of the instance lock. The routes of the pins and of the recent files write their rows in the database of the server. The folder list, the recent-file read, and the input entries of the places read read the artifact ledger through the harness runtime for `origin` only. The places read also reads the run ledger, for the runs of an analysis only. Each route MUST answer while the boot of the runtime is not ready.
+The routes MUST NOT limit a path to a root. A person can browse and preview each place on the machine. The routes give what the same OS user can read with `ls -l` and `cat`. The routes MUST NOT write to the disk, with three exceptions. The guard of `analysisId` writes the lock file of the instance lock. The routes of the pins and of the recent files write their rows in the database of the server. `POST /api/v1/fs/folders` makes one empty folder for the picker. This write is permitted because it cannot change or remove data. The folder list, the recent-file read, and the input entries of the places read read the artifact ledger through the harness runtime for `origin` only. The places read also reads the run ledger, for the runs of an analysis only. Each route MUST answer while the boot of the runtime is not ready.
 
 #### Scenario: A folder outside each analysis
 
@@ -3232,6 +3232,46 @@ The route MUST answer 400 `validation_error` when `path` is absent, is not absol
 - **GIVEN** the pin `p1`
 - **WHEN** a client sends `DELETE /api/v1/fs/pins/p1`, and then sends it again
 - **THEN** the first answer is 200 with `{deleted: true}`, and the second answer is 404 `not_found`
+
+### Requirement: A client makes a folder in the picker
+
+`POST /api/v1/fs/folders` with the body `{parent, name}` MUST make one empty folder with the name `name` in the real path of `parent`. The server MUST resolve `parent` as it resolves the `path` of a pin. The server MUST use the trimmed `name`. The route MUST answer 201 with the list entry of the new folder, from the same read as `GET /api/v1/fs/list`. The entry MUST have `isInput` false and `origin` null. The server MUST NOT make a missing parent, and it MUST NOT replace an entry.
+
+The route MUST answer with these errors:
+
+- 400 `validation_error` when `parent` is not absolute or holds a NUL byte.
+- 400 `validation_error` when the trimmed `name` is empty, is `.` or `..`, holds `/`, `\`, or a NUL byte, or has more than 255 bytes.
+- 404 `not_found` when no entry is at `parent`.
+- 409 `conflict` when `parent` is not a folder, or when an entry of the name is in the parent.
+- 403 `forbidden` for each other failure, with the error code of the operating system in `details.code`, for example `EACCES`, `EPERM`, or `EROFS`.
+
+#### Scenario: A new folder
+
+- **GIVEN** the folder `/data/study`
+- **WHEN** a client sends `POST /api/v1/fs/folders` with `{parent: "/data/study", name: " results "}`
+- **THEN** the server answers 201 with the entry of the empty folder `/data/study/results`, and `isInput` is false
+
+#### Scenario: An entry of the name exists
+
+- **GIVEN** the file `/data/study/results`
+- **WHEN** a client makes the folder `results` in `/data/study`
+- **THEN** the server answers 409 `conflict`, and the file does not change
+
+#### Scenario: A parent that does not exist
+
+- **WHEN** a client makes a folder in an absolute path at which no entry exists
+- **THEN** the server answers 404 `not_found`, and it makes no folder
+
+#### Scenario: A name of two segments
+
+- **WHEN** a client sends the name `a/b`
+- **THEN** the server answers 400 `validation_error`, and it makes no folder
+
+#### Scenario: A parent that the server cannot write
+
+- **GIVEN** a folder that the server user can read but cannot write
+- **WHEN** a client makes a folder in it
+- **THEN** the server answers 403 `forbidden` with `details.code` `EACCES`
 
 ### Requirement: The server records a recent file of the picker
 

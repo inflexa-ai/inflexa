@@ -1,7 +1,7 @@
 import { queryArtifactOrigins, queryRunsByAnalysis, type ArtifactOrigin, type CortexRunRow, type DbError } from "@inflexa-ai/harness";
 import type { Querier } from "@inflexa-ai/harness/state/db.js";
 import type { BigIntStats } from "node:fs";
-import { lstat, realpath, stat } from "node:fs/promises";
+import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -26,6 +26,7 @@ import {
     type DeletePinResponse,
     type FolderPlace,
     type HomeFolder,
+    type MakeFolderRequest,
     type PinList,
     type PinPlace,
     type PinView,
@@ -358,15 +359,15 @@ function notAFile(c: Context<ServerEnv>): Response {
 
 /**
  * `path` as an absolute path with each `.` and `..` segment removed as text. The error channel holds the 400 response to
- * send. Each route of this file reads its path here, thus the rule has one home.
+ * send, which names `field`. Each route of this file reads its path here, thus the rule has one home.
  */
-function absolutePathFrom(c: Context<ServerEnv>, path: string | undefined): Result<string, Response> {
+function absolutePathFrom(c: Context<ServerEnv>, path: string | undefined, field = "path"): Result<string, Response> {
     // `node:fs` refuses a NUL byte with `ERR_INVALID_ARG_VALUE`, a fault of the request and not a read failure.
     if (path === undefined || !isAbsolute(path) || path.includes("\0")) {
         return err(
-            apiError(c, "validation_error", "`path` must be an absolute path.", {
+            apiError(c, "validation_error", `\`${field}\` must be an absolute path.`, {
                 formErrors: [],
-                fieldErrors: { path: ["The path must be absolute."] },
+                fieldErrors: { [field]: ["The path must be absolute."] },
             }),
         );
     }
@@ -380,12 +381,13 @@ function absolutePathOf(c: Context<ServerEnv>): Result<string, Response> {
 }
 
 /**
- * The real path and the kind of the entry that a body `path` names, for a pin or a recent file. The error channel holds
- * the response to send: 400 for a path that is not absolute, 404 `not_found` when no entry exists, and 403 `forbidden`
- * with the code of the operating system for each other failure. Two spellings of one folder give one real path.
+ * The real path and the kind of the entry that a body `path` names, for a pin, a recent file, or the parent of a new
+ * folder. The error channel holds the response to send: 400 for a path that is not absolute, 404 `not_found` when no
+ * entry exists, and 403 `forbidden` with the code of the operating system for each other failure. Two spellings of one
+ * folder give one real path.
  */
-async function locatePath(c: Context<ServerEnv>, path: string): Promise<Result<{ realPath: string; isDir: boolean }, Response>> {
-    const absolute = absolutePathFrom(c, path);
+async function locatePath(c: Context<ServerEnv>, path: string, field = "path"): Promise<Result<{ realPath: string; isDir: boolean }, Response>> {
+    const absolute = absolutePathFrom(c, path, field);
     if (absolute.isErr()) return err(absolute.error);
     const located = await ResultAsync.fromPromise(
         realpath(absolute.value).then(async (realPath) => ({ realPath, isDir: (await stat(realPath)).isDirectory() })),
@@ -598,6 +600,46 @@ function readErrorResponse(c: Parameters<typeof apiError>[0], error: FolderReadE
 }
 
 const addPinBody = z.object({ path: z.string(), label: z.string().optional() }) satisfies z.ZodType<AddPinRequest>;
+
+const makeFolderBody = z.object({ parent: z.string(), name: z.string() }) satisfies z.ZodType<MakeFolderRequest>;
+
+/** The most bytes of one name on the file systems of each supported platform (`NAME_MAX` of APFS, ext4, and NTFS). */
+const NAME_MAX_BYTES = 255;
+
+/**
+ * The trimmed `name` of a new folder when it is one path segment. The error channel holds the 400 response to send. A
+ * separator or a NUL byte would make a path of more than one segment, or a path that `node:fs` refuses.
+ */
+function folderNameOf(c: Context<ServerEnv>, name: string): Result<string, Response> {
+    const trimmed = name.trim();
+    const fault =
+        trimmed === "" || trimmed === "." || trimmed === ".."
+            ? "must name one folder"
+            : trimmed.includes("/") || trimmed.includes("\\") || trimmed.includes("\0")
+              ? "must not hold `/`, `\\`, or a NUL byte"
+              : Buffer.byteLength(trimmed, "utf8") > NAME_MAX_BYTES
+                ? `must be at most ${NAME_MAX_BYTES} bytes`
+                : null;
+    if (fault === null) return ok(trimmed);
+    return err(apiError(c, "validation_error", `\`name\` ${fault}.`, { formErrors: [], fieldErrors: { name: [fault] } }));
+}
+
+/**
+ * The response for a failed `mkdir` of `path`. `EEXIST` is an entry of the name, and `ENOTDIR` a parent that a file
+ * replaced after the locate. Each other failure gives 403 `forbidden` with the code, as a folder that the list cannot read.
+ */
+function makeFolderError(c: Context<ServerEnv>, path: string, cause: unknown): Response {
+    switch (errnoCode(cause)) {
+        case "EEXIST":
+            return apiError(c, "conflict", `An entry exists at ${path}.`);
+        case "ENOTDIR":
+            return apiError(c, "conflict", "`parent` must name a folder.");
+        case "ENOENT":
+            return apiError(c, "not_found", "No folder at the parent path.");
+        default:
+            return apiError(c, "forbidden", `The server cannot make the folder ${path}: ${messageOf(cause)}`, { code: errnoCode(cause) });
+    }
+}
 
 const recordRecentBody = z.object({ path: z.string(), analysisId: z.string().optional() }) satisfies z.ZodType<RecordRecentRequest>;
 
@@ -836,9 +878,9 @@ async function drivePlaces(opts: FsRouteOpts): Promise<PlaceItem[]> {
 /**
  * The file system routes under `/api/v1/fs`: the home folder, the entries of one folder, a name search under one folder, the
  * bytes of one file, the preview of one file or folder, and the pins (`/pins`), the recent files (`/recents`), and the
- * places (`/places`) of the picker.
+ * places (`/places`) of the picker, and the new folder of the picker (`POST /folders`).
  * They read each path of the machine with no root limit. The only writes are the rows of the pins and of the recent
- * files. The list, the recent-file read, and the places read use the harness runtime for the `origin` of their entries, and
+ * files, and one new empty folder: it cannot change or remove data. The list, the recent-file read, and the places read use the harness runtime for the `origin` of their entries, and
  * the places read also for the runs, only when the boot is ready. Before that each `origin` is `null`, the places give no
  * run, and each route still answers.
  */
@@ -1021,6 +1063,24 @@ export function fsRoutes(boot: ServerBoot<PoolRuntime>, opts: FsRouteOpts = DEFA
             (e) => internalError(c, e, "remove the pin"),
         ),
     );
+
+    // No `recursive`: a missing parent is a 404, and an existing entry of the name is a 409 that keeps the entry.
+    routes.post("/folders", async (c) => {
+        const body = await readBody(c, makeFolderBody);
+        if (body.isErr()) return body.error;
+        const name = folderNameOf(c, body.value.name);
+        if (name.isErr()) return name.error;
+        const parent = await locatePath(c, body.value.parent, "parent");
+        if (parent.isErr()) return parent.error;
+        if (!parent.value.isDir) return apiError(c, "conflict", "`parent` must name a folder.");
+
+        const path = join(parent.value.realPath, name.value);
+        const made = await ResultAsync.fromPromise(mkdir(path), (cause) => cause);
+        if (made.isErr()) return makeFolderError(c, path, made.error);
+        const entry: FolderEntry = { name: name.value, path, kind: "folder", hidden: name.value.startsWith(".") };
+        const list: ListContext = { identity, hidden: false, inputFiles: new Set(), inputFolders: new Set() };
+        return c.json({ ...(await entryView(entry, list, opts)), origin: null } satisfies FolderEntryView, 201);
+    });
 
     routes.post("/recents", async (c) => {
         const body = await readBody(c, recordRecentBody);
