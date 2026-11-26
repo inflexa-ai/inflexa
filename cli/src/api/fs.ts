@@ -204,6 +204,14 @@ export type RecentFiles = {
     entries: FolderEntryView[];
 };
 
+/** The body of `POST /api/v1/fs/folders`. The response is the {@link FolderEntryView} of the new folder, with `isInput` false and `origin` null. */
+export type MakeFolderRequest = {
+    /** An absolute path of an existing folder. The server makes the folder in its real path. */
+    parent: string;
+    /** One path segment, at most 255 bytes after the trim. The server uses the trimmed name. */
+    name: string;
+};
+
 /** The id of a section of the sidebar of the picker. The response lists the sections in this order. */
 export type PlaceSectionId = "analysis" | "favorites" | "locations" | "otherAnalyses" | "drives";
 

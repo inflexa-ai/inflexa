@@ -1735,6 +1735,101 @@ describe("the pins of the picker", () => {
     });
 });
 
+describe("POST /api/v1/fs/folders", () => {
+    function makeFolder(body: unknown): Promise<Response> {
+        return Promise.resolve(routes.request("/folders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+    }
+
+    async function expectError(response: Response, status: number, code: ApiError["error"]): Promise<ApiError> {
+        expect(response.status).toBe(status);
+        const body = await errorBody(response);
+        expect(body.error).toBe(code);
+        return body;
+    }
+
+    test("makes the folder with 201 and gives its list entry", async () => {
+        const response = await makeFolder({ parent: root, name: "results" });
+
+        expect(response.status).toBe(201);
+        expect(await jsonBody(response)).toMatchObject({
+            name: "results",
+            path: join(root, "results"),
+            type: "folder",
+            kind: null,
+            link: null,
+            hidden: false,
+            itemCount: 0,
+            isInput: false,
+            origin: null,
+        });
+        expect(readdirSync(join(root, "results"))).toEqual([]);
+    });
+
+    test("trims the name, and resolves a parent segment and a link of the parent", async () => {
+        mkdirSync(join(root, "study", "raw"), { recursive: true });
+        symlinkSync(join(root, "study"), join(root, "latest"));
+
+        const response = await makeFolder({ parent: join(root, "latest", "raw", ".."), name: "  .cache  " });
+
+        expect(response.status).toBe(201);
+        expect(entryBody.parse(await jsonBody(response))).toMatchObject({ name: ".cache", path: join(root, "study", ".cache"), hidden: true });
+    });
+
+    test("a name of 255 bytes is permitted", async () => {
+        expect((await makeFolder({ parent: root, name: "é".repeat(127) + "x" })).status).toBe(201);
+    });
+
+    test("400 `validation_error` for a relative parent", async () => {
+        const body = await expectError(await makeFolder({ parent: "data", name: "a" }), 400, "validation_error");
+        expect(body.details).toEqual({ formErrors: [], fieldErrors: { parent: ["The path must be absolute."] } });
+    });
+
+    test.each(["", "   ", ".", "..", "a/b", "a\\b", "a\0b", "é".repeat(128)])("400 `validation_error` for the name %j, and no entry is made", async (name) => {
+        const body = await expectError(await makeFolder({ parent: root, name }), 400, "validation_error");
+        expect(body.details).toMatchObject({ formErrors: [], fieldErrors: { name: [expect.any(String)] } });
+        expect(readdirSync(root)).toEqual([]);
+    });
+
+    test("400 `validation_error` for an absent name", async () => {
+        await expectError(await makeFolder({ parent: root }), 400, "validation_error");
+    });
+
+    test("404 `not_found` for a parent that does not exist", async () => {
+        await expectError(await makeFolder({ parent: join(root, "missing"), name: "a" }), 404, "not_found");
+        expect(readdirSync(root)).toEqual([]);
+    });
+
+    test("409 `conflict` for a parent that is a file", async () => {
+        writeFileSync(join(root, "f.txt"), "x");
+        await expectError(await makeFolder({ parent: join(root, "f.txt"), name: "a" }), 409, "conflict");
+    });
+
+    test("409 `conflict` for an existing folder or file of the name, and the entry stays", async () => {
+        mkdirSync(join(root, "results"));
+        writeFileSync(join(root, "results", "keep.csv"), "a,b");
+        writeFileSync(join(root, "notes"), "text");
+
+        await expectError(await makeFolder({ parent: root, name: "results" }), 409, "conflict");
+        await expectError(await makeFolder({ parent: root, name: "notes" }), 409, "conflict");
+
+        expect(readdirSync(join(root, "results"))).toEqual(["keep.csv"]);
+        expect(await Bun.file(join(root, "notes")).text()).toBe("text");
+    });
+
+    test.skipIf(process.getuid?.() === 0)("403 `forbidden` with the code of the operating system for a parent that the server cannot write", async () => {
+        const closed = join(root, "closed");
+        mkdirSync(closed);
+        chmodSync(closed, 0o555);
+        try {
+            const body = await expectError(await makeFolder({ parent: closed, name: "a" }), 403, "forbidden");
+            expect(body.details).toEqual({ code: "EACCES" });
+            expect(readdirSync(closed)).toEqual([]);
+        } finally {
+            chmodSync(closed, 0o755);
+        }
+    });
+});
+
 describe("the recent files of the picker", () => {
     let acquire: FsRouteOpts["acquireLock"] = () => ({ acquired: true });
     let picker = fsRoutes(idleBoot());
