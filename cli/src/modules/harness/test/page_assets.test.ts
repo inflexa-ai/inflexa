@@ -58,6 +58,15 @@ describe("collectPageAssetEntries", () => {
         }
     });
 
+    test("collects a script without its source map link, because the pack carries no map", () => {
+        const source = join(fixtureDir, "a.min.js");
+        writeFileSync(source, "a();\n//# sourceMappingURL=a.min.js.map\n");
+
+        const entries = collectPageAssetEntries(() => source, [{ file: "deps/a.min.js", specifier: "a" }])._unsafeUnwrap();
+
+        expect(entries.map((entry) => [entry.path, entry.bytes.toString("utf8")])).toEqual([["assets/deps/a.min.js", "a();\n"]]);
+    });
+
     test("an unresolvable specifier stops the collection and names that specifier", () => {
         // The manifest is a non-empty constant of the harness, thus the last entry is present. It also
         // proves that the loop reaches the tail before it fails.
