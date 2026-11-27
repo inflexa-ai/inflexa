@@ -6,11 +6,11 @@
  * browser with no network.
  */
 
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { resolvePageAssetFromInstallation } from "../src/report-render/asset-lookup.js";
-import { ASSETS_DIR, DEPS_DIR, PAGE_ASSETS } from "../src/report-render/assets.js";
+import { ASSETS_DIR, DEPS_DIR, PAGE_ASSETS, stagedAssetBytes } from "../src/report-render/assets.js";
 
 export type RenderedPage = {
     readonly html: string;
@@ -24,7 +24,7 @@ export async function stageReportPage(pageDir: string, rendered: RenderedPage): 
     // One lookup answers for every staged page, thus an asset that one render resolves cannot be missing
     // from another.
     for (const asset of PAGE_ASSETS) {
-        await copyFile(resolvePageAssetFromInstallation(asset.specifier), join(assetsDir, asset.file));
+        await writeFile(join(assetsDir, asset.file), stagedAssetBytes(asset.file, await readFile(resolvePageAssetFromInstallation(asset.specifier))));
     }
     // The rows of a table ride a data asset. Without the write the page opens with a failed script request,
     // and the person sees a table card with no data behind it.
