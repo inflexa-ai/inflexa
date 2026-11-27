@@ -39,7 +39,7 @@
  */
 
 import { err, ok, type Result } from "neverthrow";
-import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { relative as relativePosix } from "node:path/posix";
 import { z } from "zod";
@@ -59,7 +59,7 @@ import type { ReferenceResolver, ReportSnapshot } from "../../report-model/refer
 import { resolveDocumentReferences, type ResolutionFailure } from "../../report-model/validate.js";
 import { bridgeValues, collectResolutions, type BlockResolution, type BridgeMismatch, type ResolvedFile } from "../../report-render/value-bridge.js";
 import { resolvePageAssetFromInstallation } from "../../report-render/asset-lookup.js";
-import { ASSETS_DIR, DEPS_DIR, derivationScriptName, PAGE_ASSETS, stagedSource, tableSidecarName } from "../../report-render/assets.js";
+import { ASSETS_DIR, DEPS_DIR, derivationScriptName, PAGE_ASSETS, stagedAssetBytes, stagedSource, tableSidecarName } from "../../report-render/assets.js";
 import type { DerivationChain } from "../../report-render/references.js";
 import { renderReportPage } from "../../report-render/render.js";
 import type { DataAsset } from "../../report-render/table-data.js";
@@ -383,10 +383,18 @@ async function renderToWorkspace(args: {
     if (madeAssets.isErr()) {
         return err({ kind: "fs", error: madeAssets.error });
     }
-    for (const [name, source] of [...reportFiles, ...depsFiles]) {
+    for (const [name, source] of reportFiles) {
         const copied = await tryFsWrite("preview.copyFile", () => copyFile(source, join(assetsDir, name)), { path: source });
         if (copied.isErr()) {
             return err({ kind: "fs", error: copied.error });
+        }
+    }
+    for (const [name, source] of depsFiles) {
+        const stagedDep = await tryFsWrite("preview.stageAsset", async () => writeFile(join(assetsDir, name), stagedAssetBytes(name, await readFile(source))), {
+            path: source,
+        });
+        if (stagedDep.isErr()) {
+            return err({ kind: "fs", error: stagedDep.error });
         }
     }
     // A data asset is source text that the renderer derived, and a script is the text of a durable record.

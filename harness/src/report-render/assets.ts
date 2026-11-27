@@ -44,6 +44,27 @@ export function stagedSource(file: string): string {
     return `${ASSETS_DIR}/${file}`;
 }
 
+const SOURCE_MAP_LINK = "\n//# sourceMappingURL=";
+
+/**
+ * The bytes that the stage writes for the asset `file`, from the bytes of its source. A script loses its source map link, because
+ * the stage copies no map. The browser tools follow the link, and the content server denies each fetch of a page, thus each read
+ * of the page shows the request as a violation of the policy.
+ */
+export function stagedAssetBytes(file: string, source: Buffer): Buffer {
+    if (!file.endsWith(".js")) {
+        return source;
+    }
+    const script = source.toString("utf8");
+    const start = script.lastIndexOf(SOURCE_MAP_LINK);
+    if (start === -1) {
+        return source;
+    }
+    const lineEnd = script.indexOf("\n", start + 1);
+    const rest = lineEnd === -1 ? "" : script.slice(lineEnd + 1);
+    return Buffer.from(script.slice(0, start + 1) + rest, "utf8");
+}
+
 /** The count of hash characters in a staged name. A staged file carries enough of the hash to be unique. */
 const HASH_CHARS = 12;
 
