@@ -14,6 +14,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { DBOS, type WorkflowHandle } from "@dbos-inc/dbos-sdk";
+import { DBOSExecutor } from "@dbos-inc/dbos-sdk/internal/dbos-executor";
 
 const CRASH_TOPIC = "test-crash-point";
 
@@ -34,6 +35,16 @@ async function waitFor(condition: () => boolean | Promise<boolean>, what: string
         if (Date.now() > deadline) throw new Error(`timed out: ${what}`);
         await sleep(25);
     }
+}
+
+/**
+ * Settles when DBOS runs no execution of the workflow in this process. The status
+ * row says CANCELLED before the cancelled body leaves, and a resume gives the
+ * workflow back to this executor. Thus a body that the cancel ends, and that still
+ * runs at the resume, can record a step at an id of the replay.
+ */
+export function executionLeft(workflowId: string, timeoutMs = 5_000): Promise<void> {
+    return waitFor(() => DBOSExecutor.globalInstance?.systemDatabase.checkForRunningWorkflow(workflowId) !== true, `the exit of ${workflowId}`, timeoutMs);
 }
 
 /**

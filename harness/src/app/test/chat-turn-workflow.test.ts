@@ -11,7 +11,7 @@ import { err, errAsync, ok, okAsync } from "neverthrow";
 import { MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 
-import { recoverAtCrashPoint } from "../../__tests__/setup/dbos-crash.js";
+import { executionLeft, recoverAtCrashPoint } from "../../__tests__/setup/dbos-crash.js";
 import { setupDbosForTests, type DbosTestRig } from "../../__tests__/setup/dbos.js";
 import { makeLocalAuth } from "../../auth/local-auth-context.js";
 import { forSubAgent, type AuthContext } from "../../auth/types.js";
@@ -603,9 +603,7 @@ describe("a chat turn as a workflow", () => {
 
         const turnId = await startTurn(threadId);
         await readUntil(turnId, (frame) => frame.type === "text-delta");
-        const ended = DBOS.retrieveWorkflow(turnId)
-            .getResult()
-            .catch(() => undefined);
+        const ended = executionLeft(turnId);
         const handle = await recoverAtCrashPoint(turnId, () => true, { ended });
 
         // The second execution waits before its first output until the read gave the half text of the first.
