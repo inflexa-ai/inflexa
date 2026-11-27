@@ -12,7 +12,7 @@ import { type Result, err, ok } from "neverthrow";
 // These two modules are constants and one resolution over the node builtins. A build script drives a
 // bundler, thus it must not pull a runtime graph into that process for a table of string pairs.
 import { resolvePageAssetFromInstallation } from "@inflexa-ai/harness/report-render/asset-lookup.js";
-import { PAGE_ASSETS, stagedAssetBytes, type PageAsset } from "@inflexa-ai/harness/report-render/assets.js";
+import { PAGE_ASSETS, type PageAsset } from "@inflexa-ai/harness/report-render/assets.js";
 
 import type { PackEntry } from "./content-pack.ts";
 
@@ -65,7 +65,7 @@ export function collectPageAssetEntries(
         // and that failure is different from a specifier that no resolution answers. One read is both the
         // check of the file and the load of the bytes, thus no window sits between the two.
         try {
-            entries.push({ path: `assets/${asset.file}`, bytes: stagedAssetBytes(asset.file, readFileSync(source)) });
+            entries.push({ path: `assets/${asset.file}`, bytes: readFileSync(source) });
         } catch (cause) {
             return err({ type: "unreadable_source", specifier: asset.specifier, path: source, cause });
         }
